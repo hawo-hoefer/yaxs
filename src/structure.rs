@@ -8,7 +8,8 @@ use ordered_float::NotNan;
 use crate::element::atomic_scattering_params;
 use crate::species::Species;
 
-const RTOL: f64 = 1e-6;
+const TWO_THETA_ABSTOL: f64 = 1e-5;
+const SCALED_INTENSITY_TOL: f64 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lattice {
@@ -136,11 +137,22 @@ impl Structure {
             return Vec::new();
         };
         let vmax = f64::from(*vmax);
-        return agg
+        let agg = agg
             .iter()
             .sorted_by_key(|&(a, _)| a)
             .map(|(a, b)| (f64::from(*a), f64::from(*b)))
-            .filter(|&(a, b)| b > RTOL * vmax as f64)
+            .filter(|&(_, b)| b / vmax >= SCALED_INTENSITY_TOL as f64)
             .collect_vec();
+
+        let mut compressed: Vec<(f64, f64)> = Vec::with_capacity(agg.len());
+        for (two_theta, intens) in agg.iter() {
+            match compressed.last_mut() {
+                Some((lt, li)) if ((*two_theta - *lt) < TWO_THETA_ABSTOL) => {
+                    *li += intens;
+                }
+                None | Some(&mut (_, _)) => compressed.push((*two_theta, *intens)),
+            }
+        }
+        compressed
     }
 }

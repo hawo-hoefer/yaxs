@@ -1,12 +1,6 @@
 use itertools::Itertools;
 use nalgebra::{Matrix3, Vector3};
-use ordered_float::NotNan;
-use std::collections::HashMap;
-use std::f64::consts::PI;
-
-use sim_edxrd::element::atomic_scattering_params;
-use sim_edxrd::species::Species;
-use sim_edxrd::structure::{Structure, Site, Lattice};
+use sim_edxrd::structure::{Lattice, Site, Structure};
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
@@ -19,29 +13,26 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
 }
 
 fn main() {
-    // let wavelength_ams = 1.5405;
-    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
-    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
     let sites = vec![
         Site {
             coords: Vector3::new(0.0, 0.5, 0.5),
             species: "Cu2+".parse().unwrap(),
-            occu: 1
+            occu: 1,
         },
         Site {
             coords: Vector3::new(0.5, 0.0, 0.0),
             species: "Cu2+".parse().unwrap(),
-            occu: 1
+            occu: 1,
         },
         Site {
             coords: Vector3::new(0.5816, 0.4184, 0.25),
             species: "O2-".parse().unwrap(),
-            occu: 1
+            occu: 1,
         },
         Site {
             coords: Vector3::new(0.4184, 0.5816, 0.75),
             species: "O2-".parse().unwrap(),
-            occu: 1
+            occu: 1,
         },
     ];
 
@@ -58,9 +49,12 @@ fn main() {
         sites,
     };
 
+    // let wavelength_ams = 1.5405;
+    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
+    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
     let wavelength_ams = e_kev_to_lambda_ams(200.0);
-    let peaks = s.get_pattern(wavelength_ams, (0.0, 15.0));
+    let peaks = s.get_pattern(wavelength_ams, (0.0, 90.0));
     for (two_theta, i) in peaks.iter() {
-        println!("{two_theta}, {i}")
+        println!("{two_theta:12.4}, {i:12.4}")
     }
 }
