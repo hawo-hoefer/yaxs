@@ -157,7 +157,7 @@ impl TryFrom<&str> for Element {
 
 // Stolen from S.P. Ong et. al, 2013 pymatgen
 // (src/pymatgen/analysis/diffraction/atomic_scattering_params.json)
-pub const fn scattering_factors(el: Element) -> Option<[[f64; 2]; 4]> {
+pub const fn atomic_scattering_params(el: Element) -> Option<[[f64; 2]; 4]> {
     #[rustfmt::skip]
     let ret = match el {
         Element::Ru => Some([[4.358, 27.881],  [3.298, 5.179],  [1.323, 0.594], [0.0,   0.0]]),

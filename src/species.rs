@@ -1,13 +1,33 @@
 use std::str::FromStr;
 
 use crate::element::Element;
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Atom {
-    el: Element,
-    ionization: i8,
+    pub el: Element,
+    pub ionization: i16,
 }
 
 pub struct Species(pub Vec<Atom>);
+
+impl IntoIterator for Species {
+    type Item = Atom;
+
+    type IntoIter = <Vec<Atom> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl <'a> IntoIterator for &'a Species {
+    type Item = &'a Atom;
+
+    type IntoIter = <&'a Vec<Atom> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 impl FromStr for Species {
     type Err= String;
@@ -53,7 +73,7 @@ impl Species {
         }
     }
 
-    fn try_parse_ionization(val: &str) -> Option<(i8, &str)> {
+    fn try_parse_ionization(val: &str) -> Option<(i16, &str)> {
         // check for single character ionization like Fe+ or Cu-
         match val.chars().next() {
             Some('+') => return Some((1, std::str::from_utf8(&val.as_bytes()[1..]).unwrap())),
@@ -66,7 +86,7 @@ impl Species {
 
         // check for multiple ionization specified with number
         if let Some((ion, _)) = val.split_once(|x: char| !x.is_numeric()) {
-            let mut ionization: i8 = ion.parse().ok()?;
+            let mut ionization: i16 = ion.parse().ok()?;
             let mut rest = std::str::from_utf8(&val.as_bytes()[ion.len()..]).unwrap();
             match rest.chars().next() {
                 Some('+') => rest = std::str::from_utf8(&rest.as_bytes()[1..]).unwrap(),
