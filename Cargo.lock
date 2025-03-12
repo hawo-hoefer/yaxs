@@ -172,15 +172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sim-edxrd"
-version = "0.1.0"
-dependencies = [
- "itertools",
- "nalgebra",
- "ordered-float",
-]
-
-[[package]]
 name = "simba"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -224,4 +215,13 @@ checksum = "41b5576b9a81633f3e8df296ce0063042a73507636cbe956c61133dd7034ab22"
 dependencies = [
  "bytemuck",
  "safe_arch",
+]
+
+[[package]]
+name = "yaxs"
+version = "0.1.0"
+dependencies = [
+ "itertools",
+ "nalgebra",
+ "ordered-float",
 ]

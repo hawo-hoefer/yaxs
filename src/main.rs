@@ -1,6 +1,5 @@
-use itertools::Itertools;
 use nalgebra::{Matrix3, Vector3};
-use sim_edxrd::structure::{Lattice, Site, Structure};
+use yaxs::structure::{Lattice, Site, Structure};
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
