@@ -1,10 +1,14 @@
+use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use itertools::Itertools;
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
+use ordered_float::NotNan;
 
 use crate::element::atomic_scattering_params;
 use crate::species::Species;
+
+const RTOL: f64 = 1e-6;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lattice {
@@ -66,7 +70,7 @@ impl Structure {
 
         let nmin = -r_max;
         let nmax = r_max;
-        let mut peaks = Vec::new();
+        let mut agg = HashMap::new();
         for (hkl, g_hkl) in (nmin[0]..nmax[0])
             .cartesian_product(nmin[1]..nmax[1])
             .cartesian_product(nmin[2]..nmax[2])
@@ -123,9 +127,20 @@ impl Structure {
             // # Intensity for hkl is modulus square of structure factor
             // i_hkl = (f_hkl * f_hkl.conjugate()).real
             let i_hkl = (f_hkl * f_hkl.conjugate()).real();
-            let two_theta = theta.to_degrees() * 2.0;
-            peaks.push((two_theta, i_hkl * lorentz_fact));
+            let two_theta = NotNan::new(theta.to_degrees() * 2.0).unwrap();
+            *agg.entry(two_theta).or_insert(NotNan::new(0.0).unwrap()) +=
+                NotNan::new(i_hkl * lorentz_fact).unwrap();
         }
-        return peaks;
+
+        let Some((_, vmax)) = agg.iter().max_by_key(|&(_, b)| b) else {
+            return Vec::new();
+        };
+        let vmax = f64::from(*vmax);
+        return agg
+            .iter()
+            .sorted_by_key(|&(a, _)| a)
+            .map(|(a, b)| (f64::from(*a), f64::from(*b)))
+            .filter(|&(a, b)| b > RTOL * vmax as f64)
+            .collect_vec();
     }
 }

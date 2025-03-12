@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
+use nalgebra::{Matrix3, Vector3};
 use ordered_float::NotNan;
 use std::collections::HashMap;
 use std::f64::consts::PI;
@@ -58,21 +58,9 @@ fn main() {
         sites,
     };
 
-    let wavelength_ams = 0.69;
+    let wavelength_ams = e_kev_to_lambda_ams(200.0);
     let peaks = s.get_pattern(wavelength_ams, (0.0, 15.0));
-    for (two_theta, i) in peaks {
-        println!("{two_theta:10.2}, {i:10.2}")
+    for (two_theta, i) in peaks.iter() {
+        println!("{two_theta}, {i}")
     }
-
-    // 0, 0, 0  | 0.0
-    // 0, 0, -1 | 0.19771170861976084
-    // 0, 0, 1  | 0.19771170861976084
-    // 0, -1, 0 | 0.36364687664399453
-    // 0, 1, 0  | 0.36364687664399453
-    // -1, 0, 0 | 0.3636468766439945
-    // 1, 0, 0  | 0.3636468766439945
-    //
-    // frac_coords = lattice.get_fractional_coords(center_coords)
-    // nmin_temp = np.floor(np.min(frac_coords, axis=0)) - maxr
-    // nmax_temp = np.ceil(np.max(frac_coords, axis=0)) + maxr
 }
