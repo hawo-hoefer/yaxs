@@ -1,4 +1,4 @@
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 #[rustfmt::skip]
 pub enum Element {
     H,  He, Li, Be, B,  C,  N,  O,  F,  Ne, Na, Mg, Al, Si, P,  S,  Cl, Ar, K,  
@@ -8,6 +8,12 @@ pub enum Element {
     Ir, Pt, Au, Hg, Tl, Pb, Bi, Po, At, Rn, Fr, Ra, Ac, Th, Pa, U,  Np, Pu, Am, 
     Cm, Bk, Cf, Es, Fm, Md, No, Lr, Rf, Db, Sg, Bh, Hs, Mt, Ds, Rg, Cn, Nh, Fl, 
     Mc, Lv, Ts, Og,
+}
+
+impl Element {
+    pub fn Z(&self) -> i32 {
+        *self as i32
+    }
 }
 
 impl TryFrom<&str> for Element {
