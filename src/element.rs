@@ -11,8 +11,17 @@ pub enum Element {
 }
 
 impl Element {
-    pub fn Z(&self) -> i32 {
-        *self as i32
+    /// return atomic number
+    /// ```
+    /// use sim_edxrd::element::Element;
+    ///
+    /// assert_eq!(Element::H.z(), 1);
+    /// assert_eq!(Element::He.z(), 2);
+    /// assert_eq!(Element::Li.z(), 3);
+    /// assert_eq!(Element::Db.z(), 105);
+    /// ```
+    pub fn z(&self) -> i32 {
+        *self as i32 + 1
     }
 }
 
