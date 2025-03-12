@@ -7,6 +7,7 @@ pub struct Atom {
     pub ionization: i16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Species(pub Vec<Atom>);
 
 impl IntoIterator for Species {
