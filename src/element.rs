@@ -13,7 +13,7 @@ pub enum Element {
 impl Element {
     /// return atomic number
     /// ```
-    /// use sim_edxrd::element::Element;
+    /// use yaxs::element::Element;
     ///
     /// assert_eq!(Element::H.z(), 1);
     /// assert_eq!(Element::He.z(), 2);
