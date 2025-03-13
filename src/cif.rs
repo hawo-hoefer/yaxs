@@ -245,19 +245,15 @@ impl<'a> CifParser<'a> {
             kvs.push((self.parse_tag().to_string(), Vec::new()));
         }
 
-        let mut i = 0;
         while !self.c.starts_with('_')
             && !self.c.starts_with(LOOP_HEADER_START)
             && !self.c.is_empty()
         {
-            if i == 10 {
-                panic!()
-            }
             for (_, v) in kvs.iter_mut() {
                 self.skip_whitespace();
                 v.push(self.parse_value());
             }
-            i += 1;
+            self.skip_whitespace();
         }
 
         kvs.drain(..).collect()
@@ -368,5 +364,38 @@ hello hello
             Value::Text("\nhello hello\n".to_string())
         );
         assert!(vals.tables.is_empty())
+    }
+
+    #[test]
+    fn parse_loops_string_end() {
+        let data = "loop_
+_sym
+_ox
+Hf2+ 2
+He2- '-2'
+loop_
+_a
+_b
+hello 1.0 
+hell  -2";
+        use Value::*;
+
+        let mut p = CifParser::new(data);
+        let DataItem::Table(item) = p.parse_data_item() else {
+            panic!()
+        };
+        assert_eq!(
+            item["_sym"],
+            [Text("Hf2+".to_string()), Text("He2-".to_string())]
+        );
+        assert_eq!(item["_ox"], [Int(2), Text("-2".to_string())]);
+        let DataItem::Table(item) = p.parse_data_item() else {
+            panic!()
+        };
+        assert_eq!(
+            item["_a"],
+            [Text("hello".to_string()), Text("hell".to_string())]
+        );
+        assert_eq!(item["_b"], [Float(1.0), Int(-2)]);
     }
 }
