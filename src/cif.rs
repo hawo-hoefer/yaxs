@@ -105,6 +105,7 @@ impl<'a> CifParser<'a> {
     }
 
     fn parse_value(&mut self) -> Value {
+        self.skip_whitespace();
         match self
             .c
             .chars()
@@ -113,10 +114,16 @@ impl<'a> CifParser<'a> {
         {
             '+' | '-' | '0'..='9' => {
                 // try to parse number. if it fails, we parse as string
-                self.parse_number().unwrap_or_else(|e| self.parse_text())
+                self.parse_number().unwrap_or_else(|_e| self.parse_text())
             }
-            '.' => Value::Inapplicable,
-            '?' => Value::Unknown,
+            '.' => {
+                let _ = self.consume_once('.');
+                Value::Inapplicable
+            }
+            '?' => {
+                let _ = self.consume_once('?');
+                Value::Unknown
+            }
             _ => self.parse_text(), // this includes ';'
         }
     }
@@ -153,7 +160,6 @@ impl<'a> CifParser<'a> {
         if self.c.starts_with('_') {
             // we are reading a tag
             let tag = self.parse_tag().to_string();
-            self.skip_whitespace();
             let val = self.parse_value();
             return DataItem::KV(tag.to_string(), val);
         } else if self.c.starts_with(LOOP_HEADER_START) {
@@ -250,10 +256,10 @@ impl<'a> CifParser<'a> {
             && !self.c.is_empty()
         {
             for (_, v) in kvs.iter_mut() {
-                self.skip_whitespace();
-                v.push(self.parse_value());
+                let val = self.parse_value();
+                v.push(val);
             }
-            self.skip_whitespace();
+            self.skip_ws_comments();
         }
 
         kvs.drain(..).collect()
@@ -397,5 +403,81 @@ hell  -2";
             [Text("hello".to_string()), Text("hell".to_string())]
         );
         assert_eq!(item["_b"], [Float(1.0), Int(-2)]);
+    }
+
+    #[test]
+    fn parse_float_ending_in_dot() {
+        let mut p = CifParser::new("_test 1.");
+        let item = p.parse_data_item();
+        assert_eq!(item, DataItem::KV("_test".to_string(), Value::Float(1.0)))
+    }
+
+    #[test]
+    fn parse_loops_float_dot_end() {
+        let data = "loop_
+_sym
+_ox
+Hf2+ 2
+He2- 2.
+loop_
+_a
+_b
+hello 1.0 
+hell  -2";
+        use Value::*;
+
+        let mut p = CifParser::new(data);
+        let DataItem::Table(item) = p.parse_data_item() else {
+            panic!()
+        };
+        assert_eq!(
+            item["_sym"],
+            [Text("Hf2+".to_string()), Text("He2-".to_string())]
+        );
+        assert_eq!(item["_ox"], [Int(2), Float(2.0)]);
+        let DataItem::Table(item) = p.parse_data_item() else {
+            panic!()
+        };
+        assert_eq!(
+            item["_a"],
+            [Text("hello".to_string()), Text("hell".to_string())]
+        );
+        assert_eq!(item["_b"], [Float(1.0), Int(-2)]);
+    }
+
+    #[test]
+    fn parse_unknown_inapplicable() {
+        let mut p = CifParser::new("_inapplicable .\n _unknown ?\n");
+        let DataItem::KV(_, Value::Inapplicable) = p.parse_data_item() else {
+            panic!()
+        };
+
+        p.skip_whitespace();
+        let DataItem::KV(_, Value::Unknown) = p.parse_data_item() else {
+            panic!()
+        };
+        assert_eq!(p.c, "\n");
+    }
+
+    #[test]
+    fn parse_loop_end_comment() {
+        let data = "data_test
+_data 1234
+loop_
+_sym
+_ox
+Hf2+ 2
+He2- 2.
+#arst
+";
+        let mut p = CifParser::new(data);
+        let CIFContents {
+            block_name,
+            kvs,
+            tables,
+        } = p.parse();
+        let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
+        assert_eq!(kvs, kvs_exp);
+        assert_eq!(tables.len(), 1);
     }
 }
