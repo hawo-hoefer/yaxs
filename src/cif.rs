@@ -32,6 +32,7 @@ impl Value {
 
 pub type Table = HashMap<String, Vec<Value>>;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataItem {
     KV(String, Value),
     Table(Table),
@@ -152,13 +153,14 @@ impl<'a> CifParser<'a> {
         if self.c.starts_with('_') {
             // we are reading a tag
             let tag = self.parse_tag().to_string();
+            self.skip_whitespace();
             let val = self.parse_value();
             return DataItem::KV(tag.to_string(), val);
         } else if self.c.starts_with(LOOP_HEADER_START) {
             return DataItem::Table(self.parse_loop());
         }
 
-        panic!("WTF Where are we? '{d}'", d=self.c)
+        panic!("WTF Where are we? '{d}'", d = self.c)
     }
 
     fn consume_once(&mut self, c: char) -> bool {
@@ -316,6 +318,26 @@ B 2.0(32) 1.0 test",
         assert_eq!(table["_col_b"], [Int(1), Float(2.0)]);
         assert_eq!(table["_col_c"], [Float(2.0), Float(1.0)]);
         assert_eq!(table["_col_d"], [Float(123.2), Text("test".to_string())]);
+    }
+
+    #[test]
+    fn parse_text_field() {
+        let mut p = CifParser::new(
+            "_test 
+;
+Test Test Test
+test test
+test
+;",
+        );
+        let di = p.parse_data_item();
+        assert_eq!(
+            di,
+            DataItem::KV(
+                "_test".to_string(),
+                Value::Text("\nTest Test Test\ntest test\ntest\n".to_string())
+            )
+        )
     }
 
     #[test]
