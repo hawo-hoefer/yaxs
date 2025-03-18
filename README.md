@@ -3,9 +3,9 @@
 An (ED-)XRD simulation tool implemented in rust.
 
 ## Roadmap
-- [ ] Parse Structure from CIF
+- [x] Parse Structure from CIF
     - [x] implement parsing of CIF to HashMap and Vector of Tables
-    - [ ] Map HashMap / Vector of Tables to Structure
+    - [x] Map HashMap / Vector of Tables to Structure
 - [ ] Debye-Waller correction
 - [ ] Volume and Wavelength Correction (Cullity 1976)
 - [ ] straining of unit cells
