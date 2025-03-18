@@ -1,12 +1,8 @@
 use std::fs::File;
 use std::io::{BufReader, Read};
 
-use itertools::Itertools;
-use nalgebra::{Matrix3, Vector3};
-use yaxs::cif::{CifParser, Table, Value};
-use yaxs::site::Site;
+use yaxs::cif::CifParser;
 use yaxs::structure::Structure;
-use yaxs::symop::SymOp;
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
@@ -34,8 +30,7 @@ fn main() {
     let s = Structure::from(&contents);
 
     let wavelength_ams = 1.54209;
-    let wavelength_ams = e_kev_to_lambda_ams(200.0);
-    let peaks = s.get_pattern(wavelength_ams, (3.0, 10.0));
+    let peaks = s.get_pattern(wavelength_ams, (0.0, 90.0));
     if peaks.len() > 1000 {
         println!("got {} peaks", peaks.len())
     } else {
