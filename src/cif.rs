@@ -4,9 +4,9 @@ use std::num::ParseFloatError;
 use itertools::Itertools;
 use nalgebra::{Matrix3, Vector3};
 
+use crate::site::Site;
 use crate::species::Species;
 use crate::structure::Lattice;
-use crate::site::Site;
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive
@@ -634,11 +634,7 @@ He2- 2.
 #arst
 ";
         let mut p = CifParser::new(data);
-        let CIFContents {
-            block_name,
-            kvs,
-            tables,
-        } = p.parse();
+        let CIFContents { kvs, tables, .. } = p.parse();
         let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
         assert_eq!(kvs, kvs_exp);
         assert_eq!(tables.len(), 1);

@@ -1,14 +1,13 @@
 use std::collections::HashMap;
-use std::f64::consts::PI;
 
 use itertools::Itertools;
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 
 use crate::cif::CIFContents;
+use crate::discretize::Peak;
 use crate::element::atomic_scattering_params;
 use crate::site::Site;
-use crate::species::Species;
 
 const TWO_THETA_ABSTOL: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
@@ -74,7 +73,7 @@ impl From<&CIFContents> for Structure {
 }
 
 impl Structure {
-    pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: (f64, f64)) -> Vec<(f64, f64)> {
+    pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
@@ -179,13 +178,19 @@ impl Structure {
             .filter(|&(_, b)| b / vmax >= SCALED_INTENSITY_TOL as f64)
             .collect_vec();
 
-        let mut compressed: Vec<(f64, f64)> = Vec::with_capacity(agg.len());
+        let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
         for (two_theta, intens) in agg.iter() {
             match compressed.last_mut() {
-                Some((lt, li)) if ((*two_theta - *lt) < TWO_THETA_ABSTOL) => {
+                Some(Peak {
+                    pos: lt,
+                    intensity: li,
+                }) if ((*two_theta - *lt) < TWO_THETA_ABSTOL) => {
                     *li += intens;
                 }
-                None | Some(&mut (_, _)) => compressed.push((*two_theta, *intens)),
+                None | Some(&mut Peak { .. }) => compressed.push(Peak {
+                    pos: *two_theta,
+                    intensity: *intens,
+                }),
             }
         }
         compressed
