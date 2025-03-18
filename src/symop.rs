@@ -8,7 +8,7 @@ pub struct SymOp {
 }
 
 impl SymOp {
-    pub fn apply(&self, pos: &Vector3<f64>) -> Vector3<f64> {
+    pub fn apply(&self, pos: Vector3<f64>) -> Vector3<f64> {
         let mut pos = pos.to_homogeneous();
         pos.w = 1.0;
         let pos = self.mat * pos;

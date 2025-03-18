@@ -1,9 +1,22 @@
 use std::collections::HashMap;
 use std::num::ParseFloatError;
 
+use itertools::Itertools;
+use nalgebra::{Matrix3, Vector3};
+
+use crate::species::Species;
+use crate::structure::Lattice;
+use crate::site::Site;
+use crate::symop::SymOp;
+
 // TODO: make this case-insensitive
 const DATA_HEADER_START: &'static str = "data_";
 const LOOP_HEADER_START: &'static str = "loop_";
+const ANGLE_KEYS: [&'static str; 3] =
+    ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
+const LENGTH_KEYS: [&'static str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
+const SITE_DIST_TOL: f64 = 1e-8;
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
     c: &'a str,
@@ -42,6 +55,156 @@ pub struct CIFContents {
     pub block_name: String,
     pub kvs: HashMap<String, Value>,
     pub tables: Vec<HashMap<String, Vec<Value>>>,
+}
+
+impl CIFContents {
+    pub fn get_symops(&self) -> Vec<SymOp> {
+        let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
+            const SITE_KEYS: [&'static str; 2] = [
+                "_space_group_symop_id",
+                "_space_group_symop_operation_xyz", // TODO: handle alternative table with _space_group_symop_equiv_pos_as_xyz
+            ];
+            SITE_KEYS.iter().map(|&k| t.contains_key(k)).all(|x| x)
+        }) else {
+            panic!("No atom site label info in CIF")
+        };
+        symops_table["_space_group_symop_operation_xyz"]
+            .iter()
+            .map(|s| {
+                let Value::Text(s) = s else {
+                    // TODO: error handling
+                    panic!("Invalid symmetry operation. needs to be a string");
+                };
+                // TODO: error handling of symop invalid
+                s.parse::<SymOp>().unwrap()
+            })
+            .collect_vec()
+    }
+    pub fn get_volume(&self) -> f64 {
+        self.kvs.get("_cell_volume").unwrap().try_to_f64().unwrap()
+    }
+
+    pub fn get_lattice(&self) -> Lattice {
+        let Some((a, b, c)) = LENGTH_KEYS
+            .iter()
+            .map(|k: &&str| self.kvs.get(*k).unwrap().try_to_f64().unwrap())
+            .collect_tuple::<(f64, f64, f64)>()
+        else {
+            panic!("This has to be three values")
+        };
+        let Some((alpha, beta, gamma)) = ANGLE_KEYS
+            .iter()
+            .map(|k: &&str| self.kvs.get(*k).unwrap().try_to_f64().unwrap().to_radians())
+            .collect_tuple::<(f64, f64, f64)>()
+        else {
+            panic!("This has to be three values")
+        };
+
+        // from pymatgen.core.Lattice.from_parameters
+        let val = alpha.cos() * beta.cos() - gamma.cos() / (alpha.sin() * beta.sin());
+        let val = val.clamp(-1.0, 1.0);
+        let gamma_star = val.acos();
+        let va = Vector3::new(a * beta.sin(), 0.0, a * beta.cos());
+        let vb = Vector3::new(
+            -b * alpha.sin() * gamma_star.cos(),
+            b * alpha.sin() * gamma_star.sin(),
+            b * alpha.cos(),
+        );
+        let vc = Vector3::new(0.0, 0.0, c);
+        Lattice {
+            mat: Matrix3::from_columns(&[va, vb, vc]),
+        }
+    }
+
+    pub fn get_sites(&self) -> Vec<Site> {
+        let Some(site_table) = self.tables.iter().find(|t: &&Table| {
+            const SITE_KEYS: [&'static str; 5] = [
+                "_atom_site_type_symbol",
+                "_atom_site_fract_x",
+                "_atom_site_fract_y",
+                "_atom_site_fract_z",
+                "_atom_site_occupancy",
+            ];
+            SITE_KEYS.iter().map(|&k| t.contains_key(k)).all(|x| x)
+        }) else {
+            panic!("No atom site label info in CIF")
+        };
+        let n = site_table["_atom_site_type_symbol"].len();
+        let symops = self.get_symops();
+
+        let site_at_index = |i: usize| -> Site {
+            let label = &site_table["_atom_site_type_symbol"][i];
+            let sp: Species = match label {
+                Value::Text(label) => label.parse().unwrap(),
+                _ => todo!("Invalid site label"),
+            };
+            let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
+            // TODO: remove unwraps, proper error handling
+            let coords = Vector3::new(
+                site_table["_atom_site_fract_x"][i].try_to_f64().unwrap(),
+                site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
+                site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
+            );
+            Site {
+                species: sp,
+                coords,
+                occu,
+            }
+        };
+
+        fn site_exists_periodic(site: &Site, sites: &[Site]) -> bool {
+            // adapted from pymatgen.util.coord.find_in_coord_list
+            sites
+                .iter()
+                .map(|ps| {
+                    let dist = site.coords - ps.coords;
+                    dist.map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
+                        .iter()
+                        .all(|x| *x)
+                })
+                .any(|x| x)
+        }
+
+        // we parsed the symops, but still need to remove duplicate sites
+        let mut sites = Vec::new();
+        for base_site in (0..n).map(site_at_index) {
+            // if site_exists_periodic(&base_site, &sites) {
+            //     continue;
+            // }
+            sites.push(base_site.normalized());
+
+            for op in symops.iter() {
+                let s = Site {
+                    coords: op.apply(base_site.coords.clone()),
+                    species: base_site.species.clone(),
+                    occu: base_site.occu.clone(),
+                };
+
+                if site_exists_periodic(&base_site, &sites) {
+                    continue;
+                }
+                sites.push(s.normalized());
+            }
+        }
+
+        for site in (0..n)
+            .map(site_at_index)
+            .map(|base_site| {
+                symops.iter().map(move |s| Site {
+                    coords: s.apply(base_site.coords.clone()),
+                    species: base_site.species.clone(),
+                    occu: base_site.occu.clone(),
+                })
+            })
+            .flatten()
+        {
+            if site_exists_periodic(&site, &sites) {
+                continue;
+            }
+            sites.push(site.normalized())
+        }
+        sites
+    }
 }
 
 impl<'a> CifParser<'a> {

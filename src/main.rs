@@ -1,5 +1,12 @@
+use std::fs::File;
+use std::io::{BufReader, Read};
+
+use itertools::Itertools;
 use nalgebra::{Matrix3, Vector3};
-use yaxs::structure::{Lattice, Site, Structure};
+use yaxs::cif::{CifParser, Table, Value};
+use yaxs::site::Site;
+use yaxs::structure::Structure;
+use yaxs::symop::SymOp;
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
@@ -12,48 +19,28 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
 }
 
 fn main() {
-    let sites = vec![
-        Site {
-            coords: Vector3::new(0.0, 0.5, 0.5),
-            species: "Cu2+".parse().unwrap(),
-            occu: 1,
-        },
-        Site {
-            coords: Vector3::new(0.5, 0.0, 0.0),
-            species: "Cu2+".parse().unwrap(),
-            occu: 1,
-        },
-        Site {
-            coords: Vector3::new(0.5816, 0.4184, 0.25),
-            species: "O2-".parse().unwrap(),
-            occu: 1,
-        },
-        Site {
-            coords: Vector3::new(0.4184, 0.5816, 0.75),
-            species: "O2-".parse().unwrap(),
-            occu: 1,
-        },
-    ];
-
-    let lattice = Lattice {
-        #[rustfmt::skip]
-        mat: Matrix3::new(
-             2.16500590e-01,  2.16500590e-01, -3.27679720e-02,
-             2.92175539e-01, -2.92175539e-01, 1.58116914e-17,
-            -0.00000000e+00,  -0.00000000e+00, -1.94977383e-01
-        ),
+    let mut args = std::env::args();
+    let program = args.next().expect("Program Name");
+    let Some(file) = args.next() else {
+        println!("Usage: {program} </path/to/cif>");
+        println!("   will simulate an XRD pattern with wavelength 1.54209 Amstrong and 2-theta range of (0, 90) for the cif");
+        std::process::exit(1);
     };
-    let s = Structure {
-        lat: lattice,
-        sites,
-    };
+    let file = File::open(file).unwrap();
+    let mut reader = BufReader::new(file);
+    let mut contents = String::new();
+    let _ = reader.read_to_string(&mut contents).unwrap();
+    let contents = CifParser::new(&contents).parse();
+    let s = Structure::from(&contents);
 
-    // let wavelength_ams = 1.5405;
-    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
-    // let wavelength_ams = e_kev_to_lambda_ams(8.04);
+    let wavelength_ams = 1.54209;
     let wavelength_ams = e_kev_to_lambda_ams(200.0);
-    let peaks = s.get_pattern(wavelength_ams, (0.0, 90.0));
-    for (two_theta, i) in peaks.iter() {
-        println!("{two_theta:12.4}, {i:12.4}")
+    let peaks = s.get_pattern(wavelength_ams, (3.0, 10.0));
+    if peaks.len() > 1000 {
+        println!("got {} peaks", peaks.len())
+    } else {
+        for (two_theta, i) in peaks.iter() {
+            println!("{two_theta:12.4}, {i:12.4}")
+        }
     }
 }
