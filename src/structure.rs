@@ -5,7 +5,9 @@ use itertools::Itertools;
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 
+use crate::cif::CIFContents;
 use crate::element::atomic_scattering_params;
+use crate::site::Site;
 use crate::species::Species;
 
 const TWO_THETA_ABSTOL: f64 = 1e-5;
@@ -17,6 +19,12 @@ pub struct Lattice {
 }
 
 impl Lattice {
+    fn recip_lattice_crystallographic(&self) -> Lattice {
+        Self {
+            mat: self.mat.try_inverse().unwrap().transpose(),
+        }
+    }
+
     fn recip_lattice(&self) -> Lattice {
         Self {
             mat: self.mat.try_inverse().unwrap().transpose() * 2.0 * std::f64::consts::PI,
@@ -52,37 +60,64 @@ impl std::fmt::Display for Lattice {
 pub struct Structure {
     pub lat: Lattice,
     pub sites: Vec<Site>,
+    pub volume: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Site {
-    pub coords: Vector3<f64>,
-    pub species: Species,
-    pub occu: u16,
+impl From<&CIFContents> for Structure {
+    fn from(value: &CIFContents) -> Self {
+        Structure {
+            lat: value.get_lattice(),
+            sites: value.get_sites(),
+            volume: value.get_volume(),
+        }
+    }
 }
 
 impl Structure {
     pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: (f64, f64)) -> Vec<(f64, f64)> {
-        let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0 - 1e-8;
-        let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0 + 1e-8;
+        let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
+        let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        let recp_len = self.lat.recip_lattice().abc();
-        let r_max = ((max_r + 0.15) * recp_len / (2.0 * PI)).map(|x| x.ceil() as i32);
+        let recip_lat = self.lat.recip_lattice_crystallographic();
+        let recp_len = recip_lat.recip_lattice().abc();
+        const RADIUS_TOL: f64 = 1e-8;
+        let r_cells = max_r + 1e-8;
+        let r_max =
+            ((r_cells + 0.15) * recp_len / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
 
-        let nmin = -r_max;
-        let nmax = r_max;
         let mut agg = HashMap::new();
-        for (hkl, g_hkl) in (nmin[0]..nmax[0])
-            .cartesian_product(nmin[1]..nmax[1])
-            .cartesian_product(nmin[2]..nmax[2])
-            .map(|((a, b), c)| {
-                (
-                    Vector3::<f64>::new(a as f64, b as f64, c as f64),
-                    self.lat.mat * Vector3::<f64>::new(a as f64, b as f64, c as f64),
-                )
+
+        let global_min = -max_r - RADIUS_TOL;
+        let global_max = max_r + RADIUS_TOL;
+
+        let n_min = -r_max;
+        let n_max = r_max;
+        for (hkl, g_hkl) in (n_min[0]..n_max[0])
+            .cartesian_product(n_min[1]..n_max[1])
+            .cartesian_product(n_min[2]..n_max[2])
+            .filter_map(|((a, b), c)| -> Option<(Vector3<f64>, f64)> {
+                let hkl = Vector3::<f64>::new(a as f64, b as f64, c as f64);
+                let pos = recip_lat.mat * hkl;
+                let g_hkl = pos.magnitude();
+
+                // currently, we produce XRD patterns like pymatgen
+                // Neighbor mapping from pymatgen.core.lattice.get_points_in_spheres
+                // does not seem to have any effect if center_coords is the 0-vector
+                // As far as I can tell, it only applies when center_coords are something
+                // other than the 0-vector so we will ignore it for now.
+                // i tested this using a modification of their code and random cifs from
+                // the COD-database
+                if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
+                    && pos
+                        .iter()
+                        .map(|&x| (x > global_min) && (x < global_max))
+                        .all(|x| x)
+                {
+                    Some((hkl, g_hkl))
+                } else {
+                    None
+                }
             })
-            .map(|(hkl, pos)| (hkl, pos.magnitude()))
-            .filter(|(_hkl, dist)| (*dist <= max_r) && (*dist >= min_r))
         {
             if g_hkl == 0.0 {
                 continue;
@@ -114,7 +149,7 @@ impl Structure {
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
                     let f_part = fs
-                        * site.occu as f64
+                        * site.occu
                         * Complex::new(0.0, -2.0 * std::f64::consts::PI * g_dot_r).exp()
                         * dw_correction;
                     f_hkl += f_part;
