@@ -100,10 +100,13 @@ impl Peak {
         v: f64,
         w: f64,
     ) {
-        let fwhm = caglioti(u, v, w, self.pos / 2.0)
-            + scherrer_broadening(wavelength, self.pos.to_radians() / 2.0, mean_ds);
+        // TODO: make position in radians
+        let theta_pos_rad = self.pos.to_radians() / 2.0;
+        let fwhm = caglioti(u, v, w, theta_pos_rad)
+            + scherrer_broadening(wavelength, theta_pos_rad, mean_ds);
         for (intensity, two_theta) in pat.iter_mut().zip(two_thetas) {
-            *intensity += weight * self.intensity * pseudo_voigt(*two_theta, eta, self.pos, fwhm);
+            let dx = *two_theta - self.pos;
+            *intensity += weight * self.intensity * pseudo_voigt(dx, eta, fwhm);
         }
     }
 }

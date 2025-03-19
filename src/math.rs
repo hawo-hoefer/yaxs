@@ -24,20 +24,20 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
     (K * wavelength / (theta.cos() * mean_ds)).to_degrees()
 }
 
-pub fn gauss(x: f64, mu: f64, sigma: f64) -> f64 {
-    (-0.5 * ((x - mu) / sigma).powi(2)).exp() / (std::f64::consts::TAU * sigma.powi(2))
+pub fn gauss(dx: f64, sigma: f64) -> f64 {
+    (-0.5 * (dx / sigma).powi(2)).exp() / (std::f64::consts::TAU * sigma.powi(2))
 }
 
-pub fn lorentz(x: f64, mu: f64, gamma: f64) -> f64 {
-    1.0 / ((1.0 + ((x - mu) / gamma).powi(2)) * std::f64::consts::PI * gamma)
+pub fn lorentz(dx: f64, gamma: f64) -> f64 {
+    1.0 / ((1.0 + (dx / gamma).powi(2)) * std::f64::consts::PI * gamma)
 }
 
-pub fn pseudo_voigt(x: f64, eta: f64, pos: f64, fwhm: f64) -> f64 {
+pub fn pseudo_voigt(dx: f64, eta: f64, fwhm: f64) -> f64 {
     // sigma = np.sqrt(1 / (2 * np.log(2))) * 0.5 * fwhm
     // fwhm = 2 * sqrt(2 ln(2)) sigma
     // sigma = fwhm / (2 sqrt(2 ln 2))
     let two_sqrt_ln_2 = 2.0 * (2.0f64.ln() * 2.0).sqrt();
     let sigma = (1.0 / two_sqrt_ln_2) * fwhm;
     let gamma = fwhm / 2.0;
-    eta * lorentz(x, pos, gamma) + (1.0 - eta) * gauss(x, pos, sigma)
+    eta * lorentz(dx, gamma) + (1.0 - eta) * gauss(dx, sigma)
 }
