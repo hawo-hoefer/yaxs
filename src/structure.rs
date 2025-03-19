@@ -5,7 +5,7 @@ use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 
 use crate::cif::CIFContents;
-use crate::discretize::Peak;
+use crate::pattern::Peak;
 use crate::element::atomic_scattering_params;
 use crate::site::Site;
 
