@@ -17,8 +17,14 @@ impl EmissionLine {
     }
 }
 
+pub struct Component {
+    pub structure: Structure,
+    pub volume_fraction: f64,
+}
+
 pub struct SimulationJob<'a> {
     pub structures: &'a [Structure],
+    pub vol_fractions: Box<[f64]>,
     pub emission_lines: &'a [EmissionLine],
     pub n_steps: u32,
     pub two_theta_range: (f64, f64),
@@ -33,7 +39,7 @@ pub struct SimulationJob<'a> {
 
 impl<'a> SimulationJob<'a> {
     pub fn run(&self, two_thetas: &[f64], pat: &mut [f64]) {
-        for s in self.structures {
+        for (s, vf) in self.structures.iter().zip(&self.vol_fractions) {
             for EmissionLine { wavelength, weight } in self.emission_lines.iter() {
                 let peaks = s.get_pattern(*wavelength, &self.two_theta_range);
                 let wavelength_nm = wavelength / 10.0;
@@ -45,11 +51,11 @@ impl<'a> SimulationJob<'a> {
                     // * `u`: caglioti parameter u
                     // * `v`: caglioti parameter v
                     // * `w`: caglioti parameter w
-                    peak.into_pattern(
+                    peak.render(
                         pat,
                         &two_thetas,
                         wavelength_nm,
-                        *weight,
+                        *weight * vf,
                         self.mean_ds,
                         self.eta,
                         self.u,
@@ -88,7 +94,7 @@ impl Peak {
     /// * `u`: caglioti parameter u
     /// * `v`: caglioti parameter v
     /// * `w`: caglioti parameter w
-    pub fn into_pattern(
+    pub fn render(
         self,
         pat: &mut [f64],
         two_thetas: &[f64],
@@ -104,9 +110,10 @@ impl Peak {
         let theta_pos_rad = self.pos.to_radians() / 2.0;
         let fwhm = caglioti(u, v, w, theta_pos_rad)
             + scherrer_broadening(wavelength, theta_pos_rad, mean_ds);
+        let peak_weight = weight * self.intensity;
         for (intensity, two_theta) in pat.iter_mut().zip(two_thetas) {
             let dx = *two_theta - self.pos;
-            *intensity += weight * self.intensity * pseudo_voigt(dx, eta, fwhm);
+            *intensity += peak_weight * pseudo_voigt(dx, eta, fwhm);
         }
     }
 }

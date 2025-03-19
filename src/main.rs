@@ -35,16 +35,16 @@ fn main() {
         dst_two_theta_range: (10.0, 70.0),
         eta_range: (0.1, 0.9),
         noise_scale_range: (0.0, 100.0),
-        mean_ds_range: (5.0, 50.0),
-        cag_u_range: (0.0, 0.25),
-        cag_v_range: (-0.25, 0.0),
-        cag_w_range: (0.0, 0.25),
+        mean_ds_range: (50.0, 50.0),
+        cag_u_range: (0.0, 0.025),
+        cag_v_range: (-0.025, 0.0),
+        cag_w_range: (0.0, 0.025),
         sample_displacement_range_mu_m: (-250.0, 250.0),
         background_spec: BackgroundSpec::None,
         emission_lines: emission_lines.into(),
         normalize: false,
         seed: Some(1234),
-        n_simulations: 1000,
+        n_simulations: 10_000,
     };
 
     println!("struct_cifs: {:?}", cfg.struct_cifs);
@@ -54,17 +54,27 @@ fn main() {
     let steps = usize::try_from(gen.config.n_steps).unwrap();
 
     let begin = Instant::now();
-    let mut data = Vec::with_capacity(size);
-    data.resize(size, 0.0);
     let mut two_thetas = Vec::with_capacity(steps);
     two_thetas.resize(steps, 0.0);
+    for (i, t) in two_thetas.iter_mut().enumerate() {
+        let r = gen.config.dst_two_theta_range;
+        *t = r.0 + (r.1 - r.0) * (i as f64 / (gen.config.n_steps as f64 - 1.0));
+    }
+    let mut data = Vec::with_capacity(size);
+    data.resize(size, 0.0);
 
-    for (_, chunk) in data.chunks_exact_mut(steps).enumerate() {
+    for (i, chunk) in data.chunks_exact_mut(steps).enumerate() {
+        if i % 100 == 0 {
+            println!("Processing Job {i}");
+        }
         let job = gen.generate_job();
         job.run(&two_thetas, chunk);
     }
 
     let elapsed = begin.elapsed().as_secs_f64();
 
-    eprintln!("Rendering patterns took {elapsed:.2}s")
+    eprintln!("Rendering patterns took {elapsed:.2}s");
+    // for (t, i) in two_thetas.iter().zip(data) {
+    //     println!("{} {}", t, i)
+    // }
 }

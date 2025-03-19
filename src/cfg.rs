@@ -1,11 +1,12 @@
 use std::io::{BufReader, Read};
 
 use itertools::Itertools;
+use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 
 use crate::background::Background;
 use crate::cif::CifParser;
-use crate::pattern::{EmissionLine, SimulationJob};
+use crate::pattern::{Component, EmissionLine, SimulationJob};
 use crate::structure::Structure;
 
 // class AugmentationCfg:
@@ -86,11 +87,34 @@ pub struct Config {
     pub n_simulations: u32,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            struct_cifs: Box::new([]),
+            n_steps: 2048,
+            dst_two_theta_range: (10.0, 70.0),
+            eta_range: (0.1, 0.9),
+            noise_scale_range: (0.0, 100.0),
+            mean_ds_range: (50.0, 50.0),
+            cag_u_range: (0.0, 0.025),
+            cag_v_range: (-0.025, 0.0),
+            cag_w_range: (0.0, 0.025),
+            sample_displacement_range_mu_m: (-250.0, 250.0),
+            background_spec: BackgroundSpec::None,
+            emission_lines: Box::new([]),
+            normalize: false,
+            seed: Some(1234),
+            n_simulations: 1,
+        }
+    }
+}
+
 pub struct MetaGenerator {
     pub structures: Box<[Structure]>,
     pub config: Config,
     pub rng: rand::rngs::StdRng,
     pub i: usize,
+    pub concentration_buf: Box<[NotNan<f64>]>,
 }
 
 impl From<Config> for MetaGenerator {
@@ -110,6 +134,8 @@ impl From<Config> for MetaGenerator {
         let rng = rand::rngs::StdRng::seed_from_u64(config.seed.unwrap_or(0));
         Self {
             config,
+            concentration_buf: vec![NotNan::try_from(0.0).unwrap(); structures.len() + 1]
+                .into_boxed_slice(),
             structures: structures.into_boxed_slice(),
             rng,
             i: 0,
@@ -141,8 +167,24 @@ impl MetaGenerator {
         let w = self.rng.random_range(cag_w_range.0..=cag_w_range.1);
         let background = background_spec.generate_bkg(&mut self.rng);
 
+        self.concentration_buf[0] = NotNan::try_from(0.0).unwrap();
+        self.concentration_buf[self.concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
+        for i in 1..self.structures.len() {
+            self.concentration_buf[i] = NotNan::try_from(self.rng.random_range(0.0..=1.0))
+                .expect("numbers between 0 and 1 are not NaN")
+        }
+        self.concentration_buf.sort();
+        for i in 0..self.concentration_buf.len() - 1 {
+            self.concentration_buf[i] = self.concentration_buf[i + 1] - self.concentration_buf[i];
+        }
+
         SimulationJob {
             structures: &self.structures,
+            vol_fractions: self.concentration_buf[..self.concentration_buf.len() - 1]
+                .iter()
+                .map(|x| f64::from(*x))
+                .collect_vec()
+                .into_boxed_slice(),
             emission_lines: &emission_lines,
             n_steps: *n_steps,
             two_theta_range: *dst_two_theta_range,
