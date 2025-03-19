@@ -1,13 +1,7 @@
-use std::fs::File;
-use std::io::{BufReader, Read};
-
 use itertools::Itertools;
 use std::time::Instant;
-use yaxs::background::Background;
 use yaxs::cfg::{BackgroundSpec, Config, MetaGenerator};
-use yaxs::cif::CifParser;
-use yaxs::pattern::{EmissionLine, SimulationJob};
-use yaxs::structure::Structure;
+use yaxs::pattern::EmissionLine;
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
@@ -50,7 +44,7 @@ fn main() {
         emission_lines: emission_lines.into(),
         normalize: false,
         seed: Some(1234),
-        n_simulations: 100,
+        n_simulations: 1000,
     };
 
     println!("struct_cifs: {:?}", cfg.struct_cifs);
@@ -65,15 +59,12 @@ fn main() {
     let mut two_thetas = Vec::with_capacity(steps);
     two_thetas.resize(steps, 0.0);
 
-    for (i, chunk) in data.chunks_exact_mut(steps).enumerate() {
+    for (_, chunk) in data.chunks_exact_mut(steps).enumerate() {
         let job = gen.generate_job();
         job.run(&two_thetas, chunk);
     }
 
     let elapsed = begin.elapsed().as_secs_f64();
 
-    // for (two_theta, intensity) in two_thetas.iter().zip(&pat) {
-    //     println!("{two_theta}, {intensity}")
-    // }
     eprintln!("Rendering patterns took {elapsed:.2}s")
 }

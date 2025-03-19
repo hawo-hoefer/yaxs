@@ -1,6 +1,4 @@
 use std::io::{BufReader, Read};
-use std::iter::Map;
-use std::ops::Range;
 
 use itertools::Itertools;
 use rand::{Rng, SeedableRng};
@@ -125,12 +123,12 @@ impl MetaGenerator {
             n_steps,
             dst_two_theta_range,
             eta_range,
-            noise_scale_range,
+            // noise_scale_range,
             mean_ds_range,
             cag_u_range,
             cag_v_range,
             cag_w_range,
-            sample_displacement_range_mu_m,
+            // sample_displacement_range_mu_m,
             background_spec,
             emission_lines,
             normalize,
@@ -145,9 +143,9 @@ impl MetaGenerator {
 
         SimulationJob {
             structures: &self.structures,
-            emission_lines: &self.config.emission_lines,
-            n_steps: self.config.n_steps,
-            two_theta_range: self.config.dst_two_theta_range,
+            emission_lines: &emission_lines,
+            n_steps: *n_steps,
+            two_theta_range: *dst_two_theta_range,
             eta,
             u,
             v,
