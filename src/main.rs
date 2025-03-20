@@ -1,4 +1,6 @@
 use itertools::Itertools;
+use ndarray::{arr2, IntoNdProducer};
+use serde::Serialize;
 use std::time::Instant;
 use yaxs::cfg::{BackgroundSpec, Config, MetaGenerator};
 use yaxs::pattern::EmissionLine;
@@ -31,50 +33,49 @@ fn main() {
 
     let cfg = Config {
         struct_cifs: files,
-        n_steps: 2048,
-        dst_two_theta_range: (10.0, 70.0),
-        eta_range: (0.1, 0.9),
-        noise_scale_range: (0.0, 100.0),
-        mean_ds_range: (50.0, 50.0),
-        cag_u_range: (0.0, 0.025),
-        cag_v_range: (-0.025, 0.0),
-        cag_w_range: (0.0, 0.025),
-        sample_displacement_range_mu_m: (-250.0, 250.0),
-        background_spec: BackgroundSpec::None,
         emission_lines: emission_lines.into(),
+        n_steps: 2048,
+        two_theta_range: (10.0, 70.0),
+        eta_range: (0.1, 0.9),
         normalize: false,
         seed: Some(1234),
-        n_simulations: 10_000,
+        n_simulations: 1000,
+        ..Default::default()
     };
 
     println!("struct_cifs: {:?}", cfg.struct_cifs);
 
     let mut gen = MetaGenerator::from(cfg);
-    let size = usize::try_from(gen.config.n_steps * gen.config.n_simulations).unwrap();
-    let steps = usize::try_from(gen.config.n_steps).unwrap();
+    let size = gen.cfg.n_steps * gen.cfg.n_simulations;
+    let steps = gen.cfg.n_steps;
 
     let begin = Instant::now();
     let mut two_thetas = Vec::with_capacity(steps);
     two_thetas.resize(steps, 0.0);
     for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = gen.config.dst_two_theta_range;
-        *t = r.0 + (r.1 - r.0) * (i as f64 / (gen.config.n_steps as f64 - 1.0));
+        let r = gen.cfg.two_theta_range;
+        *t = r.0 + (r.1 - r.0) * (i as f64 / (gen.cfg.n_steps as f64 - 1.0));
     }
-    let mut data = Vec::with_capacity(size);
-    data.resize(size, 0.0);
+    let mut data = ndarray::Array2::<f64>::zeros((gen.cfg.n_simulations, gen.cfg.n_steps));
 
-    for (i, chunk) in data.chunks_exact_mut(steps).enumerate() {
+    for (i, mut chunk) in data.outer_iter_mut().enumerate() {
         if i % 100 == 0 {
             println!("Processing Job {i}");
         }
         let job = gen.generate_job();
-        job.run(&two_thetas, chunk);
+        job.run(&two_thetas, chunk.as_slice_mut().unwrap());
     }
 
     let elapsed = begin.elapsed().as_secs_f64();
-
     eprintln!("Rendering patterns took {elapsed:.2}s");
-    // for (t, i) in two_thetas.iter().zip(data) {
-    //     println!("{} {}", t, i)
-    // }
+
+    let out = hdf5_metno::File::create("out.h5").unwrap();
+    let group = out.create_group("dataset").unwrap();
+    let builder = group.new_dataset_builder();
+    builder.clone().with_data(&data).create("patterns").unwrap();
+    builder
+        .clone()
+        .with_data(&two_thetas)
+        .create("two_thetas_deg")
+        .unwrap();
 }

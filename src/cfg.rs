@@ -3,34 +3,14 @@ use std::io::{BufReader, Read};
 use itertools::Itertools;
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cif::CifParser;
-use crate::pattern::{Component, EmissionLine, SimulationJob};
+use crate::pattern::{EmissionLine, PatternMeta, SimulationJob};
 use crate::structure::Structure;
 
-// class AugmentationCfg:
-//     n_steps: int = 512
-//     dst_two_theta_range: tuple[float, float] = (10.0, 70.0)
-
-//     eta_range: tuple[float, float] = (0.1, 0.9)
-//     crystallite_sz_range_nm: tuple[float, float] = (10, 100)
-
-//     noise_scale_range: tuple[float, float] = (0.03, 0.07)
-//     bkg_spec: BackgroundSpec = BackgroundSpec()
-
-//     cag_u_range: tuple[float, float] = (0.00, 0.1)
-//     cag_v_range: tuple[float, float] = (-0.1, 0.00)
-//     cag_w_range: tuple[float, float] = (0.00, 0.1)
-
-//     sample_displacement_range_mu_m: tuple[float, float] = (-100.0, 100.0)
-//     diffractometer_radius_mm: float = 280.0
-
-//     dst_wavelengths: list[float] = field(default_factory=lambda: [1.54])
-//     intensity_ratios: NDArray[np.float32] = field(default=None, metadata=config(decoder=np.asarray))  # type: ignore
-
-//     normalize: bool = True
-
+#[derive(serde::Deserialize, serde::Serialize)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
@@ -61,47 +41,61 @@ impl BackgroundSpec {
     }
 }
 
-// TODO: derive from yaml
+#[derive(Deserialize, Serialize)]
+struct Caglioti {
+    pub u_range: (f64, f64),
+    pub v_range: (f64, f64),
+    pub w_range: (f64, f64),
+}
+
+#[derive(Deserialize, Serialize)]
+enum Noise {
+    None,
+    Gaussian { sigma_min: f64, sigma_max: f64 },
+    // Uniform // TODO
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct Config {
     pub struct_cifs: Box<[String]>,
-
-    pub n_steps: u32,
-    pub dst_two_theta_range: (f64, f64),
-
-    pub eta_range: (f64, f64),
-    pub noise_scale_range: (f64, f64),
-    pub mean_ds_range: (f64, f64),
-
-    pub cag_u_range: (f64, f64),
-    pub cag_v_range: (f64, f64),
-    pub cag_w_range: (f64, f64),
-
-    pub sample_displacement_range_mu_m: (f64, f64),
-    pub background_spec: BackgroundSpec,
-
     pub emission_lines: Box<[EmissionLine]>,
+
+    pub n_steps: usize,
+    pub two_theta_range: (f64, f64),
+
+    pub mean_ds_range: (f64, f64),
+    pub eta_range: (f64, f64),
+    pub sample_displacement_range_mu_m: (f64, f64),
+
+    pub noise: Noise,
+    pub caglioti: Caglioti,
+    pub background: BackgroundSpec,
 
     pub normalize: bool,
     pub seed: Option<u64>,
-
-    pub n_simulations: u32,
+    pub n_simulations: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             struct_cifs: Box::new([]),
-            n_steps: 2048,
-            dst_two_theta_range: (10.0, 70.0),
-            eta_range: (0.1, 0.9),
-            noise_scale_range: (0.0, 100.0),
-            mean_ds_range: (50.0, 50.0),
-            cag_u_range: (0.0, 0.025),
-            cag_v_range: (-0.025, 0.0),
-            cag_w_range: (0.0, 0.025),
-            sample_displacement_range_mu_m: (-250.0, 250.0),
-            background_spec: BackgroundSpec::None,
             emission_lines: Box::new([]),
+            n_steps: 2048,
+            two_theta_range: (10.0, 70.0),
+            eta_range: (0.1, 0.9),
+            noise: Noise::Gaussian {
+                sigma_min: 0.0,
+                sigma_max: 100.0,
+            },
+            mean_ds_range: (50.0, 50.0),
+            caglioti: Caglioti {
+                u_range: (0.0, 0.025),
+                v_range: (-0.025, 0.0),
+                w_range: (0.0, 0.025),
+            },
+            sample_displacement_range_mu_m: (-250.0, 250.0),
+            background: BackgroundSpec::None,
             normalize: false,
             seed: Some(1234),
             n_simulations: 1,
@@ -111,15 +105,15 @@ impl Default for Config {
 
 pub struct MetaGenerator {
     pub structures: Box<[Structure]>,
-    pub config: Config,
+    pub cfg: Config,
     pub rng: rand::rngs::StdRng,
     pub i: usize,
     pub concentration_buf: Box<[NotNan<f64>]>,
 }
 
 impl From<Config> for MetaGenerator {
-    fn from(config: Config) -> Self {
-        let structures = config
+    fn from(cfg: Config) -> Self {
+        let structures = cfg
             .struct_cifs
             .iter()
             .map(|path| {
@@ -131,9 +125,9 @@ impl From<Config> for MetaGenerator {
                 Structure::from(&p.parse())
             })
             .collect_vec();
-        let rng = rand::rngs::StdRng::seed_from_u64(config.seed.unwrap_or(0));
+        let rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.unwrap_or(0));
         Self {
-            config,
+            cfg,
             concentration_buf: vec![NotNan::try_from(0.0).unwrap(); structures.len() + 1]
                 .into_boxed_slice(),
             structures: structures.into_boxed_slice(),
@@ -147,25 +141,28 @@ impl MetaGenerator {
     pub fn generate_job(&mut self) -> SimulationJob {
         let Config {
             n_steps,
-            dst_two_theta_range,
+            two_theta_range,
             eta_range,
             // noise_scale_range,
             mean_ds_range,
-            cag_u_range,
-            cag_v_range,
-            cag_w_range,
+            caglioti:
+                Caglioti {
+                    u_range,
+                    v_range,
+                    w_range,
+                },
             // sample_displacement_range_mu_m,
-            background_spec,
+            background,
             emission_lines,
             normalize,
             ..
-        } = &self.config;
+        } = &self.cfg;
         let eta = self.rng.random_range(eta_range.0..=eta_range.1);
         let mean_ds = self.rng.random_range(mean_ds_range.0..=mean_ds_range.1);
-        let u = self.rng.random_range(cag_u_range.0..=cag_u_range.1);
-        let v = self.rng.random_range(cag_v_range.0..=cag_v_range.1);
-        let w = self.rng.random_range(cag_w_range.0..=cag_w_range.1);
-        let background = background_spec.generate_bkg(&mut self.rng);
+        let u = self.rng.random_range(u_range.0..=u_range.1);
+        let v = self.rng.random_range(v_range.0..=v_range.1);
+        let w = self.rng.random_range(w_range.0..=w_range.1);
+        let background = background.generate_bkg(&mut self.rng);
 
         self.concentration_buf[0] = NotNan::try_from(0.0).unwrap();
         self.concentration_buf[self.concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
@@ -180,21 +177,23 @@ impl MetaGenerator {
 
         SimulationJob {
             structures: &self.structures,
-            vol_fractions: self.concentration_buf[..self.concentration_buf.len() - 1]
-                .iter()
-                .map(|x| f64::from(*x))
-                .collect_vec()
-                .into_boxed_slice(),
             emission_lines: &emission_lines,
             n_steps: *n_steps,
-            two_theta_range: *dst_two_theta_range,
-            eta,
-            u,
-            v,
-            w,
-            mean_ds,
-            background,
+            two_theta_range: *two_theta_range,
             normalize: *normalize,
+            meta: PatternMeta {
+                vol_fractions: self.concentration_buf[..self.concentration_buf.len() - 1]
+                    .iter()
+                    .map(|x| f64::from(*x))
+                    .collect_vec()
+                    .into_boxed_slice(),
+                eta,
+                u,
+                v,
+                w,
+                mean_ds,
+                background,
+            },
         }
     }
 }

@@ -2,6 +2,19 @@ use crate::background::Background;
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
 use crate::structure::Structure;
 
+struct Strain([f64; 6]);
+
+pub struct PatternMeta {
+    pub vol_fractions: Box<[f64]>,
+    pub eta: f64,
+    pub mean_ds: f64,
+    pub u: f64,
+    pub v: f64,
+    pub w: f64,
+    pub background: Background,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
 pub struct EmissionLine {
     pub wavelength: f64,
     pub weight: f64,
@@ -17,29 +30,27 @@ impl EmissionLine {
     }
 }
 
-pub struct Component {
-    pub structure: Structure,
-    pub volume_fraction: f64,
-}
-
 pub struct SimulationJob<'a> {
     pub structures: &'a [Structure],
-    pub vol_fractions: Box<[f64]>,
     pub emission_lines: &'a [EmissionLine],
-    pub n_steps: u32,
+    pub n_steps: usize,
     pub two_theta_range: (f64, f64),
-    pub eta: f64,
-    pub mean_ds: f64,
-    pub u: f64,
-    pub v: f64,
-    pub w: f64,
-    pub background: Background,
     pub normalize: bool,
+    pub meta: PatternMeta,
 }
 
 impl<'a> SimulationJob<'a> {
     pub fn run(&self, two_thetas: &[f64], pat: &mut [f64]) {
-        for (s, vf) in self.structures.iter().zip(&self.vol_fractions) {
+        let PatternMeta {
+            vol_fractions,
+            eta,
+            mean_ds,
+            u,
+            v,
+            w,
+            background,
+        } = &self.meta;
+        for (s, vf) in self.structures.iter().zip(vol_fractions) {
             for EmissionLine { wavelength, weight } in self.emission_lines.iter() {
                 let peaks = s.get_pattern(*wavelength, &self.two_theta_range);
                 let wavelength_nm = wavelength / 10.0;
@@ -56,11 +67,11 @@ impl<'a> SimulationJob<'a> {
                         &two_thetas,
                         wavelength_nm,
                         *weight * vf,
-                        self.mean_ds,
-                        self.eta,
-                        self.u,
-                        self.v,
-                        self.w,
+                        *mean_ds,
+                        *eta,
+                        *u,
+                        *v,
+                        *w,
                     )
                 }
             }

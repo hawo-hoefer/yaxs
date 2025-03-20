@@ -1,3 +1,4 @@
+#[derive(Clone, PartialEq)]
 pub enum Background {
     None,
     Polynomial { coef: Vec<f64> },
