@@ -25,7 +25,7 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
 }
 
 pub fn gauss(dx: f64, sigma: f64) -> f64 {
-    (-0.5 * (dx / sigma).powi(2)).exp() / (std::f64::consts::TAU * sigma.powi(2))
+    (-0.5 * (dx / sigma).powi(2)).exp() / (std::f64::consts::TAU * sigma.powi(2)).sqrt()
 }
 
 pub fn lorentz(dx: f64, gamma: f64) -> f64 {
