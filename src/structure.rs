@@ -31,6 +31,7 @@ impl Lattice {
         }
     }
 
+    /// Returns the volume of this [`Lattice`] in amstrong cubed.
     pub fn volume(&self) -> f64 {
         self.mat
             .row(0)
@@ -115,8 +116,13 @@ impl TryFrom<u8> for SGClass {
 
 impl Structure {
     pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> Structure {
+        if max_strain == 0.0 {
+            return self.clone();
+        }
+
         let tensile_range = 1.0 - max_strain..=1.0 + max_strain;
         let shear_range = -max_strain..=max_strain;
+
         let strain_tensor: Matrix3<f64> = match self.sg_class {
             SGClass::Cubic => Matrix3::identity() * rng.random_range(tensile_range),
             SGClass::Orthorombic => {
@@ -307,6 +313,11 @@ impl Structure {
                     intensity: *intens,
                 }),
             }
+        }
+
+        let volume = self.lat.volume();
+        for peak in compressed.iter_mut() {
+            peak.intensity = peak.intensity / volume.powi(2) * wavelength_ams.powi(3);
         }
         compressed
     }

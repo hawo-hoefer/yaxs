@@ -63,7 +63,7 @@ pub struct Config {
     pub n_steps: usize,
     pub two_theta_range: (f64, f64),
 
-    pub mean_ds_range: (f64, f64),
+    pub mean_ds_range_nm: (f64, f64),
     pub eta_range: (f64, f64),
     pub sample_displacement_range_mu_m: (f64, f64),
     pub max_strain: f64,
@@ -76,6 +76,8 @@ pub struct Config {
     pub seed: Option<u64>,
     pub n_patterns: usize,
     pub structure_permutations: usize,
+
+    pub abstol: f64
 }
 
 impl Default for Config {
@@ -90,7 +92,7 @@ impl Default for Config {
                 sigma_min: 0.0,
                 sigma_max: 100.0,
             },
-            mean_ds_range: (50.0, 50.0),
+            mean_ds_range_nm: (50.0, 50.0),
             caglioti: Caglioti {
                 u_range: (0.0, 0.025),
                 v_range: (-0.025, 0.0),
@@ -103,6 +105,7 @@ impl Default for Config {
             n_patterns: 1,
             max_strain: 0.01,
             structure_permutations: 1,
+            abstol: 1e-2
         }
     }
 }
@@ -148,7 +151,7 @@ impl MetaGenerator {
             two_theta_range,
             eta_range,
             // noise_scale_range,
-            mean_ds_range,
+            mean_ds_range_nm,
             caglioti:
                 Caglioti {
                     u_range,
@@ -164,7 +167,7 @@ impl MetaGenerator {
         } = &self.cfg;
 
         let eta = self.rng.random_range(eta_range.0..=eta_range.1);
-        let mean_ds = self.rng.random_range(mean_ds_range.0..=mean_ds_range.1);
+        let mean_ds_nm = self.rng.random_range(mean_ds_range_nm.0..=mean_ds_range_nm.1);
         let u = self.rng.random_range(u_range.0..=u_range.1);
         let v = self.rng.random_range(v_range.0..=v_range.1);
         let w = self.rng.random_range(w_range.0..=w_range.1);
@@ -196,7 +199,7 @@ impl MetaGenerator {
                     .collect_vec()
                     .into(),
                 eta,
-                mean_ds,
+                mean_ds_nm,
                 u,
                 v,
                 w,

@@ -73,8 +73,8 @@ fn main() {
         .emission_lines
         .iter()
         .min_by(|a, b| {
-            a.wavelength
-                .partial_cmp(&b.wavelength)
+            a.wavelength_ams
+                .partial_cmp(&b.wavelength_ams)
                 .expect("no NaNs in wavelengths")
         })
         .expect("at least one emission line");
@@ -86,22 +86,27 @@ fn main() {
             let peaks = Peaks {
                 peaks: s
                     .permute(gen.cfg.max_strain, &mut gen.rng)
-                    .get_pattern(min_line.wavelength, &gen.cfg.two_theta_range)
+                    .get_pattern(min_line.wavelength_ams, &gen.cfg.two_theta_range)
                     .into(),
-                wavelength_nm: min_line.wavelength,
+                wavelength_nm: min_line.wavelength_ams / 10.0,
             };
             permuted_phase_peaks.push(peaks);
         }
         all_simulated_peaks.push(permuted_phase_peaks);
     }
+    let elapsed = begin.elapsed().as_secs_f64();
+    eprintln!("Simulating Peak Positions took {elapsed:.2}s");
+
+    let begin = Instant::now();
 
     let mut data = ndarray::Array2::<f64>::zeros((gen.cfg.n_patterns, gen.cfg.n_steps));
     for (i, mut pattern) in data.outer_iter_mut().enumerate() {
         if i % 100 == 0 {
             println!("Processing Job {i}");
         }
+        let abstol = gen.cfg.abstol;
         let job = gen.generate_job(&all_simulated_peaks);
-        job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas);
+        job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, abstol);
     }
 
     let elapsed = begin.elapsed().as_secs_f64();
