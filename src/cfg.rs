@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cif::CifParser;
-use crate::pattern::{EmissionLine, PatternMeta, SimulationJob};
+use crate::pattern::{DiscretizationJob, EmissionLine, PatternMeta, Peaks};
 use crate::structure::Structure;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -66,6 +66,7 @@ pub struct Config {
     pub mean_ds_range: (f64, f64),
     pub eta_range: (f64, f64),
     pub sample_displacement_range_mu_m: (f64, f64),
+    pub max_strain: f64,
 
     pub noise: Noise,
     pub caglioti: Caglioti,
@@ -73,7 +74,8 @@ pub struct Config {
 
     pub normalize: bool,
     pub seed: Option<u64>,
-    pub n_simulations: usize,
+    pub n_patterns: usize,
+    pub structure_permutations: usize,
 }
 
 impl Default for Config {
@@ -98,7 +100,9 @@ impl Default for Config {
             background: BackgroundSpec::None,
             normalize: false,
             seed: Some(1234),
-            n_simulations: 1,
+            n_patterns: 1,
+            max_strain: 0.01,
+            structure_permutations: 1,
         }
     }
 }
@@ -138,7 +142,7 @@ impl From<Config> for MetaGenerator {
 }
 
 impl MetaGenerator {
-    pub fn generate_job(&mut self) -> SimulationJob {
+    pub fn generate_job<'a>(&'a mut self, all_simulated_peaks: &'a Vec<Vec<Peaks>>) -> DiscretizationJob<'a> {
         let Config {
             n_steps,
             two_theta_range,
@@ -155,8 +159,10 @@ impl MetaGenerator {
             background,
             emission_lines,
             normalize,
+            structure_permutations,
             ..
         } = &self.cfg;
+
         let eta = self.rng.random_range(eta_range.0..=eta_range.1);
         let mean_ds = self.rng.random_range(mean_ds_range.0..=mean_ds_range.1);
         let u = self.rng.random_range(u_range.0..=u_range.1);
@@ -175,23 +181,25 @@ impl MetaGenerator {
             self.concentration_buf[i] = self.concentration_buf[i + 1] - self.concentration_buf[i];
         }
 
-        SimulationJob {
-            structures: &self.structures,
+        DiscretizationJob {
+            all_simulated_peaks,
+            indices: (0..self.structures.len())
+                .map(|_| self.rng.random_range(0..*structure_permutations))
+                .collect_vec(),
             emission_lines: &emission_lines,
-            n_steps: *n_steps,
-            two_theta_range: *two_theta_range,
             normalize: *normalize,
             meta: PatternMeta {
-                vol_fractions: self.concentration_buf[..self.concentration_buf.len() - 1]
+                vol_fractions: self
+                    .concentration_buf
                     .iter()
                     .map(|x| f64::from(*x))
                     .collect_vec()
-                    .into_boxed_slice(),
+                    .into(),
                 eta,
+                mean_ds,
                 u,
                 v,
                 w,
-                mean_ds,
                 background,
             },
         }
