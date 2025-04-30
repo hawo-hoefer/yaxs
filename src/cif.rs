@@ -6,7 +6,7 @@ use nalgebra::{Matrix3, Vector3};
 
 use crate::site::Site;
 use crate::species::Species;
-use crate::structure::Lattice;
+use crate::structure::{Lattice, SGClass};
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive
@@ -51,6 +51,7 @@ pub enum DataItem {
     Table(Table),
 }
 
+#[derive(Debug)]
 pub struct CIFContents {
     pub block_name: String,
     pub kvs: HashMap<String, Value>,
@@ -79,9 +80,6 @@ impl CIFContents {
                 s.parse::<SymOp>().unwrap()
             })
             .collect_vec()
-    }
-    pub fn get_volume(&self) -> f64 {
-        self.kvs.get("_cell_volume").unwrap().try_to_f64().unwrap()
     }
 
     pub fn get_lattice(&self) -> Lattice {
@@ -205,6 +203,29 @@ impl CIFContents {
         }
         sites
     }
+
+    pub fn get_sg_no_and_class(&self) -> (u8, SGClass) {
+        let sg_no = self
+            .kvs
+            .get("_space_group_IT_number")
+            .expect("symmetry group should be present in CIF");
+        let sg_no = match *sg_no {
+            Value::Int(sg_no) => {
+                if sg_no > 230 || sg_no < 1 {
+                    panic!(
+                        "space group number is out of range. Needs to be in [1, 230], got {sg_no}"
+                    )
+                }
+                sg_no as u8
+            }
+            Value::Inapplicable | Value::Unknown | Value::Float(_) | Value::Text(_) => {
+                panic!("space group number is of wrong type. Required Integer, got {sg_no:?}")
+            }
+        };
+
+        let sg_class = SGClass::try_from(sg_no).expect("we test this above");
+        (sg_no, sg_class)
+    }
 }
 
 impl<'a> CifParser<'a> {
@@ -247,11 +268,12 @@ impl<'a> CifParser<'a> {
     fn skip_comments(&mut self) {
         while self.c.starts_with('#') {
             // skip comments
-            let next_line = self
-                .c
-                .find('\n')
-                .expect("only a comment line is left - cannot parse a block name")
-                + 1;
+            let next_line =
+                self.c
+                    .find('\n')
+                    .expect(&format!(
+                "only a comment line is left - cannot parse a block name. Current line: '{}'",
+            self.c)) + 1;
             self.c = std::str::from_utf8(&self.c.as_bytes()[next_line..]).unwrap();
         }
     }
@@ -638,5 +660,50 @@ He2- 2.
         let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
         assert_eq!(kvs, kvs_exp);
         assert_eq!(tables.len(), 1);
+    }
+
+    #[test]
+    fn parse_leading_new_line() {
+        let mut p = CifParser::new("_test 1.");
+        let item = p.parse_data_item();
+        assert_eq!(item, DataItem::KV("_test".to_string(), Value::Float(1.0)))
+    }
+
+    #[test]
+    fn parse_kw_after_loop() {
+        let mut p = CifParser::new(
+            "data_dummy_block_name
+loop_
+_test
+_test2
+A B
+A C
+_cell_length_a 4
+_cell_length_b 8
+_cell_length_c 12
+",
+        );
+
+        let CIFContents {
+            block_name,
+            kvs,
+            tables,
+        } = p.parse();
+        assert_eq!(block_name, "dummy_block_name");
+        let mut table = HashMap::new();
+        table.insert(
+            "_test".to_string(),
+            vec![Value::Text("A".to_string()), Value::Text("A".to_string())],
+        );
+
+        table.insert(
+            "_test2".to_string(),
+            vec![Value::Text("B".to_string()), Value::Text("C".to_string())],
+        );
+        assert_eq!(tables, vec![table]);
+
+        assert_eq!(kvs.get("_cell_length_a"), Some(&Value::Int(4)));
+        assert_eq!(kvs.get("_cell_length_b"), Some(&Value::Int(8)));
+        assert_eq!(kvs.get("_cell_length_c"), Some(&Value::Int(12)));
     }
 }

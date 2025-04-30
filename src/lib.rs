@@ -5,5 +5,6 @@ pub mod structure;
 pub mod cif;
 pub mod symop;
 pub mod math;
+pub mod pattern;
 pub mod cfg;
 pub mod background;

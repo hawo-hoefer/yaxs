@@ -1,3 +1,4 @@
+#[derive(Clone, PartialEq)]
 pub enum Background {
     None,
     Polynomial { coef: Vec<f64> },
@@ -67,7 +68,7 @@ impl Background {
             }
 
             // cn[:i] -= cn2[:i]
-            for j in (0..i) {
+            for j in 0..i {
                 cn[j] -= cn2[j];
             }
 
