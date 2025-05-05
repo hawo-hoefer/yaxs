@@ -1,10 +1,13 @@
 use itertools::Itertools;
 use ndarray::{arr2, IntoNdProducer};
+use ordered_float::NotNan;
+use rand::SeedableRng;
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::Instant;
 use yaxs::cfg::{BackgroundSpec, Config, MetaGenerator};
+use yaxs::discretize_cuda::discretize_peaks_cuda;
 use yaxs::pattern::{EmissionLine, Peaks};
 
 use clap::Parser;
@@ -45,7 +48,7 @@ fn main() {
         }
     };
 
-    let mut gen = {
+    let (mut gen, mut rng) = {
         let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -57,7 +60,8 @@ fn main() {
             }
         };
         println!("struct_cifs: {:?}", cfg.struct_cifs);
-        MetaGenerator::from(cfg)
+        let rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.unwrap_or(0));
+        (MetaGenerator::from(cfg), rng)
     };
 
     let begin = Instant::now();
@@ -85,7 +89,7 @@ fn main() {
         for _ in 0..gen.cfg.structure_permutations {
             let peaks = Peaks {
                 peaks: s
-                    .permute(gen.cfg.max_strain, &mut gen.rng)
+                    .permute(gen.cfg.max_strain, &mut rng)
                     .get_pattern(min_line.wavelength_ams, &gen.cfg.two_theta_range)
                     .into(),
                 wavelength_nm: min_line.wavelength_ams / 10.0,
@@ -100,14 +104,26 @@ fn main() {
     let begin = Instant::now();
 
     let mut data = ndarray::Array2::<f64>::zeros((gen.cfg.n_patterns, gen.cfg.n_steps));
-    for (i, mut pattern) in data.outer_iter_mut().enumerate() {
-        if i % 100 == 0 {
-            println!("Processing Job {i}");
-        }
-        let abstol = gen.cfg.abstol;
-        let job = gen.generate_job(&all_simulated_peaks);
-        job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, abstol);
+    let mut jobs = Vec::with_capacity(gen.cfg.n_patterns);
+    let mut concentration_buf = Vec::with_capacity(gen.cfg.struct_cifs.len());
+    concentration_buf.resize(
+        concentration_buf.capacity(),
+        NotNan::new(0.0).expect("0.0 is not NaN"),
+    );
+
+    for _ in 0..gen.cfg.n_patterns {
+        let job = gen.generate_job(&all_simulated_peaks, &mut concentration_buf, &mut rng);
+        jobs.push(job);
     }
+    discretize_peaks_cuda(&jobs, &two_thetas);
+    // for (i, mut pattern) in data.outer_iter_mut().enumerate() {
+    //     if i % 100 == 0 {
+    //         println!("Processing Job {i}");
+    //     }
+    //     let abstol = gen.cfg.abstol;
+    //     let job = gen.generate_job(&all_simulated_peaks);
+    //     job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, abstol);
+    // }
 
     let elapsed = begin.elapsed().as_secs_f64();
     eprintln!("Rendering patterns took {elapsed:.2}s");

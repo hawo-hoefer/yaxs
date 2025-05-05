@@ -6,6 +6,7 @@ use crate::structure::Structure;
 
 struct Strain([f64; 6]);
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct PatternMeta {
     pub vol_fractions: Box<[f64]>,
     pub eta: f64,
@@ -113,6 +114,7 @@ impl<'a> DiscretizationJob<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 pub struct Peak {
     // position in degrees two-theta
     pub pos: f64,
