@@ -63,10 +63,10 @@ fn main() {
 
     let begin = Instant::now();
     let mut two_thetas = Vec::with_capacity(gen.cfg.n_steps);
-    two_thetas.resize(two_thetas.capacity(), 0.0);
+    two_thetas.resize(two_thetas.capacity(), 0.0f32);
     for (i, t) in two_thetas.iter_mut().enumerate() {
         let r = gen.cfg.two_theta_range;
-        *t = r.0 + (r.1 - r.0) * (i as f64 / (gen.cfg.n_steps as f64 - 1.0));
+        *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.cfg.n_steps as f64 - 1.0))) as f32;
     }
 
     let min_line = &gen
