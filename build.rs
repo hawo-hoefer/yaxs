@@ -3,6 +3,10 @@ fn main() {
     cc::Build::new()
         .cuda(true)
         .cudart("static")
+        .flag("--dopt=on")
+        .flag("--generate-line-info")
+        .flag("-gencode").flag("arch=compute_80,code=sm_80")
+        .flag("-gencode").flag("arch=compute_86,code=sm_86")
         .file("./src/discretize_cuda.cu")
         .compile("discretize_cuda");
 }

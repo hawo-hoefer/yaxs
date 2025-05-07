@@ -1,14 +1,11 @@
-use itertools::Itertools;
-use ndarray::{arr2, IntoNdProducer};
 use ordered_float::NotNan;
 use rand::SeedableRng;
-use serde::Serialize;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::time::Instant;
-use yaxs::cfg::{BackgroundSpec, Config, MetaGenerator};
+use yaxs::cfg::{Config, MetaGenerator};
 use yaxs::discretize_cuda::discretize_peaks_cuda;
-use yaxs::pattern::{EmissionLine, Peaks};
+use yaxs::pattern::Peaks;
 
 use clap::Parser;
 
@@ -48,7 +45,7 @@ fn main() {
         }
     };
 
-    let (mut gen, mut rng) = {
+    let (gen, mut rng) = {
         let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -59,7 +56,7 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        println!("struct_cifs: {:?}", cfg.struct_cifs);
+        eprintln!("struct_cifs: {:?}", cfg.struct_cifs);
         let rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.unwrap_or(0));
         (MetaGenerator::from(cfg), rng)
     };
@@ -103,7 +100,6 @@ fn main() {
 
     let begin = Instant::now();
 
-    let mut data = ndarray::Array2::<f64>::zeros((gen.cfg.n_patterns, gen.cfg.n_steps));
     let mut jobs = Vec::with_capacity(gen.cfg.n_patterns);
     let mut concentration_buf = Vec::with_capacity(gen.cfg.struct_cifs.len());
     concentration_buf.resize(
@@ -115,7 +111,7 @@ fn main() {
         let job = gen.generate_job(&all_simulated_peaks, &mut concentration_buf, &mut rng);
         jobs.push(job);
     }
-    discretize_peaks_cuda(&jobs, &two_thetas);
+    let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
     // for (i, mut pattern) in data.outer_iter_mut().enumerate() {
     //     if i % 100 == 0 {
     //         println!("Processing Job {i}");
@@ -124,6 +120,9 @@ fn main() {
     //     let job = gen.generate_job(&all_simulated_peaks);
     //     job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, abstol);
     // }
+    let intensities =
+        ndarray::Array2::from_shape_vec((gen.cfg.n_patterns, gen.cfg.n_steps), intensities)
+            .expect("sizes must match");
 
     let elapsed = begin.elapsed().as_secs_f64();
     eprintln!("Rendering patterns took {elapsed:.2}s");
@@ -131,7 +130,11 @@ fn main() {
     let out = hdf5_metno::File::create("out.h5").unwrap();
     let group = out.create_group("dataset").unwrap();
     let builder = group.new_dataset_builder();
-    builder.clone().with_data(&data).create("patterns").unwrap();
+    builder
+        .clone()
+        .with_data(&intensities)
+        .create("patterns")
+        .unwrap();
     builder
         .clone()
         .with_data(&two_thetas)

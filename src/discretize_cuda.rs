@@ -1,5 +1,3 @@
-use std::mem::MaybeUninit;
-
 use crate::math::{caglioti, scherrer_broadening};
 use crate::pattern::{DiscretizationJob, PatternMeta, Peak};
 
@@ -20,7 +18,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
         peaks: *const Peak,
         peak_info: *const PeakInfo,
         n_peaks: usize,
-    };
+    }
 
     #[repr(C)]
     struct PeakInfo {
@@ -30,6 +28,8 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
     }
 
     let mut patterns = Vec::<CUDAPattern>::with_capacity(jobs.len());
+    let mut outer_ffi_peaks = Vec::new();
+    let mut outer_ffi_peak_info = Vec::new();
     for job in jobs.iter() {
         let n_peaks = job
             .all_simulated_peaks
@@ -45,7 +45,8 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
             u,
             v,
             w,
-            background,
+            ..
+            // background,
         } = &job.meta;
 
         let mut ffi_peaks = Vec::with_capacity(n_peaks);
@@ -65,10 +66,10 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
             // * `u`: caglioti parameter u
             // * `v`: caglioti parameter v
             // * `w`: caglioti parameter w
-            // for emission_line in job.emission_lines {
+            for emission_line in job.emission_lines {
             for peak in &peaks.peaks {
-                // let cpeak =
-                //     peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
+                let cpeak =
+                    peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
 
                 let theta_pos_rad = peak.pos.to_radians() / 2.0;
                 let fwhm = caglioti(*u, *v, *w, theta_pos_rad)
@@ -80,7 +81,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
                 });
                 ffi_peaks.push(*peak)
             }
-            // }
+            }
         }
 
         patterns.push(CUDAPattern {
@@ -88,6 +89,8 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f64]) -> 
             peak_info: ffi_peak_info.as_ptr(),
             n_peaks: ffi_peaks.len(),
         });
+        outer_ffi_peak_info.push(ffi_peak_info);
+        outer_ffi_peaks.push(ffi_peaks);
         // background.render(pat, two_thetas);
 
         // TODO: normalization

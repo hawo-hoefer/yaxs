@@ -2,7 +2,7 @@ use std::io::{BufReader, Read};
 
 use itertools::Itertools;
 use ordered_float::NotNan;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
@@ -42,14 +42,14 @@ impl BackgroundSpec {
 }
 
 #[derive(Deserialize, Serialize)]
-struct Caglioti {
+pub struct Caglioti {
     pub u_range: (f64, f64),
     pub v_range: (f64, f64),
     pub w_range: (f64, f64),
 }
 
 #[derive(Deserialize, Serialize)]
-enum Noise {
+pub enum Noise {
     None,
     Gaussian { sigma_min: f64, sigma_max: f64 },
     // Uniform // TODO
@@ -146,10 +146,7 @@ impl MetaGenerator {
         rng: &mut rand::rngs::StdRng,
     ) -> DiscretizationJob<'a> {
         let Config {
-            n_steps,
-            two_theta_range,
             eta_range,
-            // noise_scale_range,
             mean_ds_range_nm,
             caglioti:
                 Caglioti {

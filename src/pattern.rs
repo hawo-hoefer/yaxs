@@ -1,10 +1,5 @@
-use std::mem::Discriminant;
-
 use crate::background::Background;
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
-use crate::structure::Structure;
-
-struct Strain([f64; 6]);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatternMeta {
@@ -18,6 +13,7 @@ pub struct PatternMeta {
 }
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+#[repr(C)]
 pub struct EmissionLine {
     // wavelength in amstrong
     pub wavelength_ams: f64,
@@ -150,7 +146,6 @@ impl Peak {
         let fwhm = caglioti(u, v, w, theta_pos_rad)
             + scherrer_broadening(wavelength, theta_pos_rad, mean_ds_nm);
         let peak_weight = weight * self.intensity;
-        // // left half
         let midpoint = ((self.pos - two_thetas[0])
             / (two_thetas[two_thetas.len() - 1] - two_thetas[0])
             * two_thetas.len() as f64) as usize;
@@ -160,7 +155,8 @@ impl Peak {
             i = two_thetas.len() - 1
         }
 
-        while i > 0 {
+        // left half
+        loop {
             let two_theta = two_thetas[i];
             let dx = two_theta - self.pos;
             let di = peak_weight * pseudo_voigt(dx, eta, fwhm);
@@ -168,9 +164,13 @@ impl Peak {
                 break;
             }
             pat[i] += di;
+            if i == 0 {
+                break;
+            }
             i -= 1;
         }
 
+        // right half
         i = midpoint + 1;
         while i < two_thetas.len() {
             let two_theta = two_thetas[i];
@@ -205,7 +205,7 @@ impl Peak {
 
         return Peak {
             pos: new_pos,
-            intensity: self.intensity * wav_correction * lorentz_correction,
+            intensity: self.intensity * wav_correction as f64 * lorentz_correction as f64,
         };
     }
 }
