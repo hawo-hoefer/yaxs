@@ -268,12 +268,7 @@ impl<'a> CifParser<'a> {
     fn skip_comments(&mut self) {
         while self.c.starts_with('#') {
             // skip comments
-            let next_line =
-                self.c
-                    .find('\n')
-                    .expect(&format!(
-                "only a comment line is left - cannot parse a block name. Current line: '{}'",
-            self.c)) + 1;
+            let next_line = self.c.find('\n').unwrap_or(self.c.len() - 1) + 1;
             self.c = std::str::from_utf8(&self.c.as_bytes()[next_line..]).unwrap();
         }
     }
@@ -655,6 +650,23 @@ Hf2+ 2
 He2- 2.
 #arst
 ";
+        let mut p = CifParser::new(data);
+        let CIFContents { kvs, tables, .. } = p.parse();
+        let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
+        assert_eq!(kvs, kvs_exp);
+        assert_eq!(tables.len(), 1);
+    }
+
+    #[test]
+    fn parse_loop_end_comment_without_trailing_newline() {
+        let data = "data_test
+_data 1234
+loop_
+_sym
+_ox
+Hf2+ 2
+He2- 2.
+#arst";
         let mut p = CifParser::new(data);
         let CIFContents { kvs, tables, .. } = p.parse();
         let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
