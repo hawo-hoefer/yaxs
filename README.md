@@ -27,7 +27,7 @@ An (ED-)XRD simulation tool implemented in rust.
     - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
     - therefor, this is low priority
 - [ ] IO
-    - [ ] output pattern-wise metadata to target arrays in data files
+    - [x] output pattern-wise metadata to target arrays in data files
     - [ ] output configuration-metadata to `meta.json`
 - [ ] Implement support for noise 
     - Usually noise is added during augmentation anyway, so we may not need this

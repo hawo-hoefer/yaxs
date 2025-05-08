@@ -18,6 +18,24 @@ pub struct Lattice {
     pub mat: Matrix3<f64>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Strain(pub [f64; 6]);
+impl Strain {
+    pub fn from_mat3(mat: &Matrix3<f64>) -> Self {
+        Self([
+            mat[(0, 0)],
+            mat[(1, 0)],
+            mat[(1, 1)],
+            mat[(2, 0)],
+            mat[(2, 1)],
+            mat[(2, 2)],
+        ])
+    }
+    pub fn none() -> Self {
+        Self([0.0; 6])
+    }
+}
+
 impl Lattice {
     fn recip_lattice_crystallographic(&self) -> Lattice {
         Self {
@@ -115,9 +133,9 @@ impl TryFrom<u8> for SGClass {
 }
 
 impl Structure {
-    pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> Structure {
+    pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> (Structure, Strain) {
         if max_strain == 0.0 {
-            return self.clone();
+            return (self.clone(), Strain::none());
         }
 
         let tensile_range = 1.0 - max_strain..=1.0 + max_strain;
@@ -191,7 +209,7 @@ impl Structure {
         let mut r = self.clone();
         r.lat.mat = r.lat.mat * strain_tensor;
 
-        r
+        (r, Strain::from_mat3(&strain_tensor))
     }
 
     pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {

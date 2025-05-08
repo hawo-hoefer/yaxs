@@ -1,18 +1,19 @@
 use std::sync::Arc;
 
-use ndarray::Array2;
+use ndarray::{Array1, Array2, Array3};
 
 use crate::background::Background;
 use crate::cfg::Config;
 use crate::discretize_cuda::discretize_peaks_cuda;
-use crate::io::{render_jobs_to_npz, WriteJob};
+use crate::io::{render_and_queue_write_in_thread, MetaData, WriteJob};
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
+use crate::structure::Strain;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatternMeta {
     pub vol_fractions: Box<[f64]>,
+    pub mean_ds_nm: Box<[f64]>,
     pub eta: f64,
-    pub mean_ds_nm: f64,
     pub u: f64,
     pub v: f64,
     pub w: f64,
@@ -50,6 +51,7 @@ pub struct Peaks {
 pub struct DiscretizationJob<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    pub all_strains: &'a Vec<Vec<Strain>>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Vec<usize>,
     pub emission_lines: &'a [EmissionLine],
@@ -69,11 +71,12 @@ impl<'a> DiscretizationJob<'a> {
             background,
         } = &self.meta;
 
-        for ((phase_peaks, idx), vf) in self
+        for (((phase_peaks, idx), vf), phase_mean_ds_nm) in self
             .all_simulated_peaks
             .iter()
             .zip(&self.indices)
             .zip(vol_fractions)
+            .zip(mean_ds_nm)
         {
             let peaks = &phase_peaks[*idx];
             // * `pat`: target pattern
@@ -92,7 +95,7 @@ impl<'a> DiscretizationJob<'a> {
                         two_thetas,
                         emission_line.wavelength_ams / 10.0,
                         emission_line.weight * vf,
-                        *mean_ds_nm,
+                        *phase_mean_ds_nm,
                         *eta,
                         *u,
                         *v,
@@ -222,7 +225,7 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
-pub fn process_chunked(
+pub fn render_write_chunked(
     jobs: &[DiscretizationJob],
     two_thetas: &[f32],
     cfg: &Config,
@@ -237,7 +240,8 @@ pub fn process_chunked(
                 WriteJob::Write {
                     ref intensities,
                     ref path,
-                } => match crate::io::write_to_npz(path, intensities, compress) {
+                    ref meta,
+                } => match crate::io::write_to_npz(path, intensities, meta, compress) {
                     Err(()) => {
                         eprintln!("IO thread quitting...");
                         return;
@@ -308,8 +312,8 @@ pub fn process_chunked(
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        let _ =
-            render_jobs_to_npz(&chunk, &two_thetas, chunk_path, tx.clone(), cfg).map_err(|_| {
+        let _ = render_and_queue_write_in_thread(&chunk, &two_thetas, chunk_path, tx.clone(), cfg)
+            .map_err(|_| {
                 std::process::exit(1);
             });
         i += chunk_size;
@@ -321,8 +325,13 @@ pub fn process_chunked(
     });
 }
 
-pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32], atol: f32) -> Array2<f32> {
-    if cfg!(feature = "cpu-only") {
+pub fn render_jobs(
+    jobs: &[DiscretizationJob],
+    two_thetas: &[f32],
+    atol: f32,
+    n_phases: usize,
+) -> (Array2<f32>, MetaData) {
+    let intensities = if cfg!(feature = "cpu-only") {
         let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
         for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
             job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
@@ -332,5 +341,46 @@ pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32], atol: f32) ->
         let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
         ndarray::Array2::from_shape_vec((jobs.len(), two_thetas.len()), intensities)
             .expect("sizes must match")
+    };
+
+    let mut strains = Array3::<f32>::zeros((jobs.len(), n_phases, 6));
+    let mut etas = Array1::<f32>::zeros(jobs.len());
+    let mut caglioti_params = Array2::<f32>::zeros((jobs.len(), 3));
+    let mut mean_ds_nm = Array2::<f32>::zeros((jobs.len(), n_phases));
+    let mut volume_fractions = Array2::<f32>::zeros((jobs.len(), n_phases));
+
+    for (i, (job, mut strain_loc)) in jobs.iter().zip(strains.outer_iter_mut()).enumerate() {
+        etas[i] = job.meta.eta as f32;
+        caglioti_params[(i, 0)] = job.meta.u as f32;
+        caglioti_params[(i, 1)] = job.meta.v as f32;
+        caglioti_params[(i, 2)] = job.meta.w as f32;
+
+        for (j, cs) in job.meta.mean_ds_nm.iter().enumerate() {
+            mean_ds_nm[(i, j)] = *cs as f32;
+        }
+
+        for (j, vf) in job.meta.vol_fractions.iter().enumerate() {
+            volume_fractions[(i, j)] = *vf as f32;
+        }
+
+        for (phase_idx, (permutation_idx, strain_permutations_for_phase)) in
+            job.indices.iter().zip(job.all_strains).enumerate()
+        {
+            for j in 0..6 {
+                strain_loc[(phase_idx, j)] =
+                    strain_permutations_for_phase[*permutation_idx].0[j] as f32;
+            }
+        }
     }
+
+    (
+        intensities,
+        MetaData {
+            volume_fractions,
+            strains,
+            etas,
+            mean_ds_nm,
+            caglioti_params,
+        },
+    )
 }

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use yaxs::cfg::{Config, MetaGenerator};
 use yaxs::io::{self, write_to_npz};
-use yaxs::pattern::{process_chunked, render_jobs, Peaks};
+use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;
@@ -38,8 +38,13 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
 #[derive(Parser)]
 #[command(
     version,
-    about = "Simulate a dataset of XRD patterns.",
-    long_about = if cfg!(feature="cpu-only") { "CPU-only build. This may be much slower than GPU with support." } else {"Renders peak positions to patterns using GPU"}
+    about = "Simulate a dataset of XRD patterns from YAML config.",
+    long_about = if cfg!(feature="cpu-only") { 
+        "YaXS simulates XRD patterns from CIF
+CPU-only build: This may be much slower than GPU with support."
+    } else {
+        "GPU-accelerated build: CUDA-based peak rendering."
+    }
 )]
 struct Cli {
     #[arg(value_name = "FILE", help = "Configuration yaml file.")]
@@ -107,20 +112,25 @@ fn main() {
         .expect("at least one emission line");
 
     let mut all_simulated_peaks = Vec::with_capacity(gen.structures.len());
+    let mut all_strains = Vec::with_capacity(gen.structures.len());
     for s in &gen.structures {
         let mut permuted_phase_peaks = Vec::with_capacity(gen.cfg.structure_permutations);
+        let mut strains = Vec::with_capacity(gen.cfg.structure_permutations);
         for _ in 0..gen.cfg.structure_permutations {
+            let (perm_s, strain) = s.permute(gen.cfg.max_strain, &mut rng);
             let peaks = Peaks {
-                peaks: s
-                    .permute(gen.cfg.max_strain, &mut rng)
+                peaks: perm_s
                     .get_pattern(min_line.wavelength_ams, &gen.cfg.two_theta_range)
                     .into(),
                 wavelength_nm: min_line.wavelength_ams / 10.0,
             };
             permuted_phase_peaks.push(peaks);
+            strains.push(strain);
         }
         all_simulated_peaks.push(permuted_phase_peaks);
+        all_strains.push(strains);
     }
+
     let elapsed = begin.elapsed().as_secs_f64();
     eprintln!("Simulating Peak Positions took {elapsed:.2}s");
 
@@ -134,22 +144,37 @@ fn main() {
 
     let mut jobs = Vec::with_capacity(gen.cfg.n_patterns);
     for _ in 0..gen.cfg.n_patterns {
-        let job = gen.generate_job(&all_simulated_peaks, &mut concentration_buf, &mut rng);
+        let job = gen.generate_job(
+            &all_simulated_peaks,
+            &all_strains,
+            &mut concentration_buf,
+            &mut rng,
+        );
         jobs.push(job);
     }
 
     if let Some(_) = args.io.chunk_size {
-        process_chunked(&jobs, &two_thetas, &gen.cfg, &args.io);
+        render_write_chunked(&jobs, &two_thetas, &gen.cfg, &args.io);
     } else {
-        let intensities = render_jobs(&jobs, &two_thetas, gen.cfg.abstol);
+        let (intensities, metadata) = render_jobs(
+            &jobs,
+            &two_thetas,
+            gen.cfg.abstol,
+            gen.cfg.struct_cifs.len(),
+        );
         if output_path_exists {
             std::fs::remove_file(&chunk_dependent_output_path).unwrap_or_else(|e| {
                 eprintln!("Error removing output path '{chunk_dependent_output_path}': {e}");
                 std::process::exit(1);
             });
         }
-        let _ = write_to_npz(chunk_dependent_output_path, &intensities, args.io.compress)
-            .unwrap_or_else(|_| std::process::exit(1));
+        let _ = write_to_npz(
+            chunk_dependent_output_path,
+            &intensities,
+            &metadata,
+            args.io.compress,
+        )
+        .unwrap_or_else(|_| std::process::exit(1));
     }
 
     let elapsed = begin.elapsed().as_secs_f64();
