@@ -14,12 +14,12 @@ use crate::structure::Structure;
 pub enum BackgroundSpec {
     None,
     Chebyshev {
-        coef_ranges: Vec<(f64, f64)>,
-        // height_range: (f64, f64), // TODO
+        coef_ranges: Vec<(f32, f32)>,
+        // height_range: (f32, f32), // TODO
     },
     Exponential {
-        slope_range: (f64, f64),
-        // height_range: (f64, f64), // TODO
+        slope_range: (f32, f32),
+        // height_range: (f32, f32), // TODO
     },
 }
 
@@ -77,7 +77,7 @@ pub struct Config {
     pub n_patterns: usize,
     pub structure_permutations: usize,
 
-    pub abstol: f64,
+    pub abstol: f32,
 }
 
 impl Default for Config {

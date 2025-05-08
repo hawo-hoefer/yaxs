@@ -1,12 +1,12 @@
 #[derive(Clone, PartialEq, Debug)]
 pub enum Background {
     None,
-    Polynomial { coef: Vec<f64> },
-    Exponential(f64),
+    Polynomial { coef: Vec<f32> },
+    Exponential(f32),
 }
 
 impl Background {
-    pub fn render(&self, pat: &mut [f64], two_thetas: &[f64]) {
+    pub fn render(&self, pat: &mut [f32], two_thetas: &[f32]) {
         let iterator = pat.iter_mut().zip(two_thetas);
 
         match self {
@@ -24,14 +24,14 @@ impl Background {
         }
     }
 
-    pub fn chebyshev_polynomial(chebyshev_coefs: &[f64]) -> Self {
+    pub fn chebyshev_polynomial(chebyshev_coefs: &[f32]) -> Self {
         // TODO: Test this
         if chebyshev_coefs.is_empty() {
             return Self::Polynomial { coef: Vec::new() };
         }
 
         let mut poly_coefs = Vec::with_capacity(chebyshev_coefs.len());
-        poly_coefs.resize(chebyshev_coefs.len(), 0.0f64);
+        poly_coefs.resize(chebyshev_coefs.len(), 0.0);
 
         for coef in poly_coefs.iter_mut() {
             *coef += chebyshev_coefs[0] * 1.0;
@@ -41,11 +41,11 @@ impl Background {
         }
 
         let mut cn2 = Vec::with_capacity(chebyshev_coefs.len());
-        cn2.resize(chebyshev_coefs.len(), 0.0f64);
+        cn2.resize(chebyshev_coefs.len(), 0.0f32);
         cn2[0] = 1.0;
 
         let mut cn1 = Vec::with_capacity(chebyshev_coefs.len());
-        cn1.resize(chebyshev_coefs.len(), 0.0f64);
+        cn1.resize(chebyshev_coefs.len(), 0.0f32);
         cn1[1] = 1.0;
 
         for poly_coef in poly_coefs.iter_mut() {
@@ -57,7 +57,7 @@ impl Background {
         }
 
         let mut cn = Vec::with_capacity(chebyshev_coefs.len());
-        cn.resize(chebyshev_coefs.len(), 0.0f64);
+        cn.resize(chebyshev_coefs.len(), 0.0f32);
         for i in 2..chebyshev_coefs.len() {
             // cn[:] = 0
             cn.iter_mut().for_each(|coef| *coef = 0.0);
@@ -91,11 +91,11 @@ impl Background {
     }
 }
 
-fn exp_at(slope: f64, pos: f64) -> f64 {
+fn exp_at(slope: f32, pos: f32) -> f32 {
     (slope * pos).exp()
 }
 
-fn chebyshev_at(polynomial_coefficients: &[f64], pos: f64) -> f64 {
+fn chebyshev_at(polynomial_coefficients: &[f32], pos: f32) -> f32 {
     polynomial_coefficients
         .iter()
         .enumerate()

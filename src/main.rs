@@ -48,10 +48,18 @@ pub fn write_to_npz(
     Ok(())
 }
 
-pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> Array2<f32> {
-    let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
-    ndarray::Array2::from_shape_vec((jobs.len(), two_thetas.len()), intensities)
-        .expect("sizes must match")
+pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32], atol: f32) -> Array2<f32> {
+    if cfg!(feature = "cpu-only") {
+        let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
+        for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
+            job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+        }
+        intensities
+    } else {
+        let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
+        ndarray::Array2::from_shape_vec((jobs.len(), two_thetas.len()), intensities)
+            .expect("sizes must match")
+    }
 }
 
 fn render_jobs_to_npz<T>(
@@ -59,11 +67,12 @@ fn render_jobs_to_npz<T>(
     two_thetas: &[f32],
     path: T,
     send: Sender<Arc<WriteJob<T>>>,
+    cfg: &Config,
 ) -> Result<(), ()>
 where
     T: AsRef<Path> + Send + Sync,
 {
-    let intensities = render_jobs(jobs, two_thetas);
+    let intensities = render_jobs(jobs, two_thetas, cfg.abstol);
     send.send(Arc::new(WriteJob::Write { intensities, path }))
         .map_err(|err| {
             eprintln!("Could not queue write job: {err}.");
@@ -87,7 +96,7 @@ fn output_exists(path: &str, chunked: bool) -> (bool, String) {
     }
 }
 
-fn process_chunked(args: &Args, jobs: &[DiscretizationJob], two_thetas: &[f32]) {
+fn process_chunked(args: &Args, jobs: &[DiscretizationJob], two_thetas: &[f32], cfg: &Config) {
     let chunk_size = args.chunk_size.unwrap();
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
     let compress = args.compress;
@@ -168,9 +177,10 @@ fn process_chunked(args: &Args, jobs: &[DiscretizationJob], two_thetas: &[f32]) 
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        let _ = render_jobs_to_npz(&chunk, &two_thetas, chunk_path, tx.clone()).map_err(|_| {
-            std::process::exit(1);
-        });
+        let _ =
+            render_jobs_to_npz(&chunk, &two_thetas, chunk_path, tx.clone(), cfg).map_err(|_| {
+                std::process::exit(1);
+            });
         i += chunk_size;
     }
     let _ = tx.send(Arc::new(WriteJob::Done));
@@ -191,7 +201,7 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
 #[command(
     version,
     about = "Simulate a dataset of XRD patterns.",
-    long_about = "XRD datasets are simulated for input sets in the cif"
+    long_about = if cfg!(feature="cpu-only") { "CPU-only build. This may be much slower than GPU with support." } else {"Renders peak positions to patterns using GPU"}
 )]
 struct Args {
     #[arg(value_name = "FILE", help = "Configuration yaml file.")]
@@ -314,9 +324,9 @@ fn main() {
     }
 
     if let Some(_) = args.chunk_size {
-        process_chunked(&args, &jobs, &two_thetas);
+        process_chunked(&args, &jobs, &two_thetas, &gen.cfg);
     } else {
-        let intensities = render_jobs(&jobs, &two_thetas);
+        let intensities = render_jobs(&jobs, &two_thetas, gen.cfg.abstol);
         if output_path_exists {
             std::fs::remove_file(&chunk_dependent_output_path).unwrap_or_else(|e| {
                 eprintln!("Error removing output path '{chunk_dependent_output_path}': {e}");
@@ -329,14 +339,4 @@ fn main() {
 
     let elapsed = begin.elapsed().as_secs_f64();
     eprintln!("Done rendering patterns. Took {elapsed:.2}s");
-
-    // TODO: select rendering engine if no cuda support
-    // for (i, mut pattern) in data.outer_iter_mut().enumerate() {
-    //     if i % 100 == 0 {
-    //         println!("Processing Job {i}");
-    //     }
-    //     let abstol = gen.cfg.abstol;
-    //     let job = gen.generate_job(&all_simulated_peaks);
-    //  td   job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, abstol);
-    // }
 }

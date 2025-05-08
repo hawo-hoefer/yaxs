@@ -51,7 +51,7 @@ pub struct DiscretizationJob<'a> {
 }
 
 impl<'a> DiscretizationJob<'a> {
-    pub fn discretize_into(&self, pat: &mut [f64], two_thetas: &[f64], abstol: f64) {
+    pub fn discretize_into(&self, pat: &mut [f32], two_thetas: &[f32], abstol: f32) {
         let PatternMeta {
             vol_fractions,
             eta,
@@ -100,8 +100,8 @@ impl<'a> DiscretizationJob<'a> {
         if self.normalize {
             // TODO: check for NaNs and normalization
             let f = *pat.first().unwrap();
-            let vmin = pat.iter().fold(f, |a, b| f64::min(a, *b));
-            let vmax = pat.iter().fold(f, |a, b| f64::max(a, *b));
+            let vmin = pat.iter().fold(f, |a, b| f32::min(a, *b));
+            let vmax = pat.iter().fold(f, |a, b| f32::max(a, *b));
             pat.iter_mut().for_each(|x| {
                 *x = (*x - vmin) / (vmax - vmin);
             });
@@ -130,8 +130,8 @@ impl Peak {
     /// * `w`: caglioti parameter w
     pub fn render(
         &self,
-        pat: &mut [f64],
-        two_thetas: &[f64],
+        pat: &mut [f32],
+        two_thetas: &[f32],
         wavelength: f64,
         weight: f64,
         mean_ds_nm: f64,
@@ -139,16 +139,17 @@ impl Peak {
         u: f64,
         v: f64,
         w: f64,
-        abstol: f64,
+        abstol: f32,
     ) {
+        let pos = self.pos as f32;
         // TODO: make position in radians
         let theta_pos_rad = self.pos.to_radians() / 2.0;
         let fwhm = caglioti(u, v, w, theta_pos_rad)
             + scherrer_broadening(wavelength, theta_pos_rad, mean_ds_nm);
-        let peak_weight = weight * self.intensity;
-        let midpoint = ((self.pos - two_thetas[0])
-            / (two_thetas[two_thetas.len() - 1] - two_thetas[0])
-            * two_thetas.len() as f64) as usize;
+        let peak_weight = (weight * self.intensity) as f32;
+        let midpoint = ((pos as f32 - two_thetas[0])
+            / ((two_thetas[two_thetas.len() - 1] - two_thetas[0]) * two_thetas.len() as f32))
+            as usize;
 
         let mut i = midpoint;
         if i > two_thetas.len() - 1 {
@@ -158,8 +159,8 @@ impl Peak {
         // left half
         loop {
             let two_theta = two_thetas[i];
-            let dx = two_theta - self.pos;
-            let di = peak_weight * pseudo_voigt(dx, eta, fwhm);
+            let dx = two_theta - pos as f32;
+            let di = peak_weight * pseudo_voigt(dx, eta as f32, fwhm as f32);
             if di < abstol {
                 break;
             }
@@ -174,8 +175,8 @@ impl Peak {
         i = midpoint + 1;
         while i < two_thetas.len() {
             let two_theta = two_thetas[i];
-            let dx = two_theta - self.pos;
-            let di = peak_weight * pseudo_voigt(dx, eta, fwhm);
+            let dx = two_theta - pos;
+            let di = peak_weight * pseudo_voigt(dx, eta as f32, fwhm as f32);
             if di < abstol {
                 break;
             }
