@@ -1,4 +1,11 @@
+use std::sync::Arc;
+
+use ndarray::Array2;
+
 use crate::background::Background;
+use crate::cfg::Config;
+use crate::discretize_cuda::discretize_peaks_cuda;
+use crate::io::{render_jobs_to_npz, WriteJob};
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -213,4 +220,117 @@ impl Peak {
 
 fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
+}
+
+pub fn process_chunked(
+    jobs: &[DiscretizationJob],
+    two_thetas: &[f32],
+    cfg: &Config,
+    io_opts: &crate::io::Opts,
+) {
+    let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
+    let compress = io_opts.compress;
+    let io_thread_handle = std::thread::spawn(move || loop {
+        match rx.recv() {
+            Ok(v) => match *v {
+                WriteJob::Done => return,
+                WriteJob::Write {
+                    ref intensities,
+                    ref path,
+                } => match crate::io::write_to_npz(path, intensities, compress) {
+                    Err(()) => {
+                        eprintln!("IO thread quitting...");
+                        return;
+                    }
+                    Ok(()) => (),
+                },
+            },
+            Err(err) => {
+                eprintln!("IO thread: Error receiving from channel: {err}. Quitting...");
+                return;
+            }
+        }
+    });
+
+    // prepare output directory
+    match std::fs::DirBuilder::new().create(&io_opts.output_name) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && io_opts.overwrite => {
+            eprintln!(
+                "Removing '{out_dir}' according to user input...",
+                out_dir = &io_opts.output_name
+            );
+            std::fs::remove_dir_all(&io_opts.output_name).unwrap_or_else(|err| {
+                eprintln!(
+                    "Could not remove output directory '{out_dir}': {err}",
+                    out_dir = &io_opts.output_name
+                );
+                std::process::exit(1);
+            });
+            std::fs::create_dir(&io_opts.output_name).unwrap_or_else(|err| {
+                eprintln!(
+                    "Could not (re)create output directory '{out_dir}': {err}",
+                    out_dir = io_opts.output_name
+                );
+                std::process::exit(1);
+            });
+        }
+        Err(e) => {
+            eprintln!(
+                "Error creating output directory {out_dir}: {e:?}",
+                out_dir = &io_opts.output_name
+            );
+            std::process::exit(1);
+        }
+        Ok(_) => {} // all good,
+    }
+
+    let mut i = 0;
+    let l = jobs.len();
+    let chunk_size = io_opts.chunk_size.unwrap_or(l);
+    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
+    let pad_width = if n_chunks > 1 {
+        1 + (n_chunks - 1).ilog10()
+    } else {
+        1
+    };
+
+    let mut datafiles = Vec::new();
+    while i < l {
+        let chunk_file_name = format!(
+            "data_{:0width$}.npz",
+            i / chunk_size,
+            width = pad_width as usize
+        );
+        let chunk: &[DiscretizationJob] = &jobs[i..(i + chunk_size).min(l)];
+
+        let mut chunk_path = std::path::PathBuf::new();
+        chunk_path.push(&io_opts.output_name);
+        chunk_path.push(&chunk_file_name);
+        datafiles.push(chunk_file_name);
+
+        let _ =
+            render_jobs_to_npz(&chunk, &two_thetas, chunk_path, tx.clone(), cfg).map_err(|_| {
+                std::process::exit(1);
+            });
+        i += chunk_size;
+    }
+    let _ = tx.send(Arc::new(WriteJob::Done));
+    io_thread_handle.join().unwrap_or_else(|err| {
+        eprintln!("Error joining io thread: {err:?}");
+        std::process::exit(1)
+    });
+}
+
+pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32], atol: f32) -> Array2<f32> {
+    if cfg!(feature = "cpu-only") {
+        let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
+        for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
+            job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+        }
+        intensities
+    } else {
+        let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
+        ndarray::Array2::from_shape_vec((jobs.len(), two_thetas.len()), intensities)
+            .expect("sizes must match")
+    }
 }
