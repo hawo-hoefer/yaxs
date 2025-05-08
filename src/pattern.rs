@@ -5,7 +5,7 @@ use ndarray::{Array1, Array2, Array3};
 use crate::background::Background;
 use crate::cfg::Config;
 use crate::discretize_cuda::discretize_peaks_cuda;
-use crate::io::{render_and_queue_write_in_thread, MetaData, WriteJob};
+use crate::io::{render_and_queue_write_in_thread, PatternMetaData, WriteJob};
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
 use crate::structure::Strain;
 
@@ -230,7 +230,7 @@ pub fn render_write_chunked(
     two_thetas: &[f32],
     cfg: &Config,
     io_opts: &crate::io::Opts,
-) {
+) -> Vec<String> {
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
     let compress = io_opts.compress;
     let io_thread_handle = std::thread::spawn(move || loop {
@@ -255,38 +255,6 @@ pub fn render_write_chunked(
             }
         }
     });
-
-    // prepare output directory
-    match std::fs::DirBuilder::new().create(&io_opts.output_name) {
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && io_opts.overwrite => {
-            eprintln!(
-                "Removing '{out_dir}' according to user input...",
-                out_dir = &io_opts.output_name
-            );
-            std::fs::remove_dir_all(&io_opts.output_name).unwrap_or_else(|err| {
-                eprintln!(
-                    "Could not remove output directory '{out_dir}': {err}",
-                    out_dir = &io_opts.output_name
-                );
-                std::process::exit(1);
-            });
-            std::fs::create_dir(&io_opts.output_name).unwrap_or_else(|err| {
-                eprintln!(
-                    "Could not (re)create output directory '{out_dir}': {err}",
-                    out_dir = io_opts.output_name
-                );
-                std::process::exit(1);
-            });
-        }
-        Err(e) => {
-            eprintln!(
-                "Error creating output directory {out_dir}: {e:?}",
-                out_dir = &io_opts.output_name
-            );
-            std::process::exit(1);
-        }
-        Ok(_) => {} // all good,
-    }
 
     let mut i = 0;
     let l = jobs.len();
@@ -323,6 +291,7 @@ pub fn render_write_chunked(
         eprintln!("Error joining io thread: {err:?}");
         std::process::exit(1)
     });
+    datafiles
 }
 
 pub fn render_jobs(
@@ -330,7 +299,7 @@ pub fn render_jobs(
     two_thetas: &[f32],
     atol: f32,
     n_phases: usize,
-) -> (Array2<f32>, MetaData) {
+) -> (Array2<f32>, PatternMetaData) {
     let intensities = if cfg!(feature = "cpu-only") {
         let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
         for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
@@ -375,7 +344,7 @@ pub fn render_jobs(
 
     (
         intensities,
-        MetaData {
+        PatternMetaData {
             volume_fractions,
             strains,
             etas,

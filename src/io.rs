@@ -2,10 +2,13 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::time::SystemTime;
 
+use chrono::Utc;
 use clap::Args;
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
+use serde::Serialize;
 
 use crate::cfg::Config;
 use crate::pattern::{render_jobs, DiscretizationJob};
@@ -32,12 +35,31 @@ pub struct Opts {
     pub compress: bool,
 }
 
-pub struct MetaData {
+const N_PATTERN_META: usize = 5; // CHANGE THIS IF NUMBER OF FIELDS IN PatternMetaData CHANGES
+pub struct PatternMetaData {
     pub volume_fractions: Array2<f32>,
     pub strains: Array3<f32>,
     pub etas: Array1<f32>,
     pub mean_ds_nm: Array2<f32>,
     pub caglioti_params: Array2<f32>,
+}
+
+#[derive(Serialize)]
+pub struct Extra {
+    pub cfg: Config,
+    pub max_phases: usize,
+    pub encoding: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct SimulationMetadata<'a> {
+    pub timestamp_started: chrono::DateTime<Utc>,
+    pub timestamp_finished: chrono::DateTime<Utc>,
+    pub datafiles: Option<Vec<String>>,
+    pub chunked: bool,
+    pub input_names: &'a [&'static str],
+    pub target_names: &'a [&'static str],
+    pub extra: Extra,
 }
 
 pub enum WriteJob<T>
@@ -46,7 +68,7 @@ where
 {
     Write {
         intensities: Array2<f32>,
-        meta: MetaData,
+        meta: PatternMetaData,
         path: T,
     },
     Done,
@@ -55,7 +77,7 @@ where
 pub fn write_to_npz(
     path: impl AsRef<Path>,
     intensities: &Array2<f32>,
-    meta: &MetaData,
+    meta: &PatternMetaData,
     compress: bool,
 ) -> Result<(), ()> {
     eprintln!("Writing {path}", path = path.as_ref().display());
@@ -102,15 +124,27 @@ pub fn write_to_npz(
         )
     })?;
 
-    w.add_array("caglioti_params", &meta.caglioti_params).map_err(|err| {
-        eprintln!(
-            "Error writing data file '{path}': {err}",
-            path = path.as_ref().display()
-        )
-    })?;
+    w.add_array("caglioti_params", &meta.caglioti_params)
+        .map_err(|err| {
+            eprintln!(
+                "Error writing data file '{path}': {err}",
+                path = path.as_ref().display()
+            )
+        })?;
 
+    const _: () = assert!(N_PATTERN_META == 5);
     Ok(())
 }
+
+pub const TARGET_NAMES: [&'static str; N_PATTERN_META] = [
+    "volume_fractions",
+    "strains",
+    "etas",
+    "mean_ds_nm",
+    "caglioti_params",
+];
+
+pub const INPUT_NAMES: [&'static str; 1] = ["intensities"];
 
 pub fn render_and_queue_write_in_thread<T>(
     jobs: &[DiscretizationJob],
@@ -132,4 +166,38 @@ where
         eprintln!("Could not queue write job: {err}.");
         ()
     })
+}
+
+pub fn prepare_output_directory(opts: &Opts) {
+    // prepare output directory
+    match std::fs::DirBuilder::new().create(&opts.output_name) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
+            eprintln!(
+                "Removing '{out_dir}' according to user input...",
+                out_dir = &opts.output_name
+            );
+            std::fs::remove_dir_all(&opts.output_name).unwrap_or_else(|err| {
+                eprintln!(
+                    "Could not remove output directory '{out_dir}': {err}",
+                    out_dir = &opts.output_name
+                );
+                std::process::exit(1);
+            });
+            std::fs::create_dir(&opts.output_name).unwrap_or_else(|err| {
+                eprintln!(
+                    "Could not (re)create output directory '{out_dir}': {err}",
+                    out_dir = opts.output_name
+                );
+                std::process::exit(1);
+            });
+        }
+        Err(e) => {
+            eprintln!(
+                "Error creating output directory {out_dir}: {e:?}",
+                out_dir = &opts.output_name
+            );
+            std::process::exit(1);
+        }
+        Ok(_) => {} // all good,
+    }
 }

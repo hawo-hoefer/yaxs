@@ -5,9 +5,10 @@ use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
+use crate::cfg::MetaGenerator;
 use crate::cif::CIFContents;
 use crate::element::atomic_scattering_params;
-use crate::pattern::Peak;
+use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
 const TWO_THETA_ABSTOL: f64 = 1e-5;
@@ -339,4 +340,38 @@ impl Structure {
         }
         compressed
     }
+}
+
+pub fn simulate_peaks(gen: &MetaGenerator, mut rng: &mut rand::rngs::StdRng) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>){
+    let min_line = &gen
+        .cfg
+        .emission_lines
+        .iter()
+        .min_by(|a, b| {
+            a.wavelength_ams
+                .partial_cmp(&b.wavelength_ams)
+                .expect("no NaNs in wavelengths")
+        })
+        .expect("at least one emission line");
+
+    let mut all_simulated_peaks = Vec::with_capacity(gen.structures.len());
+    let mut all_strains = Vec::with_capacity(gen.structures.len());
+    for s in &gen.structures {
+        let mut permuted_phase_peaks = Vec::with_capacity(gen.cfg.structure_permutations);
+        let mut strains = Vec::with_capacity(gen.cfg.structure_permutations);
+        for _ in 0..gen.cfg.structure_permutations {
+            let (perm_s, strain) = s.permute(gen.cfg.max_strain, rng);
+            let peaks = Peaks {
+                peaks: perm_s
+                    .get_pattern(min_line.wavelength_ams, &gen.cfg.two_theta_range)
+                    .into(),
+                wavelength_nm: min_line.wavelength_ams / 10.0,
+            };
+            permuted_phase_peaks.push(peaks);
+            strains.push(strain);
+        }
+        all_simulated_peaks.push(permuted_phase_peaks);
+        all_strains.push(strains);
+    }
+    (all_simulated_peaks, all_strains)
 }
