@@ -2,7 +2,7 @@ use ndarray::Array2;
 use ndarray_npy::NpzWriter;
 use ordered_float::NotNan;
 use rand::SeedableRng;
-use std::io::{BufReader, BufWriter, ErrorKind};
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -54,7 +54,7 @@ pub fn render_jobs(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> Array2<f32
         .expect("sizes must match")
 }
 
-pub fn render_jobs_to_npz<T>(
+fn render_jobs_to_npz<T>(
     jobs: &[DiscretizationJob],
     two_thetas: &[f32],
     path: T,
@@ -200,13 +200,15 @@ struct Args {
     #[arg(long, short, default_value=None, help="Chunk size (in number of patterns) for computation and saving. Set to the entire dataset if not specified.")]
     chunk_size: Option<usize>,
 
+    #[arg(long, default_value_t = false, help = "Overwrite existing data.")]
+    overwrite: bool,
+
     #[arg(
         long,
-        short,
         default_value_t = false,
-        help = "Overwrite existing data."
+        help = "Don't use GPU for pattern rendering."
     )]
-    overwrite: bool,
+    no_gpu: bool,
 
     #[arg(long, default_value_t = false, help = "Write to compressed numpy .npz")]
     compress: bool,

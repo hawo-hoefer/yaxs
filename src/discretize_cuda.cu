@@ -7,8 +7,6 @@ extern "C" {
 #include <cassert>
 #include <stdio.h>
 
-const float abstol = 1e-3;
-
 typedef struct {
   float pos;
   float intensity;
@@ -46,7 +44,7 @@ __device__ float gauss(float dx, float sigma) {
 }
 
 __device__ float lorentz(float dx, float gamma) {
-  return 1.0f / ((1.0f + powf(dx / gamma, 2)) * PI * gamma);
+  return 1.0f / fma(powf(dx / gamma, 2.0f), PI * gamma, 1.0f);
 }
 
 __device__ float pseudo_voigt(float dx, float eta, float fwhm) {
@@ -54,72 +52,6 @@ __device__ float pseudo_voigt(float dx, float eta, float fwhm) {
   float sigma = (1.0f / two_sqrt_ln_2) * fwhm;
   float gamma = fwhm / 2.0f;
   return eta * lorentz(dx, gamma) + (1.0f - eta) * gauss(dx, sigma);
-}
-
-__device__ float render_peak_into_pattern(float pos, float intensity,
-                                           float eta, float weight,
-                                           float fwhm, float *intensities,
-                                           float *two_thetas, size_t pat_len) {
-
-  size_t midpoint =
-      (size_t)((pos - two_thetas[0]) /
-               (two_thetas[pat_len - 1] - two_thetas[0]) * (float)pat_len);
-
-  size_t i = midpoint;
-  if (i > pat_len - 1) {
-    i = pat_len - 1;
-  }
-
-  // left half
-  while (true) {
-    float dx = two_thetas[i] - pos;
-    float di = weight * intensity * pseudo_voigt(dx, eta, fwhm);
-    if (di < abstol) {
-      break;
-    }
-
-    intensities[i] += di;
-    if (i == 0) {
-      break;
-    }
-    i -= 1;
-  }
-
-  // right half
-  i = midpoint + 1;
-  while (i < pat_len) {
-    float dx = two_thetas[i] - pos;
-    float di = weight * intensity * pseudo_voigt(dx, eta, fwhm);
-    if (di < abstol) {
-      break;
-    }
-
-    intensities[i] += di;
-    i += 1;
-  }
-}
-
-__global__ void
-discretize_kernel_single_pattern(PeakSOA soa, CUDAPattern *pat_info,
-                                 float *intensities, float *two_thetas,
-                                 size_t n_patterns, size_t pat_len) {
-  int pattern_idx = blockIdx.x;
-  if (pattern_idx > n_patterns) {
-    return;
-  }
-  CUDAPattern pat = pat_info[pattern_idx];
-  size_t chunk_start = pat_len * pattern_idx + blockDim.x * threadIdx.x;
-
-  for (size_t peak_index = pat.start_idx;
-       peak_index < pat.n_peaks + pat.start_idx; ++peak_index) {
-    float weight = soa.weight[peak_index];
-    float pos = soa.pos[peak_index];
-    float intensity = soa.intensity[peak_index];
-    float eta = soa.eta[peak_index];
-    float fwhm = soa.fwhm[peak_index];
-    render_peak_into_pattern(pos, intensity, eta, weight, fwhm,
-                             &intensities[chunk_start], two_thetas, pat_len);
-  }
 }
 
 __global__ void discretize_kernel(PeakSOA soa, CUDAPattern *pat_info,
@@ -142,8 +74,8 @@ __global__ void discretize_kernel(PeakSOA soa, CUDAPattern *pat_info,
 }
 
 bool discretize_peaks(PeakSOA peaks_soa, CUDAPattern *pat_info,
-                      float *intensities, float *two_thetas,
-                      size_t n_patterns, size_t pat_len) {
+                      float *intensities, float *two_thetas, size_t n_patterns,
+                      size_t pat_len) {
   float *intensities_d, *two_thetas_d;
   float *peaks_d;
   CUDAPattern *patterns_d;
@@ -192,11 +124,11 @@ bool discretize_peaks(PeakSOA peaks_soa, CUDAPattern *pat_info,
   int grid_size = (array_count + block_size - 1) / block_size;
 
   discretize_kernel<<<grid_size, block_size>>>(
-      peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns,
-      pat_len);
+      peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns, pat_len);
 
   // discretize_kernel_single_pattern<<<grid_size, block_size>>>(
-  //     peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns, pat_len);
+  //     peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns,
+  //     pat_len);
   ret = cudaPeekAtLastError();
   log_cuda_err(ret, "launching discretization kernel");
   cudaDeviceSynchronize();
