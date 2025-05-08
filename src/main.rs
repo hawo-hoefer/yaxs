@@ -45,13 +45,6 @@ struct Cli {
     #[arg(value_name = "FILE", help = "Configuration yaml file.")]
     cfg: PathBuf,
 
-    #[arg(
-        long,
-        default_value_t = false,
-        help = "Don't use GPU for pattern rendering."
-    )]
-    no_gpu: bool,
-
     #[command(flatten)]
     io: io::Opts,
 }
