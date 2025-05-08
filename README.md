@@ -7,15 +7,30 @@ An (ED-)XRD simulation tool implemented in rust.
     - [x] implement parsing of CIF to HashMap and Vector of Tables
     - [x] Map HashMap / Vector of Tables to Structure
 - [ ] Debye-Waller correction
-- [ ] Volume and Wavelength Correction (Cullity 1976)
-- [ ] straining of unit cells
-- [ ] generating of XRD patterns instead of peak positions
-    - [ ] Chebyshev Backgrounds
-    - [ ] Gaussian Noise
-    - [ ] Caglioti Parameters
-    - [ ] Scherrer Broadening
+- [x] Volume and Wavelength Correction (Cullity 1976)
+- [x] straining of unit cells
+- [x] generating of XRD patterns instead of peak positions
+    - [x] Chebyshev Backgrounds
+    - [x] Caglioti Parameters
+    - [x] Scherrer Broadening
+    - [x] Reading Config from yaml
+    - [x] writing to numpy `.npz`
+    - [ ] background height
+- [ ] XRD pattern bonuses
     - [ ] Air Scattering
     - [ ] Preferred Orientation
-    - [ ] Reading Config from yaml
-    - [ ] writing to HDF5
+- [ ] rendering using cuda backend
+    - [x] peak positions 
+    - [ ] backgrounds
+    - [ ] normalization
+- [ ] CPU backend multithreading
+    - right now, the cpu backend is single threaded, which is really slow
+    - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
+    - therefor, this is low priority
+- [ ] output pattern-wise metadata to target arrays in data files
+- [ ] output configuration-metadata to `meta.json`
+- [ ] Implement support for noise 
+    - Usually noise is added during augmentation anyway, so we may not need this
+    - therefore, low priority
 - [ ] EDXRD Simulation
+- [ ] Add documentation for config YAML file

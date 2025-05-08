@@ -1,6 +1,6 @@
+use itertools::Itertools;
 use std::collections::HashMap;
 
-use itertools::Itertools;
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
@@ -296,7 +296,7 @@ impl Structure {
             .iter()
             .sorted_by_key(|&(a, _)| a)
             .map(|(a, b)| (f64::from(*a), f64::from(*b)))
-            .filter(|&(_, b)| b / vmax >= SCALED_INTENSITY_TOL as f64)
+            .filter(|&(_, b)| b / vmax >= SCALED_INTENSITY_TOL)
             .collect_vec();
 
         let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
@@ -306,7 +306,7 @@ impl Structure {
                     pos: lt,
                     intensity: li,
                 }) if ((*two_theta - *lt) < TWO_THETA_ABSTOL) => {
-                    *li += intens;
+                    *li += *intens;
                 }
                 None | Some(&mut Peak { .. }) => compressed.push(Peak {
                     pos: *two_theta,
@@ -315,7 +315,7 @@ impl Structure {
             }
         }
 
-        let volume = self.lat.volume();
+        let volume = self.lat.volume() as f64;
         for peak in compressed.iter_mut() {
             peak.intensity = peak.intensity / volume.powi(2) * wavelength_ams.powi(3);
         }
