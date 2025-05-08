@@ -73,11 +73,12 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> 
         }
 
         let mut n_peaks = 0;
-        for ((phase_peaks, idx), vf) in job
+        for (((phase_peaks, idx), vf), phase_mean_ds_nm) in job
             .all_simulated_peaks
             .iter()
             .zip(&job.indices)
             .zip(vol_fractions)
+            .zip(mean_ds_nm)
         {
             let peaks = &phase_peaks[*idx];
             // * `pat`: target pattern
@@ -94,7 +95,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> 
 
                     let theta_pos_rad = peak.pos.to_radians() / 2.0;
                     let fwhm = caglioti(*u, *v, *w, theta_pos_rad)
-                        + scherrer_broadening(peaks.wavelength_nm, theta_pos_rad, *mean_ds_nm);
+                        + scherrer_broadening(peaks.wavelength_nm, theta_pos_rad, *phase_mean_ds_nm);
                     ffi_peak_info_weight.push((emission_line.weight * vf) as f32);
                     ffi_peak_info_fwhm.push(fwhm as f32);
                     ffi_peak_info_eta.push(*eta as f32);

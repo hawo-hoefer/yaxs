@@ -2,13 +2,14 @@ use std::io::{BufReader, Read};
 
 use itertools::Itertools;
 use ordered_float::NotNan;
+use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cif::CifParser;
 use crate::pattern::{DiscretizationJob, EmissionLine, PatternMeta, Peaks};
-use crate::structure::Structure;
+use crate::structure::{Strain, Structure};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub enum BackgroundSpec {
@@ -142,8 +143,9 @@ impl MetaGenerator {
     pub fn generate_job<'a>(
         &'a self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+        all_strains: &'a Vec<Vec<Strain>>,
         concentration_buf: &mut [NotNan<f64>],
-        rng: &mut rand::rngs::StdRng,
+        mut rng: &mut rand::rngs::StdRng,
     ) -> DiscretizationJob<'a> {
         let Config {
             eta_range,
@@ -163,7 +165,17 @@ impl MetaGenerator {
         } = &self.cfg;
 
         let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let mean_ds_nm = rng.random_range(mean_ds_range_nm.0..=mean_ds_range_nm.1);
+        let ds_sampler = Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1)
+            .unwrap_or_else(|err| {
+                eprintln!("Could not sample mean domain size: {err}");
+                std::process::exit(1);
+            });
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
+        mean_ds_nm.extend(
+            ds_sampler
+                .sample_iter(&mut rng)
+                .take(concentration_buf.len()),
+        );
         let u = rng.random_range(u_range.0..=u_range.1);
         let v = rng.random_range(v_range.0..=v_range.1);
         let w = rng.random_range(w_range.0..=w_range.1);
@@ -182,6 +194,7 @@ impl MetaGenerator {
 
         DiscretizationJob {
             all_simulated_peaks,
+            all_strains,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),
@@ -194,7 +207,7 @@ impl MetaGenerator {
                     .collect_vec()
                     .into(),
                 eta,
-                mean_ds_nm,
+                mean_ds_nm: mean_ds_nm.into_boxed_slice(),
                 u,
                 v,
                 w,

@@ -5,9 +5,10 @@ use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
+use crate::cfg::MetaGenerator;
 use crate::cif::CIFContents;
 use crate::element::atomic_scattering_params;
-use crate::pattern::Peak;
+use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
 const TWO_THETA_ABSTOL: f64 = 1e-5;
@@ -16,6 +17,24 @@ const SCALED_INTENSITY_TOL: f64 = 1e-5;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lattice {
     pub mat: Matrix3<f64>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Strain(pub [f64; 6]);
+impl Strain {
+    pub fn from_mat3(mat: &Matrix3<f64>) -> Self {
+        Self([
+            mat[(0, 0)],
+            mat[(1, 0)],
+            mat[(1, 1)],
+            mat[(2, 0)],
+            mat[(2, 1)],
+            mat[(2, 2)],
+        ])
+    }
+    pub fn none() -> Self {
+        Self([0.0; 6])
+    }
 }
 
 impl Lattice {
@@ -115,9 +134,9 @@ impl TryFrom<u8> for SGClass {
 }
 
 impl Structure {
-    pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> Structure {
+    pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> (Structure, Strain) {
         if max_strain == 0.0 {
-            return self.clone();
+            return (self.clone(), Strain::none());
         }
 
         let tensile_range = 1.0 - max_strain..=1.0 + max_strain;
@@ -191,7 +210,7 @@ impl Structure {
         let mut r = self.clone();
         r.lat.mat = r.lat.mat * strain_tensor;
 
-        r
+        (r, Strain::from_mat3(&strain_tensor))
     }
 
     pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
@@ -321,4 +340,38 @@ impl Structure {
         }
         compressed
     }
+}
+
+pub fn simulate_peaks(gen: &MetaGenerator, mut rng: &mut rand::rngs::StdRng) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>){
+    let min_line = &gen
+        .cfg
+        .emission_lines
+        .iter()
+        .min_by(|a, b| {
+            a.wavelength_ams
+                .partial_cmp(&b.wavelength_ams)
+                .expect("no NaNs in wavelengths")
+        })
+        .expect("at least one emission line");
+
+    let mut all_simulated_peaks = Vec::with_capacity(gen.structures.len());
+    let mut all_strains = Vec::with_capacity(gen.structures.len());
+    for s in &gen.structures {
+        let mut permuted_phase_peaks = Vec::with_capacity(gen.cfg.structure_permutations);
+        let mut strains = Vec::with_capacity(gen.cfg.structure_permutations);
+        for _ in 0..gen.cfg.structure_permutations {
+            let (perm_s, strain) = s.permute(gen.cfg.max_strain, rng);
+            let peaks = Peaks {
+                peaks: perm_s
+                    .get_pattern(min_line.wavelength_ams, &gen.cfg.two_theta_range)
+                    .into(),
+                wavelength_nm: min_line.wavelength_ams / 10.0,
+            };
+            permuted_phase_peaks.push(peaks);
+            strains.push(strain);
+        }
+        all_simulated_peaks.push(permuted_phase_peaks);
+        all_strains.push(strains);
+    }
+    (all_simulated_peaks, all_strains)
 }
