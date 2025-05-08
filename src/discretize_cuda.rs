@@ -58,9 +58,19 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> 
             u,
             v,
             w,
+            background,
             ..
-            // background,
         } = &job.meta;
+
+        use crate::background::Background::*;
+        match background {
+            None => (),
+            Polynomial { .. } | Exponential(_) => unimplemented!("background rendering via CUDA backend"),
+        }
+
+        if job.normalize {
+            unimplemented!("pattern normalization via CUDA backend")
+        }
 
         let mut n_peaks = 0;
         for ((phase_peaks, idx), vf) in job
@@ -97,7 +107,6 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> 
 
         patterns.push(CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;
-        // background.render(pat, two_thetas);
 
         // TODO: normalization
         // if self.normalize {
