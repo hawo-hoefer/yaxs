@@ -10,7 +10,7 @@ emission_lines:
   weight: 0.4121
 - wavelength_ams: 1.3923
   weight: 1.0
-n_steps: 2048
+n_steps: 2048 
 two_theta_range:
 - 10.0
 - 70.0

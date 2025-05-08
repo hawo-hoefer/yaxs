@@ -1,7 +1,7 @@
 use crate::math::{caglioti, scherrer_broadening};
-use crate::pattern::{DiscretizationJob, PatternMeta, Peak};
+use crate::pattern::{DiscretizationJob, PatternMeta};
 
-pub fn discretize_peaks_cuda(jobs: Iterator<DiscretizationJob>, two_thetas: &[f32]) -> Vec<f32> {
+pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> Vec<f32> {
     #[link(name = "discretize_cuda")]
     extern "C" {
         fn discretize_peaks(
@@ -36,7 +36,7 @@ pub fn discretize_peaks_cuda(jobs: Iterator<DiscretizationJob>, two_thetas: &[f3
             job.all_simulated_peaks
                 .iter()
                 .zip(&job.indices)
-                .map(|(phase_peaks, idx)| phase_peaks[*idx].peaks.len())
+                .map(|(phase_peaks, idx)| phase_peaks[*idx].peaks.len() * job.emission_lines.len())
                 .sum::<usize>()
         })
         .sum();
@@ -51,13 +51,6 @@ pub fn discretize_peaks_cuda(jobs: Iterator<DiscretizationJob>, two_thetas: &[f3
 
     let mut start_idx = 0;
     for job in jobs.iter() {
-        let n_peaks = job
-            .all_simulated_peaks
-            .iter()
-            .zip(&job.indices)
-            .map(|(phase_peaks, idx)| phase_peaks[*idx].peaks.len())
-            .sum();
-
         let PatternMeta {
             vol_fractions,
             eta,
@@ -69,6 +62,7 @@ pub fn discretize_peaks_cuda(jobs: Iterator<DiscretizationJob>, two_thetas: &[f3
             // background,
         } = &job.meta;
 
+        let mut n_peaks = 0;
         for ((phase_peaks, idx), vf) in job
             .all_simulated_peaks
             .iter()
@@ -96,6 +90,7 @@ pub fn discretize_peaks_cuda(jobs: Iterator<DiscretizationJob>, two_thetas: &[f3
                     ffi_peak_info_eta.push(*eta as f32);
                     ffi_peak_pos.push(cpeak.pos as f32);
                     ffi_peak_intensity.push(cpeak.intensity as f32);
+                    n_peaks += 1;
                 }
             }
         }

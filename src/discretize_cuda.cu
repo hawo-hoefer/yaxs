@@ -191,7 +191,6 @@ bool discretize_peaks(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                      (void *)discretize_kernel, 0, array_count);
   int grid_size = (array_count + block_size - 1) / block_size;
 
-  fprintf(stderr, "launching as (%d, %d)\n", grid_size, block_size);
   discretize_kernel<<<grid_size, block_size>>>(
       peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns,
       pat_len);
