@@ -9,7 +9,7 @@ use yaxs::structure::simulate_peaks;
 
 use yaxs::cfg::{Config, MetaGenerator};
 use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
-use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
+use yaxs::pattern::{render_jobs, render_write_chunked};
 
 const H_EV_S: f64 = 4.135_667_696e-15f64;
 const C_M_S: f64 = 299_792_485.0f64;

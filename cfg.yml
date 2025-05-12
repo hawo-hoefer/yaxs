@@ -30,14 +30,35 @@ caglioti:
   w_range:
   - 0.0
   - 0.0
-background: None
+background: !Chebyshev
+  coef_ranges: 
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  - [-1.0, 1.0]
+  scale_range: 
+  - 40.0
+  - 40.0
+# background: None
 # background: !Exponential
-#  slope_range: 
-#   - -0.0005
-#   - -0.00025
-normalize: false 
+#   slope_range: 
+#   - -0.05
+#   - -0.025
+#   scale_range: 
+#   - 200.0
+#   - 800.0
+normalize: true 
 seed: 1234
-n_patterns: 10000
+n_patterns: 1000000
 structure_permutations: 100
 max_strain: 0.005
 abstol: 1e-2

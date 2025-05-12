@@ -16,11 +16,11 @@ pub enum BackgroundSpec {
     None,
     Chebyshev {
         coef_ranges: Vec<(f32, f32)>,
-        // height_range: (f32, f32), // TODO
+        scale_range: (f32, f32),
     },
     Exponential {
         slope_range: (f32, f32),
-        // height_range: (f32, f32), // TODO
+        scale_range: (f32, f32),
     },
 }
 
@@ -29,15 +29,26 @@ impl BackgroundSpec {
         use rand::prelude::*;
         match self {
             BackgroundSpec::None => Background::None,
-            BackgroundSpec::Chebyshev { ref coef_ranges } => Background::chebyshev_polynomial(
-                &coef_ranges
-                    .iter()
-                    .map(|&(lo, hi)| rng.random_range(lo..=hi))
-                    .collect_vec(),
-            ),
+            BackgroundSpec::Chebyshev {
+                ref coef_ranges,
+                scale_range,
+            } => {
+                let mut cheby_coefs = Vec::with_capacity(coef_ranges.len());
+                for (lo, hi) in coef_ranges.iter() {
+                    cheby_coefs.push(rng.random_range(*lo..=*hi));
+                }
+                Background::chebyshev_polynomial(
+                    &cheby_coefs,
+                    rng.random_range(scale_range.0..=scale_range.1),
+                )
+            }
             BackgroundSpec::Exponential {
                 slope_range: (lo, hi),
-            } => Background::Exponential(rng.random_range(*lo..=*hi)),
+                scale_range: (scale_lo, scale_hi),
+            } => Background::Exponential {
+                slope: rng.random_range(*lo..=*hi),
+                scale: rng.random_range(*scale_lo..=*scale_hi),
+            },
         }
     }
 }
@@ -165,8 +176,8 @@ impl MetaGenerator {
         } = &self.cfg;
 
         let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let ds_sampler = Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1)
-            .unwrap_or_else(|err| {
+        let ds_sampler =
+            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
                 eprintln!("Could not sample mean domain size: {err}");
                 std::process::exit(1);
             });

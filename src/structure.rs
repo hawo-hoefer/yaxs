@@ -342,7 +342,7 @@ impl Structure {
     }
 }
 
-pub fn simulate_peaks(gen: &MetaGenerator, mut rng: &mut rand::rngs::StdRng) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>){
+pub fn simulate_peaks(gen: &MetaGenerator, rng: &mut rand::rngs::StdRng) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>){
     let min_line = &gen
         .cfg
         .emission_lines
