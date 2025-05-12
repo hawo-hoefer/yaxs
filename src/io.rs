@@ -2,7 +2,6 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use chrono::Utc;
 use clap::Args;
