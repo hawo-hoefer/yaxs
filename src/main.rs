@@ -16,13 +16,6 @@ use yaxs::cfg::{
 use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
 use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
 
-fn _output_exists(path: &str) -> bool {
-    std::fs::exists(&path).unwrap_or_else(|err| {
-        eprintln!("Could not check whether output file/directory {path} exists: {err}");
-        std::process::exit(1);
-    })
-}
-
 #[derive(Parser)]
 #[command(
     version,
@@ -245,21 +238,6 @@ fn main() {
         }
     };
 
-    // let output_path_exists = output_exists(&args.io.output_name);
-    // if output_path_exists {
-    //     if args.io.overwrite {
-    //         std::fs::remove_dir_all(&args.io.output_name).unwrap_or_else(|err| {
-    //             eprintln!(
-    //                 "Could not delete output directory '{}': {}",
-    //                 &args.io.output_name, err
-    //             );
-    //             std::process::exit(1);
-    //         });
-    //     } else {
-    //         eprintln!("Output path '{}' already exists.", args.io.output_name);
-    //         std::process::exit(1);
-    //     }
-    // }
     prepare_output_directory(&args.io);
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
