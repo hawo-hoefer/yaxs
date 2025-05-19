@@ -38,4 +38,10 @@ An (ED-)XRD simulation tool implemented in rust.
     - figure out if I want to do that somehow
     - low priority
 - [ ] EDXRD Simulation
+- [x] Do we need to save peak info as d-spacing?
+    - then, we can use the same code for AD- and EDXRD
+- [ ] peak intensities
+    - rendering info is computed only at render time then, less conversions needed -> better numerical accuracy?
+    - what about the computation of structure factors?
+    - keep using pymatgen's version for now -> i really should understand what is going on there
 - [ ] Add documentation for config YAML file
