@@ -247,6 +247,12 @@ impl Structure {
         ret
     }
 
+    /// scan lattice for crystallographic planes with given d-spacings
+    /// compute peak intensities and d-spacings corresponding to the lattice planes
+    /// miller indices are **not** returned
+    ///
+    /// * `min_r`: minimum d-spacing to consider
+    /// * `max_r`: maximum d-spacing to consider
     pub fn get_d_spacings_intensities(&self, min_r: f64, max_r: f64) -> Vec<Peak> {
         let recip_lat = self.lat.recip_lattice_crystallographic();
         let recp_len = recip_lat.recip_lattice().abc();
@@ -364,7 +370,11 @@ impl Structure {
         compressed
     }
 
-    pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
+    /// compute peak positions and intensities for angle dispersive XRD
+    ///
+    /// * `wavelength_ams`: wavelength for peaks in Amstrong
+    /// * `two_theta_range`: two theta range to search for peaks in degrees
+    pub fn get_adxrd_peaks(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
@@ -386,7 +396,11 @@ impl Structure {
         compressed
     }
 
-    pub fn get_pattern_edxrd(&self, theta_deg: f64, energy_kev_range: &(f64, f64)) -> Vec<Peak> {
+    /// compute peak positions and intensities for energy dispersive XRD
+    ///
+    /// * `theta_deg`: fixed angle of sample to beam
+    /// * `energy_kev_range`: energy range in keV to consider for d-spacings
+    pub fn get_edxrd_peaks(&self, theta_deg: f64, energy_kev_range: &(f64, f64)) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
 
@@ -459,7 +473,9 @@ pub fn simulate_peaks(
         for _ in 0..sample_params.structure_permutations {
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
             let peaks = Peaks {
-                peaks: perm_s.get_pattern(wavelength_ams, &two_theta_range).into(),
+                peaks: perm_s
+                    .get_adxrd_peaks(wavelength_ams, &two_theta_range)
+                    .into(),
                 wavelength_nm: wavelength_ams / 10.0,
             };
             permuted_phase_peaks.push(peaks);

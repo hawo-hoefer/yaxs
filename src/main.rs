@@ -329,7 +329,7 @@ fn main() {
                 // eprintln!("{} {}", structure.lat.mat, s2.lat.mat);
                 let p = Peaks {
                     peaks: structure
-                        .get_pattern_edxrd(
+                        .get_edxrd_peaks(
                             energy_disperse.theta_deg,
                             &energy_disperse.energy_range_kev,
                         )
