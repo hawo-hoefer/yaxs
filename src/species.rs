@@ -249,7 +249,7 @@ pub const fn atomic_scattering_params(a: &Atom) -> Option<Scatter> {
         Atom { el: N, ionization: 0, }     => Some(Scatter { a_s: [12.2126, 3.1322, 2.0125, 1.1663], b_s: [0.0057, 9.8933, 28.9975, 0.5826], c: -11.529, }),
         Atom { el: O, ionization: 0, }     => Some(Scatter { a_s: [3.0485, 2.2868, 1.5463, 0.867], b_s: [13.2771, 5.7011, 0.3239, 32.9089], c: 0.2508, }),
         Atom { el: O, ionization: -1, }    => Some(Scatter { a_s: [4.1916, 1.63969, 1.52673, -20.307], b_s: [12.8573, 4.17236, 47.0179, -0.01404], c: 21.9412, }),
-        /// Source for O2-: https://doi.org/10.1107/S0365110X65003729
+        // Source for O2-: https://doi.org/10.1107/S0365110X65003729
         Atom { el: O, ionization: -2, }    => Some(Scatter { a_s: [4.758, 3.637, 0.0, 0.0], b_s: [0.0496, 0.1903, 0.0, 0.0], c: 1.594, }),
         Atom { el: F, ionization: 0, }     => Some(Scatter { a_s: [3.5392, 2.6412, 1.517, 1.0243], b_s: [10.2825, 4.2944, 0.2615, 26.1476], c: 0.2776, }),
         Atom { el: F, ionization: -1, }    => Some(Scatter { a_s: [3.6322, 3.51057, 1.26064, 0.940706], b_s: [5.27756, 14.7353, 0.442258, 47.3437], c: 0.653396, }),

@@ -5,13 +5,12 @@ use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
-use crate::cfg::{MetaGenerator, SampleParameters};
+use crate::cfg::SampleParameters;
 use crate::cif::CIFContents;
-use crate::math::{e_kev_to_lambda_ams, lorentz, C_M_S, H_EV_S};
+use crate::math::{e_kev_to_lambda_ams, C_M_S, H_EV_S};
 use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
-const TWO_THETA_E_KEV_ABSTOL: f64 = 1e-5;
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
 

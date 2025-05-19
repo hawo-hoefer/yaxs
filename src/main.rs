@@ -7,7 +7,6 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::math::{e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, C_M_S, H_EV_S};
 use yaxs::structure::{simulate_peaks, Strain, Structure};
 
 use yaxs::cfg::{
@@ -17,7 +16,7 @@ use yaxs::cfg::{
 use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
 use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
 
-fn output_exists(path: &str) -> bool {
+fn _output_exists(path: &str) -> bool {
     std::fs::exists(&path).unwrap_or_else(|err| {
         eprintln!("Could not check whether output file/directory {path} exists: {err}");
         std::process::exit(1);
@@ -45,15 +44,15 @@ struct Cli {
 
 fn render_energy_disperse(
     kind: EnergyDisperse,
-    sample_params: SampleParameters,
-    simulation_parameters: SimulationParameters,
-    args: Cli,
+    _sample_params: SampleParameters,
+    _simulation_parameters: SimulationParameters,
+    _args: Cli,
     all_simulated_peaks: &Vec<Vec<Peaks>>,
-    all_strains: &Vec<Vec<Strain>>,
-    timestamp_started: chrono::DateTime<Utc>,
-    rng: &mut rand::rngs::StdRng,
+    _all_strains: &Vec<Vec<Strain>>,
+    _timestamp_started: chrono::DateTime<Utc>,
+    _rng: &mut rand::rngs::StdRng,
 ) {
-    let begin_render = Instant::now();
+    let _begin_render = Instant::now();
 
     let (e0, e1) = kind.energy_range_kev;
     let energies = (0..kind.n_steps)

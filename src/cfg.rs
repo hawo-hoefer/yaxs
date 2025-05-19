@@ -152,7 +152,7 @@ impl TryFrom<Config> for MetaGenerator {
                 sample_params: cfg.sample_parameters,
                 simulation_parameters: cfg.simulation_parameters,
             }),
-            SimulationKind::EnergyDisperse(energy_disperse) => todo!(),
+            SimulationKind::EnergyDisperse(_energy_disperse) => todo!(),
         }
     }
 }
@@ -179,10 +179,10 @@ impl MetaGenerator {
         } = &self.angle_disperse;
 
         let SampleParameters {
-            struct_cifs,
+            struct_cifs: _,
             mean_ds_range_nm,
-            sample_displacement_range_mu_m,
-            max_strain,
+            sample_displacement_range_mu_m: _,
+            max_strain: _,
             eta_range,
             structure_permutations,
         } = &self.sample_params;

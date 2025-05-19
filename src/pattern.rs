@@ -3,7 +3,6 @@ use std::sync::Arc;
 use ndarray::{Array1, Array2, Array3};
 
 use crate::background::Background;
-use crate::cfg::{AngleDisperse, SimulationParameters};
 use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::{render_angle_disperse_and_queue_write_in_thread, PatternMetaData, WriteJob};
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
