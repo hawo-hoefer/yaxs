@@ -12,6 +12,7 @@ use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
 const TWO_THETA_E_KEV_ABSTOL: f64 = 1e-5;
+const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +155,10 @@ impl TryFrom<u8> for SGClass {
     }
 }
 
+fn lorentz_factor(theta_rad: f64) -> f64 {
+    (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
+}
+
 impl Structure {
     pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> (Structure, Strain) {
         if max_strain == 0.0 {
@@ -242,10 +247,7 @@ impl Structure {
         ret
     }
 
-    pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
-        let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
-        let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
-
+    pub fn get_d_spacings_intensities(&self, min_r: f64, max_r: f64) -> Vec<Peak> {
         let recip_lat = self.lat.recip_lattice_crystallographic();
         let recp_len = recip_lat.recip_lattice().abc();
         const RADIUS_TOL: f64 = 1e-8;
@@ -290,9 +292,6 @@ impl Structure {
             if g_hkl == 0.0 {
                 continue;
             }
-            // bragg condition
-            let theta = (wavelength_ams * g_hkl / 2.0).asin();
-
             let s = g_hkl / 2.0;
             let s2 = s.powi(2);
 
@@ -306,6 +305,7 @@ impl Structure {
                     // fs = el.Z - 41.78214 * s2 * sum(
                     //     [d[0] * exp(-d[1] * s2) for d in coeff])
                     let z = species.el.z() as f64;
+                    // TODO: alternate (possibly more correct scattering parameters)
                     use crate::element::atomic_scattering_params;
                     let coef = atomic_scattering_params(species.el).unwrap();
                     let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
@@ -324,50 +324,64 @@ impl Structure {
                     f_hkl += f_part;
                 }
             }
-            // Lorentz polarization correction for hkl
-            // lorentz_factor = (1 + math.cos(2 * theta) ** 2) / (math.sin(theta) ** 2 * math.cos(theta))
-            let lorentz_fact =
-                (1.0 + (2.0 * theta).cos().powi(2)) / (theta.sin().powi(2) * theta.cos());
-
             // # Intensity for hkl is modulus square of structure factor
-            // i_hkl = (f_hkl * f_hkl.conjugate()).real
             let i_hkl = (f_hkl * f_hkl.conjugate()).real();
-            let two_theta = NotNan::new(theta.to_degrees() * 2.0).expect("not nan");
-            *agg.entry(two_theta)
+            let d_spacing = 1.0 / g_hkl;
+            let d_spacing = NotNan::new(d_spacing).expect("not nan");
+            *agg.entry(d_spacing)
                 .or_insert(NotNan::new(0.0).expect("valid float")) +=
-                NotNan::new(i_hkl * lorentz_fact).expect("not nan");
+                NotNan::new(i_hkl).expect("not nan");
         }
 
         let Some((_, vmax)) = agg.iter().max_by_key(|&(_, b)| b) else {
             return Vec::new();
         };
-        let vmax = f64::from(*vmax);
+
         let agg = agg
             .iter()
             .sorted_by_key(|&(a, _)| a)
-            .map(|(a, b)| (f64::from(*a), f64::from(*b)))
-            .filter(|&(_, b)| b / vmax >= SCALED_INTENSITY_TOL)
+            .map(|(d_hkl, i_hkl)| (f64::from(*d_hkl), f64::from(*i_hkl)))
+            .filter(|&(_, b)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
             .collect_vec();
 
         let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
-        for (two_theta, intens) in agg.iter() {
+        for (d_hkl, i_hkl) in agg.iter() {
+            let i_hkl = f64::from(*i_hkl);
+
             match compressed.last_mut() {
                 Some(Peak {
-                    pos: lt,
-                    intensity: li,
-                }) if ((*two_theta - *lt) < TWO_THETA_E_KEV_ABSTOL) => {
-                    *li += *intens;
+                    pos: last_d_hkl,
+                    intensity: last_i_hkl,
+                }) if ((*d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
+                    *last_i_hkl += i_hkl;
                 }
                 None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    pos: *two_theta,
-                    intensity: *intens,
+                    pos: *d_hkl,
+                    intensity: i_hkl,
                 }),
             }
         }
+        compressed
+    }
 
+    pub fn get_pattern(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
+        let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
+        let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
+
+        let mut compressed = self.get_d_spacings_intensities(min_r, max_r);
         let volume = self.lat.volume() as f64;
         for peak in compressed.iter_mut() {
-            peak.intensity = peak.intensity / volume.powi(2) * wavelength_ams.powi(3);
+            let (d_hkl, i_hkl) = (peak.pos, peak.intensity);
+            // bragg condition
+            // lambda = 2 d sin(theta)
+            // theta = asin(lambda / 2d)
+            let theta_hkl_rad = (wavelength_ams / (2.0 * d_hkl)).asin();
+
+            peak.pos = (theta_hkl_rad * 2.0).to_degrees();
+
+            let f_lorentz = lorentz_factor(theta_hkl_rad);
+
+            peak.intensity = i_hkl / volume.powi(2) * wavelength_ams.powi(3) * f_lorentz;
         }
         compressed
     }
@@ -383,173 +397,39 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        let recip_lat = self.lat.recip_lattice_crystallographic();
-        let recp_len = recip_lat.recip_lattice().abc();
-
-        const RADIUS_TOL: f64 = 1e-8;
-        let r_cells = max_r + RADIUS_TOL;
-        let r_max =
-            ((r_cells + 0.15) * recp_len / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
-
-        let mut agg = HashMap::new();
-
-        let global_min = -max_r - RADIUS_TOL;
-        let global_max = max_r + RADIUS_TOL;
-
-        {
-            let hc = H_EV_S * C_M_S;
-            let e_kev = hc * min_r / (2.0 * theta_rad.sin()) * 1e7;
-            eprintln!("min e / kev: {e_kev}");
-
-            let e_kev = hc * max_r / (2.0 * theta_rad.sin()) * 1e7;
-            eprintln!("min e / kev: {e_kev}");
-        }
-
-        let n_min = -r_max;
-        let n_max = r_max;
-        for (hkl, g_hkl) in (n_min[0]..n_max[0])
-            .cartesian_product(n_min[1]..n_max[1])
-            .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(|((a, b), c)| -> Option<(Vector3<f64>, f64)> {
-                let hkl = Vector3::<f64>::new(a as f64, b as f64, c as f64);
-                let pos = recip_lat.mat * hkl;
-                let g_hkl = pos.magnitude(); // in amstrong
-
-                // currently, we produce XRD patterns like pymatgen
-                // Neighbor mapping from pymatgen.core.lattice.get_points_in_spheres
-                // does not seem to have any effect if center_coords is the 0-vector
-                // As far as I can tell, it only applies when center_coords are something
-                // other than the 0-vector so we will ignore it for now.
-                // i tested this using a modification of their code and random cifs from
-                // the COD-database
-                if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
-                    && pos
-                        .iter()
-                        .map(|&x| (x > global_min) && (x < global_max))
-                        .all(|x| x)
-                {
-                    Some((hkl, g_hkl))
-                } else {
-                    None
-                }
-            })
-        {
-            if g_hkl == 0.0 {
-                continue;
-            }
-            // bragg condition
-            // d = h c / (2 E sin (theta))
-            // 2 E sin(theta) = h c / d
-            // E = h c / (2 d sin(theta))
-
-            let hc = H_EV_S * C_M_S;
-            // hc in eV m
-            // eV * m * (m^-10)
-            // ev * e-10
-            // g_hkl in ams = m^-10
-            let e_kev = hc * g_hkl / (2.0 * theta_rad.sin()) * 1e7;
-
-            let s = g_hkl / 2.0;
-            let s2 = s.powi(2);
-
-            let mut f_hkl = Complex::new(0.0, 0.0);
-            for site in &self.sites {
-                // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
-                let g_dot_r: f64 = site.coords.dot(&hkl);
-                for species in &site.species {
-                    // compute atomic scattering factor for each site
-                    // by the sum-of-exponentials approximation
-                    //
-                    // el = site.specie
-                    // coeff = ATOMIC_SCATTERING_PARAMS[el.symbol]
-                    // fs = el.Z - 41.78214 * s2 * sum(
-                    //     [d[0] * exp(-d[1] * s2) for d in coeff])
-                    // let z = species.el.z() as f64;
-                    // let coef = atomic_scattering_params(species.el).unwrap();
-                    // let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
-                    // let fs = z - 41.78213 * s2 * sum;
-                    let fs = if false {
-                        use crate::species::atomic_scattering_params;
-
-                        let coef = match atomic_scattering_params(species) {
-                            Some(coef) => coef,
-                            None => {
-                                eprintln!(
-                                    "Error: could not find atomic scattering factors for {:?}",
-                                    species
-                                );
-                                std::process::exit(1);
-                            }
-                        };
-                        coef.eval(s)
-                    } else {
-                        use crate::element::atomic_scattering_params;
-
-                        let z = species.el.z() as f64;
-                        let coef = atomic_scattering_params(species.el).unwrap();
-                        let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
-                        z - 41.78213 * s2 * sum
-                    };
-
-                    // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    use std::f64::consts::PI;
-                    let f_part = fs * site.occu * Complex::new(0.0, -2.0 * PI * g_dot_r).exp();
-                    f_hkl += f_part;
-                }
-            }
-            // Lorentz polarization correction for hkl
-            // lorentz_factor = (1 + math.cos(2 * theta) ** 2) / (math.sin(theta) ** 2 * math.cos(theta))
-            let lorentz_fact =
-                (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin());
-
-            // # Intensity for hkl is modulus square of structure factor
-            // i_hkl = (f_hkl * f_hkl.conjugate()).real
-            let i_hkl = (f_hkl * f_hkl.conjugate()).real();
-            let e_kev = NotNan::new(e_kev).expect("valid energy");
-            *agg.entry(e_kev).or_insert(NotNan::new(0.0).expect("this is not nan")) +=
-                NotNan::new(i_hkl * lorentz_fact).expect("not nan");
-            eprintln!("{}, [{} {} {}]", e_kev, hkl[0], hkl[1], hkl[2]);
-        }
-
-        let Some((_, vmax)) = agg.iter().max_by_key(|&(_, b)| b) else {
-            return Vec::new();
-        };
-
-        let agg = agg
-            .iter()
-            .sorted_by_key(|&(a, _)| a)
-            .map(|(a, b)| (f64::from(*a), f64::from(*b)))
-            .filter(|&(_, b)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
-            .collect_vec();
-
-        let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
-        for (e_kev, intens) in agg.iter() {
-            match compressed.last_mut() {
-                Some(Peak {
-                    pos: lt,
-                    intensity: li,
-                }) if ((*e_kev - *lt) < TWO_THETA_E_KEV_ABSTOL) => {
-                    *li += *intens;
-                }
-                None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    pos: *e_kev,
-                    intensity: *intens,
-                }),
-            }
-        }
+        let mut compressed = self.get_d_spacings_intensities(min_r, max_r);
+        let f_lorentz = lorentz_factor(theta_rad);
 
         // approximation of the petra3/desy beamline energy
-        fn beamline_energy(e_kev: f64) -> f64 {
+        fn beamline_intensity(e_kev: f64) -> f64 {
             10.0.powf(12.30 - e_kev * 0.7 / 100.0)
             // 1.0
         }
 
         let volume = self.lat.volume() as f64;
+        let hc = H_EV_S * C_M_S;
         for peak in compressed.iter_mut() {
-            peak.intensity = peak.intensity
-                * e_kev_to_lambda_ams(peak.pos).powi(3)
+            // peak position is in d_hkl right now
+            let d_hkl = peak.pos;
+            let i_hkl = peak.intensity;
+            // here, we apply intensity corrections to each peak, and
+            // convert positions from d_hkl in Amstrong to energy in keV
+
+            // bragg condition
+            // d = h c / (2 E sin (theta))
+            // 2 E sin(theta) = h c / d
+            // E = h c / (2 d sin(theta))
+            //
+            // hc in eV m
+            // eV * m * (m^-10)
+            // ev * e-10
+            // g_hkl in ams = m^-10
+            let e_kev = hc / (2.0 * d_hkl * theta_rad.sin()) * 1e7;
+
+            peak.pos = e_kev;
+            peak.intensity = i_hkl * f_lorentz * e_kev_to_lambda_ams(e_kev).powi(3)
                 / volume.powi(2)
-                * beamline_energy(peak.pos);
+                * beamline_intensity(e_kev);
         }
         compressed
     }
