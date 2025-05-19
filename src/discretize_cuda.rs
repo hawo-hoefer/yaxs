@@ -1,8 +1,8 @@
 use crate::background::Background;
 use crate::math::{caglioti, scherrer_broadening};
-use crate::pattern::{DiscretizationJob, PatternMeta};
+use crate::pattern::{DiscretizeAngleDisperse, PatternMeta};
 
-pub fn discretize_peaks_cuda(jobs: &[DiscretizationJob], two_thetas: &[f32]) -> Vec<f32> {
+pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32]) -> Vec<f32> {
     #[link(name = "discretize_cuda")]
     extern "C" {
         fn render_peaks_and_background(

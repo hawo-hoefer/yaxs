@@ -254,6 +254,14 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
   return true;
 }
 
+#define check_error(val)                                                       \
+  do {                                                                         \
+    if (!val) {                                                                \
+      return_value = val;                                                      \
+      goto defer;                                                              \
+    }                                                                          \
+  } while (0)
+
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                  float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len,
@@ -264,6 +272,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   float *intensities_d, *two_thetas_d;
   float *peaks_d;
   CUDAPattern *patterns_d;
+  bool return_value = true;
 
   // clang-format off
   cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
@@ -318,16 +327,10 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
       render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data,
                          bkg_degree_if_poly, bkg_scales_if_not_none, n_patterns,
                          pat_len, grid_size, block_size);
-  if (!bkg_ok) {
-    // TODO: memory management using GOTO
-    return bkg_ok;
-  }
-
+  check_error(bkg_ok);
   if (normalize) {
     bool normalize_ok = normalize_patterns(intensities_d, n_patterns, pat_len);
-    if (!bkg_ok) {
-      return bkg_ok;
-    }
+    check_error(normalize_ok);
   }
 
   ret = cudaDeviceSynchronize();
@@ -336,13 +339,15 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   ret =
       cudaMemcpy(intensities, intensities_d,
                  n_patterns * pat_len * sizeof(float), cudaMemcpyDeviceToHost);
-  log_cuda_err(ret, "copying intensities from device to host");
+  log_cuda_err(ret, "copying intensities from "
+                    "device to host");
 
+defer:
   cudaFree(peaks_d);
   cudaFree(patterns_d);
   cudaFree(two_thetas_d);
   cudaFree(intensities_d);
-  return true;
+  return return_value;
 }
 
 } // extern "C"

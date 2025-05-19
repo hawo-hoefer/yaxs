@@ -9,8 +9,8 @@ use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
-use crate::cfg::Config;
-use crate::pattern::{render_jobs, DiscretizationJob};
+use crate::cfg::{AngleDisperse, Config, SimulationParameters};
+use crate::pattern::{render_jobs, DiscretizeAngleDisperse};
 
 #[derive(Args, Clone)]
 pub struct Opts {
@@ -45,7 +45,7 @@ pub struct PatternMetaData {
 
 #[derive(Serialize)]
 pub struct Extra {
-    pub cfg: Config,
+    pub cfg: AngleDisperse,
     pub max_phases: usize,
     pub encoding: Vec<String>,
 }
@@ -145,17 +145,18 @@ pub const TARGET_NAMES: [&'static str; N_PATTERN_META] = [
 
 pub const INPUT_NAMES: [&'static str; 1] = ["intensities"];
 
-pub fn render_and_queue_write_in_thread<T>(
-    jobs: &[DiscretizationJob],
+pub fn render_angle_disperse_and_queue_write_in_thread<T>(
+    jobs: &[DiscretizeAngleDisperse],
     two_thetas: &[f32],
     path: T,
     send: Sender<Arc<WriteJob<T>>>,
-    cfg: &Config,
+    abstol: f32,
+    n_structs: usize,
 ) -> Result<(), ()>
 where
     T: AsRef<Path> + Send + Sync,
 {
-    let (intensities, meta) = render_jobs(jobs, two_thetas, cfg.abstol, cfg.struct_cifs.len());
+    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs);
     send.send(Arc::new(WriteJob::Write {
         intensities,
         meta,
@@ -168,7 +169,6 @@ where
 }
 
 pub fn prepare_output_directory(opts: &Opts) {
-    // prepare output directory
     match std::fs::DirBuilder::new().create(&opts.output_name) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
             eprintln!(
@@ -189,6 +189,10 @@ pub fn prepare_output_directory(opts: &Opts) {
                 );
                 std::process::exit(1);
             });
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !opts.overwrite => {
+            eprintln!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", &opts.output_name);
+            std::process::exit(1);
         }
         Err(e) => {
             eprintln!(

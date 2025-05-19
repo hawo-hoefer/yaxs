@@ -1,0 +1,31 @@
+kind: !EnergyDisperse
+    n_steps: 1024
+    energy_range_kev: [10, 160]
+    theta_deg: 5.145
+    # theta_deg: 2.0725
+    # theta_deg: 10.29
+
+    # energy_range_kev: [5, 80]
+    # theta_deg: 5.0
+
+sample_parameters:
+  mean_ds_range_nm: [100.0, 100.0]
+  eta_range: [0.5, 0.5]
+  sample_displacement_range_mu_m: [0.0, 0.0]
+  max_strain: 0.000
+  structure_permutations: 1
+  struct_cifs:
+    # - ./NaCl_29929.cif
+    - ./Si_51688.cif
+    # - ./Si_101017.cif
+    # - ./Cu_7954.cif
+    # - ./CaCO3_40107.cif
+    # - ./Ir_53813.cif
+    # - ./HfO2_monoclinic_142790.cif
+    # - ./SiO2_16331.cif
+
+simulation_parameters:
+  normalize: true 
+  seed: 1234
+  n_patterns: 1000000
+  abstol: 1e-5

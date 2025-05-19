@@ -1,3 +1,18 @@
+use std::f32::consts::{PI, TAU};
+
+/// plack's constant in ev * s = ev * hz^-1
+pub const H_EV_S: f64 = 4.135_667_696e-15f64;
+
+/// speed of light in m / s
+pub const C_M_S: f64 = 299_792_485.0f64;
+
+pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
+    // e = h * c / lambda
+    // lambda = h * c / e
+    // m      = ev * s * m / ev
+    H_EV_S * C_M_S / e_kev * 1e7
+}
+
 /// Calculate Caglioti broadening for a position
 /// $FWHM(\theta) = u \tan(\theta)^2 + v \tan(\theta) + w$
 ///
@@ -25,11 +40,11 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
 }
 
 pub fn gauss(dx: f32, sigma: f32) -> f32 {
-    (-0.5 * (dx / sigma).powi(2)).exp() / (std::f32::consts::TAU * sigma.powi(2)).sqrt()
+    (-0.5 * (dx / sigma).powi(2)).exp() / (TAU * sigma.powi(2)).sqrt()
 }
 
 pub fn lorentz(dx: f32, gamma: f32) -> f32 {
-    1.0 / ((1.0 + (dx / gamma).powi(2)) * std::f32::consts::PI * gamma)
+    1.0 / ((1.0 + (dx / gamma).powi(2)) * PI * gamma)
 }
 
 pub fn pseudo_voigt(dx: f32, eta: f32, fwhm: f32) -> f32 {

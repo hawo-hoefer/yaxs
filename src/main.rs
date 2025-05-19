@@ -1,31 +1,27 @@
 use chrono::Utc;
 use clap::Parser;
+use itertools::Itertools;
 use ordered_float::NotNan;
 use rand::SeedableRng;
-use std::io::{BufReader, BufWriter, ErrorKind, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
-use yaxs::structure::simulate_peaks;
+use yaxs::cif::CifParser;
+use yaxs::math::{e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, C_M_S, H_EV_S};
+use yaxs::structure::{simulate_peaks, Strain, Structure};
 
-use yaxs::cfg::{Config, MetaGenerator};
+use yaxs::cfg::{
+    AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
+    SimulationParameters,
+};
 use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
-use yaxs::pattern::{render_jobs, render_write_chunked};
-
-const H_EV_S: f64 = 4.135_667_696e-15f64;
-const C_M_S: f64 = 299_792_485.0f64;
+use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
 
 fn output_exists(path: &str) -> bool {
     std::fs::exists(&path).unwrap_or_else(|err| {
         eprintln!("Could not check whether output file/directory {path} exists: {err}");
         std::process::exit(1);
     })
-}
-
-pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
-    // e = h * c / lambda
-    // lambda = h * c / e
-    // m      = ev * s * m / ev
-    H_EV_S * C_M_S / e_kev * 1e7
 }
 
 #[derive(Parser)]
@@ -47,100 +43,128 @@ struct Cli {
     io: io::Opts,
 }
 
-fn main() {
-    let args = Cli::parse();
-
-    let f = match std::fs::File::open(&args.cfg) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!(
-                "Error: Could not open File '{}': {}",
-                args.cfg.to_str().unwrap(),
-                e
-            );
-            std::process::exit(1);
-        }
-    };
-
-    let (gen, mut rng) = {
-        let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!(
-                    "Could not parse config: '{x}': {e}",
-                    x = args.cfg.to_str().unwrap()
-                );
-                std::process::exit(1);
-            }
-        };
-        eprintln!("struct_cifs: {:?}", cfg.struct_cifs);
-        let rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.unwrap_or(0));
-        (MetaGenerator::from(cfg), rng)
-    };
-
-    let output_path_exists = output_exists(&args.io.output_name);
-    if output_path_exists {
-        if args.io.overwrite {
-            std::fs::remove_dir_all(&args.io.output_name).unwrap_or_else(|err| {
-                eprintln!(
-                    "Could not delete output directory '{}': {}",
-                    &args.io.output_name, err
-                );
-                std::process::exit(1);
-            });
-        } else {
-            eprintln!("Output path '{}' already exists.", args.io.output_name);
-            std::process::exit(1);
-        }
-    }
-
-    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
-
-    let begin = Instant::now();
-    let (all_simulated_peaks, all_strains) = simulate_peaks(&gen, &mut rng);
-    let elapsed = begin.elapsed().as_secs_f64();
-
-    eprintln!("Simulating Peak Positions took {elapsed:.2}s");
-
+fn render_energy_disperse(
+    kind: EnergyDisperse,
+    sample_params: SampleParameters,
+    simulation_parameters: SimulationParameters,
+    args: Cli,
+    all_simulated_peaks: &Vec<Vec<Peaks>>,
+    all_strains: &Vec<Vec<Strain>>,
+    timestamp_started: chrono::DateTime<Utc>,
+    rng: &mut rand::rngs::StdRng,
+) {
     let begin_render = Instant::now();
 
+    let (e0, e1) = kind.energy_range_kev;
+    let energies = (0..kind.n_steps)
+        .map(|x| x as f32 / (kind.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
+        .collect_vec();
+    let mut intensities = Vec::new();
+    intensities.resize(kind.n_steps, 0.0f32);
+    let vfs = [1.0, 1.0];
+    // for (structure, _vf) in all_simulated_peaks.iter().zip(vfs) {
+    //     for i in 0..kind.n_steps {
+    //         for peak in structure[0].peaks.iter() {
+    //             // E = H C / Lambda
+    //             // lambda = H C / E
+    //             let wavelength_ams = e_kev_to_lambda_ams(energies[i] as f64);
+    //             let pc = peak.convert(structure[0].wavelength_nm, wavelength_ams / 10.0);
+
+    //             let dx = kind.theta_deg * 2.0 - pc.pos;
+    //             let mean_ds_nm = 50.0;
+    //             let fwhm = scherrer_broadening(
+    //                 wavelength_ams / 10.0,
+    //                 pc.pos.to_radians() / 2.0,
+    //                 mean_ds_nm,
+    //             );
+    //             let pv = pseudo_voigt(dx as f32, 0.5f32, fwhm as f32);
+    //             // eprintln!("{:.2} {:.2} {:.4} | {}", pc.pos, dx, pv, fwhm);
+    //             intensities[i] += pv * peak.intensity as f32;
+    //         }
+    //     }
+    // }
+
+    for (structure, vf) in all_simulated_peaks.iter().zip(vfs) {
+        for peak in structure[0].peaks.iter() {
+            eprintln!("{:?}", peak);
+            peak.render(
+                &mut intensities,
+                &energies,
+                1.0,
+                vf,
+                100.0,
+                0.5,
+                0.0,
+                0.0,
+                0.0,
+                0.00001,
+            )
+        }
+    }
+    for (e, i) in energies.iter().zip(intensities) {
+        println!("{} {}", e, i);
+    }
+}
+
+fn render_angle_disperse(
+    angle_disperse: AngleDisperse,
+    sample_params: SampleParameters,
+    simulation_parameters: SimulationParameters,
+    args: Cli,
+    structures: Box<[Structure]>,
+    all_simulated_peaks: &Vec<Vec<Peaks>>,
+    all_strains: &Vec<Vec<Strain>>,
+    timestamp_started: chrono::DateTime<Utc>,
+    rng: &mut rand::rngs::StdRng,
+) {
+    let begin_render = Instant::now();
+    let gen = MetaGenerator {
+        angle_disperse,
+        structures,
+        sample_params,
+        simulation_parameters,
+    };
     // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(gen.cfg.n_steps);
+    let mut two_thetas = Vec::with_capacity(gen.angle_disperse.n_steps);
     two_thetas.resize(two_thetas.capacity(), 0.0f32);
     for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = gen.cfg.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.cfg.n_steps as f64 - 1.0))) as f32;
+        let r = gen.angle_disperse.two_theta_range;
+        *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.angle_disperse.n_steps as f64 - 1.0))) as f32;
     }
 
-    let mut concentration_buf = Vec::with_capacity(gen.cfg.struct_cifs.len());
+    let mut concentration_buf = Vec::with_capacity(gen.sample_params.struct_cifs.len());
     concentration_buf.resize(
         concentration_buf.capacity(),
         NotNan::new(0.0).expect("0.0 is not NaN"),
     );
 
     // create rendering jobs
-    let mut jobs = Vec::with_capacity(gen.cfg.n_patterns);
-    for _ in 0..gen.cfg.n_patterns {
+    let mut jobs = Vec::with_capacity(gen.simulation_parameters.n_patterns);
+    for _ in 0..gen.simulation_parameters.n_patterns {
         let job = gen.generate_job(
-            &all_simulated_peaks,
-            &all_strains,
+            all_simulated_peaks,
+            all_strains,
             &mut concentration_buf,
-            &mut rng,
+            rng,
         );
         jobs.push(job);
     }
 
-    prepare_output_directory(&args.io);
-
     // simulate and write to file(s)
     let datafiles = if let Some(_) = args.io.chunk_size {
-        Some(render_write_chunked(&jobs, &two_thetas, &gen.cfg, &args.io))
+        Some(render_write_chunked(
+            &jobs,
+            &two_thetas,
+            gen.simulation_parameters.abstol,
+            gen.sample_params.struct_cifs.len(),
+            &args.io,
+        ))
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
             &two_thetas,
-            gen.cfg.abstol,
-            gen.cfg.struct_cifs.len(),
+            gen.simulation_parameters.abstol,
+            gen.sample_params.struct_cifs.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_name);
@@ -162,9 +186,9 @@ fn main() {
         input_names: &io::INPUT_NAMES,
         target_names: &io::TARGET_NAMES,
         extra: io::Extra {
-            encoding: gen.cfg.struct_cifs.clone().to_vec(),
-            max_phases: gen.cfg.struct_cifs.len(),
-            cfg: gen.cfg,
+            encoding: gen.sample_params.struct_cifs.clone().to_vec(),
+            max_phases: gen.sample_params.struct_cifs.len(),
+            cfg: gen.angle_disperse,
         },
     })
     .expect("SimulationMetadata is serializable");
@@ -194,4 +218,159 @@ fn main() {
     });
 
     eprintln!("Done rendering patterns. Took {elapsed:.2}s");
+}
+
+fn main() {
+    let args = Cli::parse();
+
+    let f = match std::fs::File::open(&args.cfg) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "Error: Could not open File '{}': {}",
+                args.cfg.to_str().unwrap(),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!(
+                "Could not parse config: '{x}': {e}",
+                x = args.cfg.to_str().unwrap()
+            );
+            std::process::exit(1);
+        }
+    };
+
+    // let output_path_exists = output_exists(&args.io.output_name);
+    // if output_path_exists {
+    //     if args.io.overwrite {
+    //         std::fs::remove_dir_all(&args.io.output_name).unwrap_or_else(|err| {
+    //             eprintln!(
+    //                 "Could not delete output directory '{}': {}",
+    //                 &args.io.output_name, err
+    //             );
+    //             std::process::exit(1);
+    //         });
+    //     } else {
+    //         eprintln!("Output path '{}' already exists.", args.io.output_name);
+    //         std::process::exit(1);
+    //     }
+    // }
+    prepare_output_directory(&args.io);
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
+    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
+
+    let structs = cfg
+        .sample_parameters
+        .struct_cifs
+        .iter()
+        .map(|path| {
+            // TODO: Errors
+            let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
+            let mut cif = String::new();
+            let _ = reader.read_to_string(&mut cif).unwrap();
+            let mut p = CifParser::new(&cif);
+            Structure::from(&p.parse())
+        })
+        .collect_vec();
+
+    let begin = Instant::now();
+    let (all_simulated_peaks, all_strains) = match &cfg.kind {
+        SimulationKind::AngleDisperse(angle_disperse) => {
+            let min_line = &angle_disperse
+                .emission_lines
+                .iter()
+                .min_by(|a, b| {
+                    a.wavelength_ams
+                        .partial_cmp(&b.wavelength_ams)
+                        .expect("no NaNs in wavelengths")
+                })
+                .expect("at least one emission line");
+
+            let (two_theta_range, wavelength_ams) =
+                (angle_disperse.two_theta_range, min_line.wavelength_ams);
+
+            eprintln!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
+            simulate_peaks(
+                &cfg.sample_parameters,
+                &structs,
+                two_theta_range,
+                wavelength_ams,
+                &mut rng,
+            )
+        }
+        SimulationKind::EnergyDisperse(energy_disperse) => {
+            // let sim_wav_ams = e_kev_to_lambda_ams(energy_disperse.energy_range_kev.1);
+
+            // let (two_theta_range, wavelength_ams) = ((0.5, 5.0), sim_wav_ams);
+
+            // eprintln!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
+            // simulate_peaks(
+            //     &cfg.sample_parameters,
+            //     &structs,
+            //     two_theta_range,
+            //     wavelength_ams,
+            //     &mut rng,
+            // )
+
+            let mut all_simulated_peaks = Vec::new();
+            for structure in structs.iter() {
+                // let (_, mut strain) = structure.permute(0.01, &mut rng);
+                // for s in strain.0.iter_mut() {
+                //     *s *= 1.0 + 5.9e-6 * 900.0;
+                // }
+                // let s2 = structure.apply_strain(strain);
+                // eprintln!("{} {}", structure.lat.mat, s2.lat.mat);
+                let p = Peaks {
+                    peaks: structure
+                        .get_pattern_edxrd(
+                            energy_disperse.theta_deg,
+                            &energy_disperse.energy_range_kev,
+                        )
+                        .into_boxed_slice(),
+                    wavelength_nm: 0.0,
+                };
+                all_simulated_peaks.push(vec![p]);
+            }
+            // // TODO: check if peaks match up when using Gnanavel's and Michaels Data
+            let all_strains: Vec<Vec<Strain>> = Vec::new();
+            (all_simulated_peaks, all_strains)
+        }
+    };
+
+    let elapsed = begin.elapsed().as_secs_f64();
+
+    eprintln!("Simulating Peak Positions took {elapsed:.2}s");
+
+    match cfg.kind {
+        SimulationKind::AngleDisperse(angle_disperse) => {
+            render_angle_disperse(
+                angle_disperse,
+                cfg.sample_parameters,
+                cfg.simulation_parameters,
+                args,
+                structs.into(),
+                &all_simulated_peaks,
+                &all_strains,
+                timestamp_started,
+                &mut rng,
+            );
+        }
+        SimulationKind::EnergyDisperse(energy_disperse) => render_energy_disperse(
+            energy_disperse,
+            cfg.sample_parameters,
+            cfg.simulation_parameters,
+            args,
+            &all_simulated_peaks,
+            &all_strains,
+            timestamp_started,
+            &mut rng,
+        ),
+    }
 }

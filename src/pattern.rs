@@ -3,9 +3,9 @@ use std::sync::Arc;
 use ndarray::{Array1, Array2, Array3};
 
 use crate::background::Background;
-use crate::cfg::Config;
+use crate::cfg::{AngleDisperse, SimulationParameters};
 use crate::discretize_cuda::discretize_peaks_cuda;
-use crate::io::{render_and_queue_write_in_thread, PatternMetaData, WriteJob};
+use crate::io::{render_angle_disperse_and_queue_write_in_thread, PatternMetaData, WriteJob};
 use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
 use crate::structure::Strain;
 
@@ -20,7 +20,7 @@ pub struct PatternMeta {
     pub background: Background,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug)]
 #[repr(C)]
 pub struct EmissionLine {
     // wavelength in amstrong
@@ -48,7 +48,7 @@ pub struct Peaks {
     pub wavelength_nm: f64,
 }
 
-pub struct DiscretizationJob<'a> {
+pub struct DiscretizeAngleDisperse<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
     pub all_strains: &'a Vec<Vec<Strain>>,
@@ -59,7 +59,7 @@ pub struct DiscretizationJob<'a> {
     pub meta: PatternMeta,
 }
 
-impl<'a> DiscretizationJob<'a> {
+impl<'a> DiscretizeAngleDisperse<'a> {
     pub fn discretize_into(&self, pat: &mut [f32], two_thetas: &[f32], abstol: f32) {
         let PatternMeta {
             vol_fractions,
@@ -122,7 +122,7 @@ impl<'a> DiscretizationJob<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct Peak {
-    // position in degrees two-theta
+    // position in degrees two-theta or keV in case of EDXRD
     pub pos: f64,
     pub intensity: f64,
 }
@@ -142,7 +142,7 @@ impl Peak {
         &self,
         pat: &mut [f32],
         two_thetas: &[f32],
-        wavelength: f64,
+        wavelength_nm: f64,
         weight: f64,
         mean_ds_nm: f64,
         eta: f64,
@@ -155,11 +155,11 @@ impl Peak {
         // TODO: make position in radians
         let theta_pos_rad = self.pos.to_radians() / 2.0;
         let fwhm = caglioti(u, v, w, theta_pos_rad)
-            + scherrer_broadening(wavelength, theta_pos_rad, mean_ds_nm);
+            + scherrer_broadening(wavelength_nm, theta_pos_rad, mean_ds_nm);
         let peak_weight = (weight * self.intensity) as f32;
         let midpoint = ((pos as f32 - two_thetas[0])
-            / ((two_thetas[two_thetas.len() - 1] - two_thetas[0]) * two_thetas.len() as f32))
-            as usize;
+            / (two_thetas[two_thetas.len() - 1] - two_thetas[0])
+            * two_thetas.len() as f32) as usize;
 
         let mut i = midpoint;
         if i > two_thetas.len() - 1 {
@@ -226,9 +226,10 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
 }
 
 pub fn render_write_chunked(
-    jobs: &[DiscretizationJob],
+    jobs: &[DiscretizeAngleDisperse],
     two_thetas: &[f32],
-    cfg: &Config,
+    abstol: f32,
+    n_phases: usize,
     io_opts: &crate::io::Opts,
 ) -> Vec<String> {
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
@@ -273,17 +274,24 @@ pub fn render_write_chunked(
             i / chunk_size,
             width = pad_width as usize
         );
-        let chunk: &[DiscretizationJob] = &jobs[i..(i + chunk_size).min(l)];
+        let chunk: &[DiscretizeAngleDisperse] = &jobs[i..(i + chunk_size).min(l)];
 
         let mut chunk_path = std::path::PathBuf::new();
         chunk_path.push(&io_opts.output_name);
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        let _ = render_and_queue_write_in_thread(&chunk, &two_thetas, chunk_path, tx.clone(), cfg)
-            .map_err(|_| {
-                std::process::exit(1);
-            });
+        let _ = render_angle_disperse_and_queue_write_in_thread(
+            &chunk,
+            &two_thetas,
+            chunk_path,
+            tx.clone(),
+            abstol,
+            n_phases,
+        )
+        .map_err(|_| {
+            std::process::exit(1);
+        });
         i += chunk_size;
     }
     let _ = tx.send(Arc::new(WriteJob::Done));
@@ -295,7 +303,7 @@ pub fn render_write_chunked(
 }
 
 pub fn render_jobs(
-    jobs: &[DiscretizationJob],
+    jobs: &[DiscretizeAngleDisperse],
     two_thetas: &[f32],
     atol: f32,
     n_phases: usize,

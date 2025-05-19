@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cif::CifParser;
-use crate::pattern::{DiscretizationJob, EmissionLine, PatternMeta, Peaks};
+use crate::pattern::{DiscretizeAngleDisperse, EmissionLine, PatternMeta, Peaks};
 use crate::structure::{Strain, Structure};
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
@@ -53,84 +53,85 @@ impl BackgroundSpec {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Caglioti {
     pub u_range: (f64, f64),
     pub v_range: (f64, f64),
     pub w_range: (f64, f64),
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum Noise {
     None,
     Gaussian { sigma_min: f64, sigma_max: f64 },
     // Uniform // TODO
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct Config {
-    pub struct_cifs: Box<[String]>,
+#[derive(Deserialize, Serialize, Debug)]
+pub struct AngleDisperse {
     pub emission_lines: Box<[EmissionLine]>,
 
     pub n_steps: usize,
     pub two_theta_range: (f64, f64),
 
-    pub mean_ds_range_nm: (f64, f64),
-    pub eta_range: (f64, f64),
-    pub sample_displacement_range_mu_m: (f64, f64),
-    pub max_strain: f64,
-
     pub noise: Noise,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
+}
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
-    pub structure_permutations: usize,
 
     pub abstol: f32,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            struct_cifs: Box::new([]),
-            emission_lines: Box::new([]),
-            n_steps: 2048,
-            two_theta_range: (10.0, 70.0),
-            eta_range: (0.1, 0.9),
-            noise: Noise::Gaussian {
-                sigma_min: 0.0,
-                sigma_max: 100.0,
-            },
-            mean_ds_range_nm: (50.0, 50.0),
-            caglioti: Caglioti {
-                u_range: (0.0, 0.025),
-                v_range: (-0.025, 0.0),
-                w_range: (0.0, 0.025),
-            },
-            sample_displacement_range_mu_m: (-250.0, 250.0),
-            background: BackgroundSpec::None,
-            normalize: false,
-            seed: Some(1234),
-            n_patterns: 1,
-            max_strain: 0.01,
-            structure_permutations: 1,
-            abstol: 1e-2,
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SampleParameters {
+    pub struct_cifs: Box<[String]>,
+    pub mean_ds_range_nm: (f64, f64),
+    pub sample_displacement_range_mu_m: (f64, f64),
+    pub max_strain: f64,
+
+    pub eta_range: (f64, f64),
+    pub structure_permutations: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum SimulationKind {
+    AngleDisperse(AngleDisperse),
+    EnergyDisperse(EnergyDisperse),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Config {
+    pub kind: SimulationKind,
+    pub sample_parameters: SampleParameters,
+    pub simulation_parameters: SimulationParameters,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnergyDisperse {
+    pub n_steps: usize,
+    pub energy_range_kev: (f64, f64),
+    pub theta_deg: f64,
 }
 
 pub struct MetaGenerator {
     pub structures: Box<[Structure]>,
-    pub cfg: Config,
-    pub i: usize,
+    pub angle_disperse: AngleDisperse,
+    pub sample_params: SampleParameters,
+    pub simulation_parameters: SimulationParameters,
 }
 
-impl From<Config> for MetaGenerator {
-    fn from(cfg: Config) -> Self {
+impl TryFrom<Config> for MetaGenerator {
+    type Error = String;
+
+    fn try_from(cfg: Config) -> Result<Self, String> {
         let structures = cfg
+            .sample_parameters
             .struct_cifs
             .iter()
             .map(|path| {
@@ -141,11 +142,17 @@ impl From<Config> for MetaGenerator {
                 let mut p = CifParser::new(&cif);
                 Structure::from(&p.parse())
             })
-            .collect_vec();
-        Self {
-            cfg,
-            structures: structures.into_boxed_slice(),
-            i: 0,
+            .collect_vec()
+            .into();
+
+        match cfg.kind {
+            SimulationKind::AngleDisperse(angle_disperse) => Ok(Self {
+                angle_disperse,
+                structures,
+                sample_params: cfg.sample_parameters,
+                simulation_parameters: cfg.simulation_parameters,
+            }),
+            SimulationKind::EnergyDisperse(energy_disperse) => todo!(),
         }
     }
 }
@@ -157,10 +164,8 @@ impl MetaGenerator {
         all_strains: &'a Vec<Vec<Strain>>,
         concentration_buf: &mut [NotNan<f64>],
         mut rng: &mut rand::rngs::StdRng,
-    ) -> DiscretizationJob<'a> {
-        let Config {
-            eta_range,
-            mean_ds_range_nm,
+    ) -> DiscretizeAngleDisperse<'a> {
+        let AngleDisperse {
             caglioti:
                 Caglioti {
                     u_range,
@@ -170,10 +175,17 @@ impl MetaGenerator {
             // sample_displacement_range_mu_m,
             background,
             emission_lines,
-            normalize,
-            structure_permutations,
             ..
-        } = &self.cfg;
+        } = &self.angle_disperse;
+
+        let SampleParameters {
+            struct_cifs,
+            mean_ds_range_nm,
+            sample_displacement_range_mu_m,
+            max_strain,
+            eta_range,
+            structure_permutations,
+        } = &self.sample_params;
 
         let eta = rng.random_range(eta_range.0..=eta_range.1);
         let ds_sampler =
@@ -203,14 +215,14 @@ impl MetaGenerator {
             concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
         }
 
-        DiscretizationJob {
+        DiscretizeAngleDisperse {
             all_simulated_peaks,
             all_strains,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),
             emission_lines: &emission_lines,
-            normalize: *normalize,
+            normalize: self.simulation_parameters.normalize,
             meta: PatternMeta {
                 vol_fractions: concentration_buf
                     .iter()
