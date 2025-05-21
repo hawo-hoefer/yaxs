@@ -1,13 +1,14 @@
 use chrono::Utc;
 use clap::Parser;
 use itertools::Itertools;
+use nalgebra::Vector3;
 use ordered_float::NotNan;
 use rand::SeedableRng;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::structure::{simulate_peaks, Strain, Structure};
+use yaxs::structure::{simulate_peaks, MarchDollase, Strain, Structure};
 
 use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
@@ -53,32 +54,18 @@ fn render_energy_disperse(
         .collect_vec();
     let mut intensities = Vec::new();
     intensities.resize(kind.n_steps, 0.0f32);
-    let vfs = [1.0, 1.0];
-    // for (structure, _vf) in all_simulated_peaks.iter().zip(vfs) {
-    //     for i in 0..kind.n_steps {
-    //         for peak in structure[0].peaks.iter() {
-    //             // E = H C / Lambda
-    //             // lambda = H C / E
-    //             let wavelength_ams = e_kev_to_lambda_ams(energies[i] as f64);
-    //             let pc = peak.convert(structure[0].wavelength_nm, wavelength_ams / 10.0);
-
-    //             let dx = kind.theta_deg * 2.0 - pc.pos;
-    //             let mean_ds_nm = 50.0;
-    //             let fwhm = scherrer_broadening(
-    //                 wavelength_ams / 10.0,
-    //                 pc.pos.to_radians() / 2.0,
-    //                 mean_ds_nm,
-    //             );
-    //             let pv = pseudo_voigt(dx as f32, 0.5f32, fwhm as f32);
-    //             // eprintln!("{:.2} {:.2} {:.4} | {}", pc.pos, dx, pv, fwhm);
-    //             intensities[i] += pv * peak.intensity as f32;
-    //         }
-    //     }
-    // }
-
+    let vfs = [50.0, 0.3, 1.0, 1.0];
+    // let vfs = [0.05, 0.3, 1.0];
     for (structure, vf) in all_simulated_peaks.iter().zip(vfs) {
+        eprintln!("==============================");
         for peak in structure[0].peaks.iter() {
-            eprintln!("{:?}", peak);
+            eprintln!(
+                "Peak({} {}, N={}, hkl_0=[{:?}])",
+                peak.pos,
+                peak.intensity,
+                peak.hkls.len(),
+                peak.hkls[0].as_slice(),
+            );
             peak.render(
                 &mut intensities,
                 &energies,
@@ -283,36 +270,39 @@ fn main() {
             )
         }
         SimulationKind::EnergyDisperse(energy_disperse) => {
-            // let sim_wav_ams = e_kev_to_lambda_ams(energy_disperse.energy_range_kev.1);
-
-            // let (two_theta_range, wavelength_ams) = ((0.5, 5.0), sim_wav_ams);
-
-            // eprintln!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
-            // simulate_peaks(
-            //     &cfg.sample_parameters,
-            //     &structs,
-            //     two_theta_range,
-            //     wavelength_ams,
-            //     &mut rng,
-            // )
-
             let mut all_simulated_peaks = Vec::new();
-            for structure in structs.iter() {
-                // let (_, mut strain) = structure.permute(0.01, &mut rng);
-                // for s in strain.0.iter_mut() {
-                //     *s *= 1.0 + 5.9e-6 * 900.0;
-                // }
-                // let s2 = structure.apply_strain(strain);
+            // non-isotropic thermal expansion coefficients
+            let thermal_exp = [
+                [10.4, 0.0, 10.4, 0.0, 0.0, 10.4],
+                [5.9, 0.0, 5.9, 0.0, 0.0, 5.9],
+                [55.0, 0.0, 55.0, 0.0, 0.0, 55.0],
+                [9.34, 0.0, 2.98, 0.0, 0.0, 13.10],
+            ];
+            // let thermal_exp = [0.0, 0.0, 0.0];
+            for ((structure, therm), p_o) in structs
+                .iter()
+                .zip(thermal_exp)
+                .zip(cfg.sample_parameters.preferred_orientation.clone())
+            {
+                let mut strain = Strain(therm);
+                for s in strain.0.iter_mut() {
+                    let thermal = *s * 1e-6 * 900.0;
+                    *s = 1.0 + thermal;
+                }
+                let s2 = structure.apply_strain(strain);
+                // eprintln!("{}", strain.to_mat3());
                 // eprintln!("{} {}", structure.lat.mat, s2.lat.mat);
                 let p = Peaks {
                     peaks: structure
                         .get_edxrd_peaks(
                             energy_disperse.theta_deg,
                             &energy_disperse.energy_range_kev,
+                            p_o.as_ref(),
                         )
                         .into_boxed_slice(),
                     wavelength_nm: 0.0,
                 };
+
                 all_simulated_peaks.push(vec![p]);
             }
             // // TODO: check if peaks match up when using Gnanavel's and Michaels Data

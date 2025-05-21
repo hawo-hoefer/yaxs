@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
@@ -12,6 +13,7 @@ use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
+const HKL_NORM_TOL: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -158,6 +160,34 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
 }
 
+#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
+pub struct MarchDollase {
+    // miller index h
+    pub hkl: Vector3<f64>,
+    // march parameter
+    pub r: f64,
+}
+
+impl MarchDollase {
+    /// compute march-dollase scaling of peak intensities
+    /// Using equation (1) from Zolotoyabko, E. (2009). J. Appl. Cryst. 42, 513-518.
+    /// https://doi.org/10.1107/S0021889809013727
+    ///
+    /// * `hkl`: lattice vector for scaling
+    pub fn weight(&self, hkl: &Vector3<f64>) -> f64 {
+        let num = hkl.dot(&self.hkl);
+        let denom = self.hkl.norm() * hkl.norm();
+
+        let alpha_rad = if (num.abs() - denom.abs()).abs() < HKL_NORM_TOL {
+            0.0
+        } else {
+            (hkl.dot(&self.hkl) / (self.hkl.norm() * hkl.norm())).acos()
+        };
+
+        (self.r.powi(2) * alpha_rad.cos().powi(2) + alpha_rad.sin().powi(2) / self.r).powf(-1.5)
+    }
+}
+
 impl Structure {
     pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> (Structure, Strain) {
         if max_strain == 0.0 {
@@ -252,7 +282,13 @@ impl Structure {
     ///
     /// * `min_r`: minimum d-spacing to consider
     /// * `max_r`: maximum d-spacing to consider
-    pub fn get_d_spacings_intensities(&self, min_r: f64, max_r: f64) -> Vec<Peak> {
+    /// * `po`: preferred orientation march-dollase parameters, if desired
+    pub fn get_d_spacings_intensities(
+        &self,
+        min_r: f64,
+        max_r: f64,
+        po: Option<&MarchDollase>,
+    ) -> Vec<Peak> {
         let recip_lat = self.lat.recip_lattice_crystallographic();
         let recp_len = recip_lat.recip_lattice().abc();
         const RADIUS_TOL: f64 = 1e-8;
@@ -260,7 +296,7 @@ impl Structure {
         let r_max =
             ((r_cells + 0.15) * recp_len / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
 
-        let mut agg = HashMap::new();
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vector3<i16>>)>::new();
 
         let global_min = -max_r - RADIUS_TOL;
         let global_max = max_r + RADIUS_TOL;
@@ -330,39 +366,46 @@ impl Structure {
                 }
             }
             // # Intensity for hkl is modulus square of structure factor
-            let i_hkl = (f_hkl * f_hkl.conjugate()).real();
+            let mut i_hkl = (f_hkl * f_hkl.conjugate()).real();
+            if let Some(po) = po {
+                let w = po.weight(&hkl);
+                i_hkl *= w;
+            }
             let d_spacing = 1.0 / g_hkl;
             let d_spacing = NotNan::new(d_spacing).expect("not nan");
-            *agg.entry(d_spacing)
-                .or_insert(NotNan::new(0.0).expect("valid float")) +=
-                NotNan::new(i_hkl).expect("not nan");
+            let (ref mut i_hkl_map, ref mut hkls_map) = agg
+                .entry(d_spacing)
+                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
+            *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
+            hkls_map.push(hkl.map(|x| x as i16))
         }
 
-        let Some((_, vmax)) = agg.iter().max_by_key(|&(_, b)| b) else {
+        let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
             return Vec::new();
         };
 
-        let agg = agg
+        let mut agg = agg
             .iter()
-            .sorted_by_key(|&(a, _)| a)
-            .map(|(d_hkl, i_hkl)| (f64::from(*d_hkl), f64::from(*i_hkl)))
-            .filter(|&(_, b)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
+            .sorted_unstable_by_key(|&(a, _)| -a)
+            .map(|(d_hkl, (i_hkl, hkls))| (f64::from(*d_hkl), f64::from(*i_hkl), hkls))
+            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
             .collect_vec();
 
         let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
-        for (d_hkl, i_hkl) in agg.iter() {
-            let i_hkl = f64::from(*i_hkl);
-
+        for (d_hkl, i_hkl, hkls) in agg.drain(..) {
             match compressed.last_mut() {
                 Some(Peak {
                     pos: last_d_hkl,
                     intensity: last_i_hkl,
-                }) if ((*d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
+                    hkls: last_hkls,
+                }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
                     *last_i_hkl += i_hkl;
+                    last_hkls.extend(hkls.clone())
                 }
                 None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    pos: *d_hkl,
+                    pos: d_hkl,
                     intensity: i_hkl,
+                    hkls: hkls.clone(),
                 }),
             }
         }
@@ -373,11 +416,17 @@ impl Structure {
     ///
     /// * `wavelength_ams`: wavelength for peaks in Amstrong
     /// * `two_theta_range`: two theta range to search for peaks in degrees
-    pub fn get_adxrd_peaks(&self, wavelength_ams: f64, two_theta_range: &(f64, f64)) -> Vec<Peak> {
+    /// * `po`: preferred orientation march-dollase parameters, if desired
+    pub fn get_adxrd_peaks(
+        &self,
+        wavelength_ams: f64,
+        two_theta_range: &(f64, f64),
+        po: Option<&MarchDollase>,
+    ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        let mut compressed = self.get_d_spacings_intensities(min_r, max_r);
+        let mut compressed = self.get_d_spacings_intensities(min_r, max_r, po);
         let volume = self.lat.volume() as f64;
         for peak in compressed.iter_mut() {
             let (d_hkl, i_hkl) = (peak.pos, peak.intensity);
@@ -399,7 +448,13 @@ impl Structure {
     ///
     /// * `theta_deg`: fixed angle of sample to beam
     /// * `energy_kev_range`: energy range in keV to consider for d-spacings
-    pub fn get_edxrd_peaks(&self, theta_deg: f64, energy_kev_range: &(f64, f64)) -> Vec<Peak> {
+    /// * `po`: preferred orientation march-dollase parameters, if desired
+    pub fn get_edxrd_peaks(
+        &self,
+        theta_deg: f64,
+        energy_kev_range: &(f64, f64),
+        po: Option<&MarchDollase>,
+    ) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
 
@@ -410,7 +465,7 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        let mut compressed = self.get_d_spacings_intensities(min_r, max_r);
+        let mut compressed = self.get_d_spacings_intensities(min_r, max_r, po);
         let f_lorentz = lorentz_factor(theta_rad);
 
         // approximation of the petra3/desy beamline energy
@@ -473,7 +528,7 @@ pub fn simulate_peaks(
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
             let peaks = Peaks {
                 peaks: perm_s
-                    .get_adxrd_peaks(wavelength_ams, &two_theta_range)
+                    .get_adxrd_peaks(wavelength_ams, &two_theta_range, None)
                     .into(),
                 wavelength_nm: wavelength_ams / 10.0,
             };

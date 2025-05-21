@@ -7,7 +7,7 @@ edition = "2021"
 chrono = { version = "0.4.41", features = ["serde"] }
 clap = { version = "4.5.32", features = ["derive"] }
 itertools = "0.14.0"
-nalgebra = "0.33.2"
+nalgebra = { version = "0.33.2", features = ["serde-serialize"]}
 ndarray = "0.16.1"
 ndarray-npy = "0.9.1"
 ordered-float = "5.0.0"

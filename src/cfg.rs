@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use crate::background::Background;
 use crate::cif::CifParser;
 use crate::pattern::{DiscretizeAngleDisperse, EmissionLine, PatternMeta, Peaks};
-use crate::structure::{Strain, Structure};
+use crate::structure::{MarchDollase, Strain, Structure};
 
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
@@ -53,21 +53,21 @@ impl BackgroundSpec {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Caglioti {
     pub u_range: (f64, f64),
     pub v_range: (f64, f64),
     pub w_range: (f64, f64),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Noise {
     None,
     Gaussian { sigma_min: f64, sigma_max: f64 },
     // Uniform // TODO
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct AngleDisperse {
     pub emission_lines: Box<[EmissionLine]>,
 
@@ -79,7 +79,7 @@ pub struct AngleDisperse {
     pub background: BackgroundSpec,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
@@ -88,9 +88,10 @@ pub struct SimulationParameters {
     pub abstol: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleParameters {
     pub struct_cifs: Box<[String]>,
+    pub preferred_orientation: Vec<Option<MarchDollase>>,
     pub mean_ds_range_nm: (f64, f64),
     pub sample_displacement_range_mu_m: (f64, f64),
     pub max_strain: f64,
@@ -99,20 +100,20 @@ pub struct SampleParameters {
     pub structure_permutations: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SimulationKind {
     AngleDisperse(AngleDisperse),
     EnergyDisperse(EnergyDisperse),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub kind: SimulationKind,
     pub sample_parameters: SampleParameters,
     pub simulation_parameters: SimulationParameters,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnergyDisperse {
     pub n_steps: usize,
     pub energy_range_kev: (f64, f64),
@@ -179,12 +180,10 @@ impl MetaGenerator {
         } = &self.angle_disperse;
 
         let SampleParameters {
-            struct_cifs: _,
             mean_ds_range_nm,
-            sample_displacement_range_mu_m: _,
-            max_strain: _,
             eta_range,
             structure_permutations,
+            ..
         } = &self.sample_params;
 
         let eta = rng.random_range(eta_range.0..=eta_range.1);

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use nalgebra::Vector3;
 use ndarray::{Array1, Array2, Array3};
 
 use crate::background::Background;
@@ -19,7 +20,7 @@ pub struct PatternMeta {
     pub background: Background,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
 #[repr(C)]
 pub struct EmissionLine {
     // wavelength in amstrong
@@ -118,12 +119,13 @@ impl<'a> DiscretizeAngleDisperse<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Peak {
     // position in degrees two-theta or keV in case of EDXRD
     pub pos: f64,
     pub intensity: f64,
+    pub hkls: Vec<Vector3<i16>>,
 }
 
 impl Peak {
@@ -216,6 +218,7 @@ impl Peak {
         return Peak {
             pos: new_pos,
             intensity: self.intensity * wav_correction as f64 * lorentz_correction as f64,
+            hkls: self.hkls.clone(),
         };
     }
 }
