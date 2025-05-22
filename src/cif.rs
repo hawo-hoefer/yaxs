@@ -60,16 +60,28 @@ pub struct CIFContents {
 
 impl CIFContents {
     pub fn get_symops(&self) -> Vec<SymOp> {
+        let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [&'static str; 2] = [
-                "_space_group_symop_id",
-                "_space_group_symop_operation_xyz", // TODO: handle alternative table with _space_group_symop_equiv_pos_as_xyz
+            const SITE_KEYS: [[&'static str; 2]; 2] = [
+                ["_space_group_symop_id", "_space_group_symop_operation_xyz"],
+                ["_symmetry_equiv_pos_site_id", "_symmetry_equiv_pos_as_xyz"],
             ];
-            SITE_KEYS.iter().map(|&k| t.contains_key(k)).all(|x| x)
+            let symop_operation_xyz = SITE_KEYS[0].iter().map(|&k| t.contains_key(k)).all(|x| x);
+            if !symop_operation_xyz {
+                let equiv_pos_site_id = SITE_KEYS[1].iter().map(|&k| t.contains_key(k)).all(|x| x);
+
+                if equiv_pos_site_id {
+                    symop_label = "_symmetry_equiv_pos_as_xyz";
+                }
+                equiv_pos_site_id
+            } else {
+                symop_label = "_space_group_symop_operation_xyz";
+                true
+            }
         }) else {
             panic!("No atom site label info in CIF")
         };
-        symops_table["_space_group_symop_operation_xyz"]
+        symops_table[symop_label]
             .iter()
             .map(|s| {
                 let Value::Text(s) = s else {
@@ -208,6 +220,7 @@ impl CIFContents {
         let sg_no = self
             .kvs
             .get("_space_group_IT_number")
+            .or_else(|| self.kvs.get("_symmetry_Int_Tables_number"))
             .expect("symmetry group should be present in CIF");
         let sg_no = match *sg_no {
             Value::Int(sg_no) => {
@@ -428,7 +441,9 @@ impl<'a> CifParser<'a> {
         let mut kvs = Vec::new();
         while self.c.starts_with('_') {
             // while tokens start with '_', we are reading column names
+
             kvs.push((self.parse_tag().to_string(), Vec::new()));
+            self.skip_whitespace();
         }
 
         while !self.c.starts_with('_')
@@ -717,5 +732,18 @@ _cell_length_c 12
         assert_eq!(kvs.get("_cell_length_a"), Some(&Value::Int(4)));
         assert_eq!(kvs.get("_cell_length_b"), Some(&Value::Int(8)));
         assert_eq!(kvs.get("_cell_length_c"), Some(&Value::Int(12)));
+    }
+
+    #[test]
+    fn space_before_loop_labels() {
+        let mut p = CifParser::new(
+            "data_HfO2
+loop_
+  _a
+  _b
+  _c
+  1 2 3",
+        );
+        p.parse();
     }
 }
