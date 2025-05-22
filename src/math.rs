@@ -39,6 +39,13 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
     (K * wavelength / (theta.cos() * mean_ds)).to_degrees()
 }
 
+/// compute the lorentz polarization factor
+///
+/// * `theta_rad`: position to compute correction for
+pub fn lorentz_factor(theta_rad: f64) -> f64 {
+    (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
+}
+
 pub fn gauss(dx: f32, sigma: f32) -> f32 {
     (-0.5 * (dx / sigma).powi(2)).exp() / (TAU * sigma.powi(2)).sqrt()
 }

@@ -1,5 +1,4 @@
 use crate::background::Background;
-use crate::math::{caglioti, scherrer_broadening};
 use crate::pattern::{DiscretizeAngleDisperse, PatternMeta};
 
 pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32]) -> Vec<f32> {
@@ -33,7 +32,6 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
     struct PeakSOA<T> {
         intensity: *const T,
         pos: *const T,
-        weight: *const T,
         fwhm: *const T,
         eta: *const T,
         n_peaks_tot: usize,
@@ -51,7 +49,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
             job.all_simulated_peaks
                 .iter()
                 .zip(&job.indices)
-                .map(|(phase_peaks, idx)| phase_peaks[*idx].peaks.len() * job.emission_lines.len())
+                .map(|(phase_peaks, idx)| phase_peaks[*idx].len() * job.emission_lines.len())
                 .sum::<usize>()
         })
         .sum();
@@ -62,7 +60,6 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
     let mut ffi_peak_pos = Vec::with_capacity(n_peaks_tot);
     let mut ffi_peak_info_fwhm = Vec::with_capacity(n_peaks_tot);
     let mut ffi_peak_info_eta = Vec::with_capacity(n_peaks_tot);
-    let mut ffi_peak_info_weight = Vec::with_capacity(n_peaks_tot);
 
     let mut start_idx = 0;
 
@@ -153,22 +150,20 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
         {
             let peaks = &phase_peaks[*idx];
             for emission_line in job.emission_lines {
-                for peak in &peaks.peaks {
-                    let cpeak =
-                        peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
+                for peak in peaks.iter() {
+                    let (two_theta, peak_weight, fwhm) = peak.get_adxrd_render_params(
+                        emission_line.wavelength_ams * 0.1,
+                        *u,
+                        *v,
+                        *w,
+                        *phase_mean_ds_nm,
+                        emission_line.weight * vf,
+                    );
 
-                    let theta_pos_rad = peak.pos.to_radians() / 2.0;
-                    let fwhm = caglioti(*u, *v, *w, theta_pos_rad)
-                        + scherrer_broadening(
-                            peaks.wavelength_nm,
-                            theta_pos_rad,
-                            *phase_mean_ds_nm,
-                        );
-                    ffi_peak_info_weight.push((emission_line.weight * vf) as f32);
                     ffi_peak_info_fwhm.push(fwhm as f32);
                     ffi_peak_info_eta.push(*eta as f32);
-                    ffi_peak_pos.push(cpeak.pos as f32);
-                    ffi_peak_intensity.push(cpeak.intensity as f32);
+                    ffi_peak_pos.push(two_theta);
+                    ffi_peak_intensity.push(peak_weight);
                     n_peaks += 1;
                 }
             }
@@ -199,7 +194,6 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
         let soa = PeakSOA {
             intensity: ffi_peak_intensity.as_ptr(),
             pos: ffi_peak_pos.as_ptr(),
-            weight: ffi_peak_info_weight.as_ptr(),
             fwhm: ffi_peak_info_fwhm.as_ptr(),
             eta: ffi_peak_info_eta.as_ptr(),
             n_peaks_tot,

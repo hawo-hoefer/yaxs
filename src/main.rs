@@ -1,21 +1,20 @@
 use chrono::Utc;
 use clap::Parser;
 use itertools::Itertools;
-use nalgebra::Vector3;
 use ordered_float::NotNan;
 use rand::SeedableRng;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::structure::{simulate_peaks, MarchDollase, Strain, Structure};
+use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
 
 use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
     SimulationParameters,
 };
 use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
-use yaxs::pattern::{render_jobs, render_write_chunked, Peaks};
+use yaxs::pattern::{render_jobs, render_peak, render_write_chunked, Peaks};
 
 #[derive(Parser)]
 #[command(
@@ -46,43 +45,39 @@ fn render_energy_disperse(
     _timestamp_started: chrono::DateTime<Utc>,
     _rng: &mut rand::rngs::StdRng,
 ) {
-    let _begin_render = Instant::now();
-
+    let begin_render = Instant::now();
     let (e0, e1) = kind.energy_range_kev;
     let energies = (0..kind.n_steps)
         .map(|x| x as f32 / (kind.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
         .collect_vec();
     let mut intensities = Vec::new();
     intensities.resize(kind.n_steps, 0.0f32);
-    let vfs = [50.0, 0.3, 1.0, 1.0];
-    // let vfs = [0.05, 0.3, 1.0];
+
+    let theta_rad = kind.theta_deg.to_radians();
+    let f_lorentz = yaxs::math::lorentz_factor(theta_rad);
+
+    // approximation of the petra3/desy beamline energy
+    fn beamline_intensity(e_kev: f64) -> f64 {
+        10.0f64.powf(12.30 - e_kev * 0.7 / 100.0)
+        // 1.0
+    }
+
+    let vfs = [50.0, 0.3, 1.0, 0.0];
     for (structure, vf) in all_simulated_peaks.iter().zip(vfs) {
-        eprintln!("==============================");
-        for peak in structure[0].peaks.iter() {
-            eprintln!(
-                "Peak({} {}, N={}, hkl_0=[{:?}])",
-                peak.pos,
-                peak.intensity,
-                peak.hkls.len(),
-                peak.hkls[0].as_slice(),
-            );
-            peak.render(
-                &mut intensities,
-                &energies,
-                1.0,
-                vf,
-                100.0,
-                0.5,
-                0.0,
-                0.0,
-                0.0,
-                0.00001,
-            )
+        for peak in structure[0].iter() {
+            let (pos, weight) =
+                peak.get_edxrd_render_params(theta_rad, f_lorentz, 100.0, vf, beamline_intensity);
+            eprintln!("{} {}", pos, weight);
+            render_peak(pos, weight, 1.0, 0.5, 1e-5, &energies, &mut intensities);
         }
     }
+
     for (e, i) in energies.iter().zip(intensities) {
         println!("{} {}", e, i);
     }
+
+    let elapsed = begin_render.elapsed().as_secs_f64();
+    eprintln!("Rendering Took {elapsed:.2}s")
 }
 
 fn render_angle_disperse(
@@ -261,7 +256,7 @@ fn main() {
                 (angle_disperse.two_theta_range, min_line.wavelength_ams);
 
             eprintln!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
-            simulate_peaks(
+            simulate_peaks_angle_disperse(
                 &cfg.sample_parameters,
                 &structs,
                 two_theta_range,
@@ -272,40 +267,20 @@ fn main() {
         SimulationKind::EnergyDisperse(energy_disperse) => {
             let mut all_simulated_peaks = Vec::new();
             // non-isotropic thermal expansion coefficients
-            let thermal_exp = [
-                [10.4, 0.0, 10.4, 0.0, 0.0, 10.4],
-                [5.9, 0.0, 5.9, 0.0, 0.0, 5.9],
-                [55.0, 0.0, 55.0, 0.0, 0.0, 55.0],
-                [9.34, 0.0, 2.98, 0.0, 0.0, 13.10],
-            ];
-            // let thermal_exp = [0.0, 0.0, 0.0];
-            for ((structure, therm), p_o) in structs
+            for (structure, p_o) in structs
                 .iter()
-                .zip(thermal_exp)
                 .zip(cfg.sample_parameters.preferred_orientation.clone())
             {
-                let mut strain = Strain(therm);
-                for s in strain.0.iter_mut() {
-                    let thermal = *s * 1e-6 * 900.0;
-                    *s = 1.0 + thermal;
-                }
-                let s2 = structure.apply_strain(strain);
-                // eprintln!("{}", strain.to_mat3());
-                // eprintln!("{} {}", structure.lat.mat, s2.lat.mat);
-                let p = Peaks {
-                    peaks: structure
-                        .get_edxrd_peaks(
-                            energy_disperse.theta_deg,
-                            &energy_disperse.energy_range_kev,
-                            p_o.as_ref(),
-                        )
-                        .into_boxed_slice(),
-                    wavelength_nm: 0.0,
-                };
+                let p = structure
+                    .get_edxrd_peaks(
+                        energy_disperse.theta_deg,
+                        &energy_disperse.energy_range_kev,
+                        p_o.as_ref(),
+                    )
+                    .into_boxed_slice();
 
                 all_simulated_peaks.push(vec![p]);
             }
-            // // TODO: check if peaks match up when using Gnanavel's and Michaels Data
             let all_strains: Vec<Vec<Strain>> = Vec::new();
             (all_simulated_peaks, all_strains)
         }

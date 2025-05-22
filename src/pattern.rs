@@ -6,7 +6,9 @@ use ndarray::{Array1, Array2, Array3};
 use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::{render_angle_disperse_and_queue_write_in_thread, PatternMetaData, WriteJob};
-use crate::math::{caglioti, pseudo_voigt, scherrer_broadening};
+use crate::math::{
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, C_M_S, H_EV_S,
+};
 use crate::structure::Strain;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -42,11 +44,7 @@ impl EmissionLine {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Peaks {
-    pub peaks: Box<[Peak]>,
-    pub wavelength_nm: f64,
-}
+pub type Peaks = Box<[Peak]>;
 
 pub struct DiscretizeAngleDisperse<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
@@ -87,10 +85,10 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             // * `v`: caglioti parameter v
             // * `w`: caglioti parameter w
             for emission_line in self.emission_lines {
-                for peak in &peaks.peaks {
-                    let cpeak =
-                        peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
-                    cpeak.render(
+                for peak in peaks.iter() {
+                    // let cpeak =
+                    //     peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
+                    peak.render_adxrd(
                         pat,
                         two_thetas,
                         emission_line.wavelength_ams / 10.0,
@@ -123,12 +121,130 @@ impl<'a> DiscretizeAngleDisperse<'a> {
 #[repr(C)]
 pub struct Peak {
     // position in degrees two-theta or keV in case of EDXRD
-    pub pos: f64,
-    pub intensity: f64,
+    pub d_hkl: f64,
+    pub i_hkl: f64,
     pub hkls: Vec<Vector3<i16>>,
 }
 
+pub fn render_peak(
+    pos: f32,
+    weight: f32,
+    fwhm: f32,
+    eta: f32,
+    abstol: f32,
+    xs: &[f32],
+    ys: &mut [f32],
+) {
+    let n = xs.len();
+    let midpoint = ((pos - xs[0]) / (xs[n - 1] - xs[0]) * n as f32) as usize;
+
+    let mut i = midpoint;
+    if i > n - 1 {
+        i = n - 1
+    }
+
+    // left half
+    loop {
+        let dx = xs[i] - pos;
+        let di = weight * pseudo_voigt(dx, eta, fwhm);
+        if di < abstol {
+            break;
+        }
+        ys[i] += di;
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+
+    // right half
+    i = midpoint + 1;
+    while i < n {
+        let dx = xs[i] - pos;
+        let di = weight * pseudo_voigt(dx, eta, fwhm);
+        if di < abstol {
+            break;
+        }
+        ys[i] += di;
+        i += 1;
+    }
+}
+
 impl Peak {
+    /// Get ADXRD Peak location, intensity and fwhm
+    ///
+    /// * `wavelength_nm`: X-ray wavelength
+    /// * `u`: caglioti u parameter
+    /// * `v`: caglioti v parameter
+    /// * `w`: caglioti w parameter
+    /// * `mean_ds_nm`: mean domain size in nanometers
+    /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
+    /// emission line's relative intensity)
+    pub fn get_adxrd_render_params(
+        &self,
+        wavelength_nm: f64,
+        u: f64,
+        v: f64,
+        w: f64,
+        mean_ds_nm: f64,
+        weight: f64,
+    ) -> (f32, f32, f32) {
+        // bragg condition
+        // lambda = 2 d sin(theta)
+        // theta = asin(lambda / 2d)
+        let wavelength_ams = wavelength_nm * 10.0;
+        let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
+        let f_lorentz = lorentz_factor(theta_hkl_rad);
+        let fwhm = caglioti(u, v, w, theta_hkl_rad)
+            + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
+
+        let two_theta_hkl_deg = 2.0 * theta_hkl_rad.to_degrees() as f32;
+        (two_theta_hkl_deg, peak_weight, fwhm as f32)
+    }
+
+    /// Get EDXRD Peak location, intensity and fwhm
+    ///
+    /// * `wavelength_nm`: X-ray wavelength
+    /// * `mean_ds_nm`: mean domain size in nanometers
+    /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
+    /// emission line's relative intensity)
+    pub fn get_edxrd_render_params<F>(
+        &self,
+        theta_rad: f64,
+        f_lorentz: f64,
+        _mean_ds_nm: f64,
+        weight: f64,
+        beamline_intensity: F,
+    ) -> (f32, f32)
+    where
+        F: Fn(f64) -> f64,
+    {
+        // For some reason, we need to scale theta_rad by 2. Figure out why
+        let theta_rad = theta_rad / 2.0;
+        // here, we apply intensity corrections to each peak, and
+        // convert positions from d_hkl in Amstrong to energy in keV
+        let hc = H_EV_S * C_M_S * 1e7;
+
+        // bragg condition
+        // d = h c / (2 E sin (theta))
+        // 2 E sin(theta) = h c / d
+        // E = h c / (2 d sin(theta))
+        //
+        // hc in eV m
+        // eV * m * (m^-10)
+        // ev * e-10
+        // g_hkl in ams = m^-10
+        let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+        let peak_weight = self.i_hkl
+            * f_lorentz
+            * e_kev_to_lambda_ams(e_kev).powi(3)
+            * beamline_intensity(e_kev)
+            * weight;
+
+        (e_kev as f32, peak_weight as f32)
+    }
+
     /// Render the peak into an XRD pattern
     ///
     /// * `pat`: target pattern
@@ -139,7 +255,7 @@ impl Peak {
     /// * `u`: caglioti parameter u
     /// * `v`: caglioti parameter v
     /// * `w`: caglioti parameter w
-    pub fn render(
+    pub fn render_adxrd(
         &self,
         pat: &mut [f32],
         two_thetas: &[f32],
@@ -152,74 +268,17 @@ impl Peak {
         w: f64,
         abstol: f32,
     ) {
-        let pos = self.pos as f32;
-        // TODO: make position in radians
-        let theta_pos_rad = self.pos.to_radians() / 2.0;
-        let fwhm = caglioti(u, v, w, theta_pos_rad)
-            + scherrer_broadening(wavelength_nm, theta_pos_rad, mean_ds_nm);
-        let peak_weight = (weight * self.intensity) as f32;
-        let midpoint = ((pos as f32 - two_thetas[0])
-            / (two_thetas[two_thetas.len() - 1] - two_thetas[0])
-            * two_thetas.len() as f32) as usize;
-
-        let mut i = midpoint;
-        if i > two_thetas.len() - 1 {
-            i = two_thetas.len() - 1
-        }
-
-        // left half
-        loop {
-            let two_theta = two_thetas[i];
-            let dx = two_theta - pos as f32;
-            let di = peak_weight * pseudo_voigt(dx, eta as f32, fwhm as f32);
-            if di < abstol {
-                break;
-            }
-            pat[i] += di;
-            if i == 0 {
-                break;
-            }
-            i -= 1;
-        }
-
-        // right half
-        i = midpoint + 1;
-        while i < two_thetas.len() {
-            let two_theta = two_thetas[i];
-            let dx = two_theta - pos;
-            let di = peak_weight * pseudo_voigt(dx, eta as f32, fwhm as f32);
-            if di < abstol {
-                break;
-            }
-            pat[i] += di;
-            i += 1;
-        }
-
-        // for (intensity, two_theta) in pat.iter_mut().zip(two_thetas) {
-        //     let dx = *two_theta - self.pos;
-        //     *intensity += peak_weight * pseudo_voigt(dx, eta, fwhm);
-        // }
-    }
-
-    pub fn convert(&self, from_wavelength_nm: f64, to_wavelength_nm: f64) -> Peak {
-        let new_pos = 2.0
-            * ((self.pos / 2.0).to_radians().sin() * from_wavelength_nm / to_wavelength_nm)
-                .asin()
-                .to_degrees();
-        let old_wav_scaling = from_wavelength_nm.powi(3);
-        let new_wav_scaling = to_wavelength_nm.powi(3);
-
-        let old_lorentz = lorentz_factor((self.pos / 2.0).to_radians());
-        let new_lorentz = lorentz_factor((new_pos / 2.0).to_radians());
-
-        let wav_correction = new_wav_scaling / old_wav_scaling;
-        let lorentz_correction = new_lorentz / old_lorentz;
-
-        return Peak {
-            pos: new_pos,
-            intensity: self.intensity * wav_correction as f64 * lorentz_correction as f64,
-            hkls: self.hkls.clone(),
-        };
+        let (two_theta_hkl_deg, peak_weight, fwhm) =
+            self.get_adxrd_render_params(wavelength_nm, u, v, w, mean_ds_nm, weight);
+        render_peak(
+            two_theta_hkl_deg,
+            peak_weight,
+            fwhm,
+            eta as f32,
+            abstol,
+            two_thetas,
+            pat,
+        )
     }
 }
 

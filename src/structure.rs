@@ -8,7 +8,7 @@ use rand::Rng;
 
 use crate::cfg::SampleParameters;
 use crate::cif::CIFContents;
-use crate::math::{e_kev_to_lambda_ams, C_M_S, H_EV_S};
+use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::{Peak, Peaks};
 use crate::site::Site;
 
@@ -154,10 +154,6 @@ impl TryFrom<u8> for SGClass {
             195..=230 => Ok(Cubic),
         }
     }
-}
-
-fn lorentz_factor(theta_rad: f64) -> f64 {
-    (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
 }
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
@@ -395,19 +391,23 @@ impl Structure {
         for (d_hkl, i_hkl, hkls) in agg.drain(..) {
             match compressed.last_mut() {
                 Some(Peak {
-                    pos: last_d_hkl,
-                    intensity: last_i_hkl,
+                    d_hkl: last_d_hkl,
+                    i_hkl: last_i_hkl,
                     hkls: last_hkls,
                 }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
                     *last_i_hkl += i_hkl;
                     last_hkls.extend(hkls.clone())
                 }
                 None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    pos: d_hkl,
-                    intensity: i_hkl,
+                    d_hkl,
+                    i_hkl,
                     hkls: hkls.clone(),
                 }),
             }
+        }
+        let volume = self.lat.volume();
+        for peak in compressed.iter_mut() {
+            peak.i_hkl /= volume.powi(2);
         }
         compressed
     }
@@ -426,22 +426,7 @@ impl Structure {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        let mut compressed = self.get_d_spacings_intensities(min_r, max_r, po);
-        let volume = self.lat.volume() as f64;
-        for peak in compressed.iter_mut() {
-            let (d_hkl, i_hkl) = (peak.pos, peak.intensity);
-            // bragg condition
-            // lambda = 2 d sin(theta)
-            // theta = asin(lambda / 2d)
-            let theta_hkl_rad = (wavelength_ams / (2.0 * d_hkl)).asin();
-
-            peak.pos = (theta_hkl_rad * 2.0).to_degrees();
-
-            let f_lorentz = lorentz_factor(theta_hkl_rad);
-
-            peak.intensity = i_hkl / volume.powi(2) * wavelength_ams.powi(3) * f_lorentz;
-        }
-        compressed
+        self.get_d_spacings_intensities(min_r, max_r, po)
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -465,45 +450,11 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        let mut compressed = self.get_d_spacings_intensities(min_r, max_r, po);
-        let f_lorentz = lorentz_factor(theta_rad);
-
-        // approximation of the petra3/desy beamline energy
-        fn beamline_intensity(e_kev: f64) -> f64 {
-            10.0.powf(12.30 - e_kev * 0.7 / 100.0)
-            // 1.0
-        }
-
-        let volume = self.lat.volume() as f64;
-        let hc = H_EV_S * C_M_S;
-        for peak in compressed.iter_mut() {
-            // peak position is in d_hkl right now
-            let d_hkl = peak.pos;
-            let i_hkl = peak.intensity;
-            // here, we apply intensity corrections to each peak, and
-            // convert positions from d_hkl in Amstrong to energy in keV
-
-            // bragg condition
-            // d = h c / (2 E sin (theta))
-            // 2 E sin(theta) = h c / d
-            // E = h c / (2 d sin(theta))
-            //
-            // hc in eV m
-            // eV * m * (m^-10)
-            // ev * e-10
-            // g_hkl in ams = m^-10
-            let e_kev = hc / (2.0 * d_hkl * theta_rad.sin()) * 1e7;
-
-            peak.pos = e_kev;
-            peak.intensity = i_hkl * f_lorentz * e_kev_to_lambda_ams(e_kev).powi(3)
-                / volume.powi(2)
-                * beamline_intensity(e_kev);
-        }
-        compressed
+        self.get_d_spacings_intensities(min_r, max_r, po)
     }
 }
 
-/// Generate Peaks for the input structures and their physical parameters.
+/// Generate ADXRD Peaks for the input structures and their physical parameters.
 ///
 /// * `sample_params`: physical parameter ranges for the structures
 /// * `structures`: structures to simulate peaks for
@@ -512,7 +463,7 @@ impl Structure {
 /// * `rng`: random number generator to use
 ///
 /// returns tuple of Vec of Vecs, shape: \[structures, permutations_per_structure\]
-pub fn simulate_peaks(
+pub fn simulate_peaks_angle_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
     two_theta_range: (f64, f64),
@@ -526,12 +477,44 @@ pub fn simulate_peaks(
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
         for _ in 0..sample_params.structure_permutations {
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
-            let peaks = Peaks {
-                peaks: perm_s
-                    .get_adxrd_peaks(wavelength_ams, &two_theta_range, None)
-                    .into(),
-                wavelength_nm: wavelength_ams / 10.0,
-            };
+            let peaks = perm_s
+                .get_adxrd_peaks(wavelength_ams, &two_theta_range, None)
+                .into_boxed_slice();
+            permuted_phase_peaks.push(peaks);
+            strains.push(strain);
+        }
+        all_simulated_peaks.push(permuted_phase_peaks);
+        all_strains.push(strains);
+    }
+    (all_simulated_peaks, all_strains)
+}
+
+/// Generate EDXRD Peaks for the input structures and their physical parameters.
+///
+/// * `sample_params`: physical parameter ranges for the structures
+/// * `structures`: structures to simulate peaks for
+/// * `two_theta_range`: two-theta range to generate peaks for
+/// * `wavelength_ams`: wavelength to consider for peak generation
+/// * `rng`: random number generator to use
+///
+/// returns tuple of Vec of Vecs, shape: \[structures, permutations_per_structure\]
+pub fn simulate_peaks_energy_disperse(
+    sample_params: &SampleParameters,
+    structures: &[Structure],
+    energy_kev_range: (f64, f64),
+    theta_deg: f64,
+    rng: &mut rand::rngs::StdRng,
+) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>) {
+    let mut all_simulated_peaks = Vec::with_capacity(structures.len());
+    let mut all_strains = Vec::with_capacity(structures.len());
+    for s in structures.iter() {
+        let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
+        let mut strains = Vec::with_capacity(sample_params.structure_permutations);
+        for _ in 0..sample_params.structure_permutations {
+            let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
+            let peaks = perm_s
+                .get_edxrd_peaks(theta_deg, &energy_kev_range, None)
+                .into();
             permuted_phase_peaks.push(peaks);
             strains.push(strain);
         }
