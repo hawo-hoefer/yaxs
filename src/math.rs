@@ -27,7 +27,7 @@ pub fn caglioti(u: f64, v: f64, w: f64, theta: f64) -> f64 {
 // Scherrer broadening constant
 const K: f64 = 0.9;
 
-/// calculate scherrer broadening
+/// calculate scherrer broadening in angle dispersive XRD
 ///
 /// * `wavelength`: wavelength in nanometers
 /// * `theta_rad`: theta in radians
@@ -37,6 +37,20 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
     // tau = k * lambda / (fwhm * cos(theta))
     // fwhm = k * lambda / (tau * cos(theta))
     (K * wavelength / (theta.cos() * mean_ds)).to_degrees()
+}
+
+/// calculate scherrer broadening in energy dispersive XRD from
+/// Ellmer, K., et al. Measurement Science and Technology 14.3 (2003): 336
+/// https://doi.org/10.1088/0957-0233/14/3/313
+///
+/// * `wavelength`: wavelength in nanometers
+/// * `theta_rad`: theta in radians
+/// * `mean_ds`: mean domain size in nanometers
+pub fn scherrer_broadening_edxrd(d_hkl: f64, e_kev: f64, mean_ds: f64) -> f64 {
+    // from the paper above:
+    // mean_ds = K d_hkl E / fwhm
+    // fwhm = K d_Hkl E / mean_ds
+    K * d_hkl * e_kev / mean_ds
 }
 
 /// compute the lorentz polarization factor

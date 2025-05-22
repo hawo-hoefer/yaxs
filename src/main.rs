@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
+use yaxs::math::scherrer_broadening_edxrd;
 use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
 
 use yaxs::cfg::{
@@ -68,7 +69,16 @@ fn render_energy_disperse(
             let (pos, weight) =
                 peak.get_edxrd_render_params(theta_rad, f_lorentz, 100.0, vf, beamline_intensity);
             eprintln!("{} {}", pos, weight);
-            render_peak(pos, weight, 1.0, 0.5, 1e-5, &energies, &mut intensities);
+            let fwhm = scherrer_broadening_edxrd(peak.d_hkl, pos as f64, 100.0);
+            render_peak(
+                pos,
+                weight,
+                fwhm as f32,
+                0.5,
+                1e-5,
+                &energies,
+                &mut intensities,
+            );
         }
     }
 
