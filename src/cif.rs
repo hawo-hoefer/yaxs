@@ -256,6 +256,9 @@ impl<'a> CifParser<'a> {
         let mut tables = Vec::new();
         while !self.c.is_empty() {
             self.skip_ws_comments();
+            if self.c.is_empty() {
+                break;
+            }
             if self.c.starts_with(DATA_HEADER_START) {
                 todo!("handle multiple data blocks")
             }
@@ -358,8 +361,7 @@ impl<'a> CifParser<'a> {
         } else if self.c.starts_with(LOOP_HEADER_START) {
             return DataItem::Table(self.parse_loop());
         }
-
-        panic!("WTF Where are we? '{d}'", d = self.c)
+        panic!("WTF Where are we? Parser is at: {c}", c = self.c)
     }
 
     fn consume_once(&mut self, c: char) -> bool {
@@ -378,7 +380,20 @@ impl<'a> CifParser<'a> {
 
     fn parse_text(&mut self) -> Value {
         match self.c.chars().next() {
-            Some(c) if matches!(c, '\'' | '\"' | ';') => {
+            Some(c) if c == ';' => {
+                // multiline string ';'
+                assert!(self.consume_once(c));
+                let (text, rest) = self
+                    .c
+                    .split_once("\n;")
+                    .unwrap_or_else(|| todo!("handle unterminated '{c}'-string"));
+                self.c = rest;
+                // re-append the newline we stripped off before
+                let mut text = text.to_string();
+                text.push('\n');
+                Value::Text(text)
+            }
+            Some(c) if matches!(c, '\'' | '\"') => {
                 assert!(self.consume_once(c));
                 let (text, rest) = self
                     .c
@@ -743,6 +758,34 @@ loop_
   _b
   _c
   1 2 3",
+        );
+        p.parse();
+    }
+
+    #[test]
+    fn string_at_end() {
+        let mut p = CifParser::new(
+            r"data_HfO2
+_citation_title
+
+;
+Test test
+test
+;
+",
+        );
+        p.parse();
+    }
+    #[test]
+    fn semicolon_in_multiline_string() {
+        let mut p = CifParser::new(
+            r"data_HfO2
+_citation_title
+
+;
+Test test; test
+;
+",
         );
         p.parse();
     }
