@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use log::error;
 use nalgebra::Vector3;
 use ndarray::{Array1, Array2, Array3};
 
@@ -7,7 +8,8 @@ use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::{render_angle_disperse_and_queue_write_in_thread, PatternMetaData, WriteJob};
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, C_M_S, H_EV_S,
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd,
+    C_M_S, H_EV_S,
 };
 use crate::structure::Strain;
 
@@ -85,21 +87,25 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             // * `v`: caglioti parameter v
             // * `w`: caglioti parameter w
             for emission_line in self.emission_lines {
+                let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 for peak in peaks.iter() {
-                    // let cpeak =
-                    //     peak.convert(peaks.wavelength_nm, emission_line.wavelength_ams / 10.0);
-                    peak.render_adxrd(
-                        pat,
-                        two_thetas,
-                        emission_line.wavelength_ams / 10.0,
-                        emission_line.weight * vf,
-                        *phase_mean_ds_nm,
-                        *eta,
+                    let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
+                        wavelength_nm,
                         *u,
                         *v,
                         *w,
-                        abstol,
+                        *phase_mean_ds_nm,
+                        emission_line.weight * vf,
                     );
+                    render_peak(
+                        two_theta_hkl_deg,
+                        peak_weight,
+                        fwhm,
+                        *eta as f32,
+                        abstol,
+                        two_thetas,
+                        pat,
+                    )
                 }
             }
         }
@@ -119,8 +125,12 @@ impl<'a> DiscretizeAngleDisperse<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
+/// A diffraction peak with d_hkl in amstrong and i_hkl in arbitrary units
+///
+/// * `d_hkl`: crystal lattice distance in amstrong
+/// * `i_hkl`: intensity in arbitrary units
+/// * `hkls`: miller indices corresponding to peak
 pub struct Peak {
-    // position in degrees two-theta or keV in case of EDXRD
     pub d_hkl: f64,
     pub i_hkl: f64,
     pub hkls: Vec<Vector3<i16>>,
@@ -216,12 +226,10 @@ impl Peak {
         _mean_ds_nm: f64,
         weight: f64,
         beamline_intensity: F,
-    ) -> (f32, f32)
+    ) -> (f32, f32, f32)
     where
         F: Fn(f64) -> f64,
     {
-        // For some reason, we need to scale theta_rad by 2. Figure out why
-        let theta_rad = theta_rad / 2.0;
         // here, we apply intensity corrections to each peak, and
         // convert positions from d_hkl in Amstrong to energy in keV
         let hc = H_EV_S * C_M_S * 1e7;
@@ -242,43 +250,8 @@ impl Peak {
             * beamline_intensity(e_kev)
             * weight;
 
-        (e_kev as f32, peak_weight as f32)
-    }
-
-    /// Render the peak into an XRD pattern
-    ///
-    /// * `pat`: target pattern
-    /// * `two_thetas`: two theta values of Pattern's intensities in degrees
-    /// * `wavelength`: wavelength of the x-rays in nanometers
-    /// * `weight`: weight of the emission line's wavelength
-    /// * `mean_ds_nm`: mean domain size used for scherrer broadening (in nm)
-    /// * `u`: caglioti parameter u
-    /// * `v`: caglioti parameter v
-    /// * `w`: caglioti parameter w
-    pub fn render_adxrd(
-        &self,
-        pat: &mut [f32],
-        two_thetas: &[f32],
-        wavelength_nm: f64,
-        weight: f64,
-        mean_ds_nm: f64,
-        eta: f64,
-        u: f64,
-        v: f64,
-        w: f64,
-        abstol: f32,
-    ) {
-        let (two_theta_hkl_deg, peak_weight, fwhm) =
-            self.get_adxrd_render_params(wavelength_nm, u, v, w, mean_ds_nm, weight);
-        render_peak(
-            two_theta_hkl_deg,
-            peak_weight,
-            fwhm,
-            eta as f32,
-            abstol,
-            two_thetas,
-            pat,
-        )
+        let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, 100.0);
+        (e_kev as f32, peak_weight as f32, fwhm as f32)
     }
 }
 
@@ -305,14 +278,14 @@ pub fn render_write_chunked(
                     ref meta,
                 } => match crate::io::write_to_npz(path, intensities, meta, compress) {
                     Err(()) => {
-                        eprintln!("IO thread quitting...");
+                        error!("IO thread quitting...");
                         return;
                     }
                     Ok(()) => (),
                 },
             },
             Err(err) => {
-                eprintln!("IO thread: Error receiving from channel: {err}. Quitting...");
+                error!("IO thread: Error receiving from channel: {err}. Quitting...");
                 return;
             }
         }
@@ -357,7 +330,7 @@ pub fn render_write_chunked(
     }
     let _ = tx.send(Arc::new(WriteJob::Done));
     io_thread_handle.join().unwrap_or_else(|err| {
-        eprintln!("Error joining io thread: {err:?}");
+        error!("Could not join io thread: {err:?}");
         std::process::exit(1)
     });
     datafiles

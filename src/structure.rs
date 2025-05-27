@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
@@ -10,10 +9,10 @@ use crate::cfg::SampleParameters;
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::{Peak, Peaks};
+use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
-const HKL_NORM_TOL: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +23,10 @@ pub struct Lattice {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Strain(pub [f64; 6]);
 impl Strain {
+    pub fn from_diag(a: f64, b: f64, c: f64) -> Self {
+        Self([a, 0.0, b, 0.0, 0.0, c])
+    }
+
     pub fn from_mat3(mat: &Matrix3<f64>) -> Self {
         Self([
             mat[(0, 0)],
@@ -153,34 +156,6 @@ impl TryFrom<u8> for SGClass {
             83..133 | 149..168 | 175..195 => Ok(HighSymHexagonalOrTetragonal),
             195..=230 => Ok(Cubic),
         }
-    }
-}
-
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
-pub struct MarchDollase {
-    // miller index h
-    pub hkl: Vector3<f64>,
-    // march parameter
-    pub r: f64,
-}
-
-impl MarchDollase {
-    /// compute march-dollase scaling of peak intensities
-    /// Using equation (1) from Zolotoyabko, E. (2009). J. Appl. Cryst. 42, 513-518.
-    /// https://doi.org/10.1107/S0021889809013727
-    ///
-    /// * `hkl`: lattice vector for scaling
-    pub fn weight(&self, hkl: &Vector3<f64>) -> f64 {
-        let num = hkl.dot(&self.hkl);
-        let denom = self.hkl.norm() * hkl.norm();
-
-        let alpha_rad = if (num.abs() - denom.abs()).abs() < HKL_NORM_TOL {
-            0.0
-        } else {
-            (hkl.dot(&self.hkl) / (self.hkl.norm() * hkl.norm())).acos()
-        };
-
-        (self.r.powi(2) * alpha_rad.cos().powi(2) + alpha_rad.sin().powi(2) / self.r).powf(-1.5)
     }
 }
 
@@ -364,7 +339,7 @@ impl Structure {
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conjugate()).real();
             if let Some(po) = po {
-                let w = po.weight(&hkl);
+                let w = po.weight(&hkl, &self.lat);
                 i_hkl *= w;
             }
             let d_spacing = 1.0 / g_hkl;
@@ -443,8 +418,6 @@ impl Structure {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
 
-        // TODO: WHOT - why is this correct???
-        let theta_deg = theta_deg / 2.0;
         let theta_rad = theta_deg.to_radians();
 
         let min_r = theta_rad.sin() / lambda_1 * 2.0;

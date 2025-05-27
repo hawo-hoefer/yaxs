@@ -7,8 +7,9 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::math::scherrer_broadening_edxrd;
 use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
+
+use log::{debug, error, info, trace, warn};
 
 use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
@@ -63,22 +64,16 @@ fn render_energy_disperse(
         // 1.0
     }
 
-    let vfs = [50.0, 0.3, 1.0, 0.0];
+    let vfs = [0.3, 0.5, 0.5, 1.0];
     for (structure, vf) in all_simulated_peaks.iter().zip(vfs) {
+        // for structure in all_simulated_peaks.iter() {
+        // let vf = 1.0;
+        // eprintln!("=======================================");
         for peak in structure[0].iter() {
-            let (pos, weight) =
+            let (pos, weight, fwhm) =
                 peak.get_edxrd_render_params(theta_rad, f_lorentz, 100.0, vf, beamline_intensity);
-            eprintln!("{} {}", pos, weight);
-            let fwhm = scherrer_broadening_edxrd(peak.d_hkl, pos as f64, 100.0);
-            render_peak(
-                pos,
-                weight,
-                fwhm as f32,
-                0.5,
-                1e-5,
-                &energies,
-                &mut intensities,
-            );
+            // info!("{} {:.2e} {:?}", pos, weight, peak.hkls);
+            render_peak(pos, weight, fwhm, 0.5, 1e-5, &energies, &mut intensities);
         }
     }
 
@@ -87,7 +82,7 @@ fn render_energy_disperse(
     }
 
     let elapsed = begin_render.elapsed().as_secs_f64();
-    eprintln!("Rendering Took {elapsed:.2}s")
+    info!("Done. Rendering Took {elapsed:.2}s")
 }
 
 fn render_angle_disperse(
@@ -116,7 +111,7 @@ fn render_angle_disperse(
         *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.angle_disperse.n_steps as f64 - 1.0))) as f32;
     }
 
-    let mut concentration_buf = Vec::with_capacity(gen.sample_params.struct_cifs.len());
+    let mut concentration_buf = Vec::with_capacity(gen.sample_params.structures_po.len());
     concentration_buf.resize(
         concentration_buf.capacity(),
         NotNan::new(0.0).expect("0.0 is not NaN"),
@@ -140,7 +135,7 @@ fn render_angle_disperse(
             &jobs,
             &two_thetas,
             gen.simulation_parameters.abstol,
-            gen.sample_params.struct_cifs.len(),
+            gen.sample_params.structures_po.len(),
             &args.io,
         ))
     } else {
@@ -148,7 +143,7 @@ fn render_angle_disperse(
             &jobs,
             &two_thetas,
             gen.simulation_parameters.abstol,
-            gen.sample_params.struct_cifs.len(),
+            gen.sample_params.structures_po.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_name);
@@ -170,8 +165,13 @@ fn render_angle_disperse(
         input_names: &io::INPUT_NAMES,
         target_names: &io::TARGET_NAMES,
         extra: io::Extra {
-            encoding: gen.sample_params.struct_cifs.clone().to_vec(),
-            max_phases: gen.sample_params.struct_cifs.len(),
+            encoding: gen
+                .sample_params
+                .structures_po
+                .keys()
+                .map(|x| x.to_string())
+                .collect_vec(),
+            max_phases: gen.sample_params.structures_po.len(),
             cfg: gen.angle_disperse,
         },
     })
@@ -180,37 +180,38 @@ fn render_angle_disperse(
     let mut path = std::path::PathBuf::new();
     path.push(args.io.output_name);
     path.push("meta.json");
-    eprintln!("Writing {}", path.display());
+    info!("Writing {}", path.display());
     let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {
         if err.kind() == ErrorKind::AlreadyExists {
             // TODO: time of check / time of use issue?
-            eprintln!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
-            eprintln!("{}", meta);
+            error!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
             std::process::exit(1);
         } else {
             // TODO: time of check / time of use issue?
-            eprintln!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-            eprintln!("{}", meta);
+            error!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
             std::process::exit(1);
         }
     });
     BufWriter::new(f).write_all(meta.as_bytes()).unwrap_or_else(|err| {
         // TODO: time of check / time of use issue?
-        eprintln!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-        eprintln!("{}", meta);
+        error!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+        error!("{}", meta);
         std::process::exit(1);
     });
 
-    eprintln!("Done rendering patterns. Took {elapsed:.2}s");
+    info!("Done rendering patterns. Took {elapsed:.2}s");
 }
 
 fn main() {
+    colog::init();
     let args = Cli::parse();
 
     let f = match std::fs::File::open(&args.cfg) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Error: Could not open File '{}': {}",
                 args.cfg.to_str().unwrap(),
                 e
@@ -222,7 +223,7 @@ fn main() {
     let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Could not parse config: '{x}': {e}",
                 x = args.cfg.to_str().unwrap()
             );
@@ -235,17 +236,24 @@ fn main() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
     let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
-    let structs = cfg
+    let structs_po = cfg
         .sample_parameters
-        .struct_cifs
+        .structures_po
         .iter()
-        .map(|path| {
+        .map(|(path, po)| {
             // TODO: Errors
-            let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
+            let mut reader = BufReader::new(
+                std::fs::File::open(path)
+                    .map_err(|err| {
+                        error!("Could not load cif at '{path}': {err}");
+                        std::process::exit(1);
+                    })
+                    .expect("we exit if error"),
+            );
             let mut cif = String::new();
             let _ = reader.read_to_string(&mut cif).unwrap();
             let mut p = CifParser::new(&cif);
-            Structure::from(&p.parse())
+            (Structure::from(&p.parse()), po)
         })
         .collect_vec();
 
@@ -265,10 +273,10 @@ fn main() {
             let (two_theta_range, wavelength_ams) =
                 (angle_disperse.two_theta_range, min_line.wavelength_ams);
 
-            eprintln!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
+            info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
             simulate_peaks_angle_disperse(
                 &cfg.sample_parameters,
-                &structs,
+                todo!(),
                 two_theta_range,
                 wavelength_ams,
                 &mut rng,
@@ -276,11 +284,10 @@ fn main() {
         }
         SimulationKind::EnergyDisperse(energy_disperse) => {
             let mut all_simulated_peaks = Vec::new();
-            // non-isotropic thermal expansion coefficients
-            for (structure, p_o) in structs
-                .iter()
-                .zip(cfg.sample_parameters.preferred_orientation.clone())
-            {
+            for (structure, p_o) in structs_po.iter() {
+                // let f = 1.0 + 6.4e-6 * 1900.0;
+                let f = 1.0;
+                let s = structure.apply_strain(Strain::from_diag(f, f, f));
                 let p = structure
                     .get_edxrd_peaks(
                         energy_disperse.theta_deg,
@@ -298,7 +305,7 @@ fn main() {
 
     let elapsed = begin.elapsed().as_secs_f64();
 
-    eprintln!("Simulating Peak Positions took {elapsed:.2}s");
+    info!("Simulating Peak Positions took {elapsed:.2}s");
 
     match cfg.kind {
         SimulationKind::AngleDisperse(angle_disperse) => {
@@ -307,7 +314,8 @@ fn main() {
                 cfg.sample_parameters,
                 cfg.simulation_parameters,
                 args,
-                structs.into(),
+                todo!(),
+                // structs_po.into(),
                 &all_simulated_peaks,
                 &all_strains,
                 timestamp_started,

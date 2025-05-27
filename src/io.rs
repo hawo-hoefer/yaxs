@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use clap::Args;
+use log::{error, info};
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use serde::Serialize;
@@ -79,7 +80,7 @@ pub fn write_to_npz(
     meta: &PatternMetaData,
     compress: bool,
 ) -> Result<(), ()> {
-    eprintln!("Writing {path}", path = path.as_ref().display());
+    info!("Writing {path}", path = path.as_ref().display());
     let w =
         BufWriter::new(std::fs::File::create_new(&path).expect("We deleted the directory before"));
 
@@ -89,13 +90,13 @@ pub fn write_to_npz(
         NpzWriter::new(w)
     };
     w.add_array("intensities", &intensities).map_err(|err| {
-        eprintln!(
+        error!(
             "Error writing data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
     w.add_array("strain", &meta.strains).map_err(|err| {
-        eprintln!(
+        error!(
             "Error writing data file '{path}': {err}",
             path = path.as_ref().display()
         )
@@ -103,21 +104,21 @@ pub fn write_to_npz(
 
     w.add_array("volume_fractions", &meta.volume_fractions)
         .map_err(|err| {
-            eprintln!(
+            error!(
                 "Error writing data file '{path}': {err}",
                 path = path.as_ref().display()
             )
         })?;
 
     w.add_array("etas", &meta.etas).map_err(|err| {
-        eprintln!(
+        error!(
             "Error writing data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
 
     w.add_array("mean_ds_nm", &meta.mean_ds_nm).map_err(|err| {
-        eprintln!(
+        error!(
             "Error writing data file '{path}': {err}",
             path = path.as_ref().display()
         )
@@ -125,7 +126,7 @@ pub fn write_to_npz(
 
     w.add_array("caglioti_params", &meta.caglioti_params)
         .map_err(|err| {
-            eprintln!(
+            error!(
                 "Error writing data file '{path}': {err}",
                 path = path.as_ref().display()
             )
@@ -163,7 +164,7 @@ where
         path,
     }))
     .map_err(|err| {
-        eprintln!("Could not queue write job: {err}.");
+        error!("Could not queue write job: {err}.");
         ()
     })
 }
@@ -171,19 +172,19 @@ where
 pub fn prepare_output_directory(opts: &Opts) {
     match std::fs::DirBuilder::new().create(&opts.output_name) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
-            eprintln!(
+            info!(
                 "Removing '{out_dir}' according to user input...",
                 out_dir = &opts.output_name
             );
             std::fs::remove_dir_all(&opts.output_name).unwrap_or_else(|err| {
-                eprintln!(
+                error!(
                     "Could not remove output directory '{out_dir}': {err}",
                     out_dir = &opts.output_name
                 );
                 std::process::exit(1);
             });
             std::fs::create_dir(&opts.output_name).unwrap_or_else(|err| {
-                eprintln!(
+                error!(
                     "Could not (re)create output directory '{out_dir}': {err}",
                     out_dir = opts.output_name
                 );
@@ -191,11 +192,11 @@ pub fn prepare_output_directory(opts: &Opts) {
             });
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !opts.overwrite => {
-            eprintln!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", &opts.output_name);
+            error!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", &opts.output_name);
             std::process::exit(1);
         }
         Err(e) => {
-            eprintln!(
+            error!(
                 "Error creating output directory {out_dir}: {e:?}",
                 out_dir = &opts.output_name
             );

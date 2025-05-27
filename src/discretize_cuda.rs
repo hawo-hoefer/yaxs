@@ -171,16 +171,6 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
 
         patterns.push(CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;
-
-        // TODO: normalization
-        // if self.normalize {
-        //     let f = *pat.first().unwrap();
-        //     let vmin = pat.iter().fold(f, |a, b| f64::min(a, *b));
-        //     let vmax = pat.iter().fold(f, |a, b| f64::max(a, *b));
-        //     pat.iter_mut().for_each(|x| {
-        //         *x = (*x - vmin) / (vmax - vmin);
-        //     });
-        // }
     }
 
     let mut intensities = Vec::<f32>::with_capacity(patterns.len() * two_thetas.len());

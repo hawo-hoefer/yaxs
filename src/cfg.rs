@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufReader, Read};
 
 use itertools::Itertools;
@@ -5,11 +6,13 @@ use ordered_float::NotNan;
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use log::error;
 
 use crate::background::Background;
 use crate::cif::CifParser;
 use crate::pattern::{DiscretizeAngleDisperse, EmissionLine, PatternMeta, Peaks};
-use crate::structure::{MarchDollase, Strain, Structure};
+use crate::preferred_orientation::MarchDollase;
+use crate::structure::{Strain, Structure};
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum BackgroundSpec {
@@ -90,8 +93,7 @@ pub struct SimulationParameters {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleParameters {
-    pub struct_cifs: Box<[String]>,
-    pub preferred_orientation: Vec<Option<MarchDollase>>,
+    pub structures_po: HashMap<String, Option<MarchDollase>>,
     pub mean_ds_range_nm: (f64, f64),
     pub sample_displacement_range_mu_m: (f64, f64),
     pub max_strain: f64,
@@ -133,9 +135,9 @@ impl TryFrom<Config> for MetaGenerator {
     fn try_from(cfg: Config) -> Result<Self, String> {
         let structures = cfg
             .sample_parameters
-            .struct_cifs
+            .structures_po
             .iter()
-            .map(|path| {
+            .map(|(path, _po)| {
                 // TODO: Errors
                 let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
                 let mut cif = String::new();
@@ -189,7 +191,7 @@ impl MetaGenerator {
         let eta = rng.random_range(eta_range.0..=eta_range.1);
         let ds_sampler =
             Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                eprintln!("Could not sample mean domain size: {err}");
+                error!("Could not sample mean domain size: {err}");
                 std::process::exit(1);
             });
         let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
