@@ -14,10 +14,8 @@ sample_parameters:
     ./cif/Ir_53813.cif: 
       hkl: [1, 1, 1]
       r: 0.3
-    ./cif/HfO2_polar_orthorombic_matproj.cif:
-      null
-    ./cif/HfO2_monoclinic_27313.cif: 
-      null
+    ./cif/HfO2_polar_orthorombic_matproj.cif: null
+    ./cif/HfO2_monoclinic_27313.cif: null
     # ./cif/NaCl_29929.cif
     # ./cif/SiO2_16331.cif
     # ./cif/Si_51688.cif

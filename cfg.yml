@@ -48,10 +48,9 @@ sample_parameters:
   sample_displacement_range_mu_m: [0.0, 250.0]
   max_strain: 0.005
   structure_permutations: 200
-  struct_cifs:
-  - ./cif/CuO_16025.cif
-  - ./cif/Fe3O4_183969.cif
-  preferred_orientation: [null, null]
+  structures_po:
+    ./cif/CuO_16025.cif: null
+    ./cif/Fe3O4_183969.cif: null
 
 
 simulation_parameters:
