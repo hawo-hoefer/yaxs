@@ -1,5 +1,5 @@
 use crate::background::Background;
-use crate::pattern::{DiscretizeAngleDisperse, PatternMeta};
+use crate::pattern::{ADXRDMeta, DiscretizeAngleDisperse};
 
 pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32]) -> Vec<f32> {
     #[link(name = "discretize_cuda")]
@@ -94,7 +94,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
 
     // build SOA for peak and background rendering
     for job in jobs.iter() {
-        let PatternMeta {
+        let ADXRDMeta {
             vol_fractions,
             eta,
             mean_ds_nm,

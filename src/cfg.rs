@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cif::CifParser;
-use crate::pattern::{DiscretizeAngleDisperse, EmissionLine, PatternMeta, Peaks};
+use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
+use crate::pattern::edxrd::{DiscretizeEnergyDispersive, EDXRDMeta};
+use crate::pattern::Peaks;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
@@ -122,14 +124,13 @@ pub struct EnergyDisperse {
     pub theta_deg: f64,
 }
 
-pub struct MetaGenerator {
+pub struct JobCfg {
     pub structures: Box<[Structure]>,
-    pub angle_disperse: AngleDisperse,
     pub sample_params: SampleParameters,
     pub simulation_parameters: SimulationParameters,
 }
 
-impl TryFrom<Config> for MetaGenerator {
+impl TryFrom<Config> for JobCfg {
     type Error = String;
 
     fn try_from(cfg: Config) -> Result<Self, String> {
@@ -150,7 +151,6 @@ impl TryFrom<Config> for MetaGenerator {
 
         match cfg.kind {
             SimulationKind::AngleDisperse(angle_disperse) => Ok(Self {
-                angle_disperse,
                 structures,
                 sample_params: cfg.sample_parameters,
                 simulation_parameters: cfg.simulation_parameters,
@@ -160,12 +160,13 @@ impl TryFrom<Config> for MetaGenerator {
     }
 }
 
-impl MetaGenerator {
-    pub fn generate_job<'a>(
+impl JobCfg {
+    pub fn generate_adxrd_job<'a>(
         &'a self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
         concentration_buf: &mut [NotNan<f64>],
+        angle_disperse: &'a AngleDisperse,
         mut rng: &mut rand::rngs::StdRng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
@@ -179,7 +180,7 @@ impl MetaGenerator {
             background,
             emission_lines,
             ..
-        } = &self.angle_disperse;
+        } = angle_disperse;
 
         let SampleParameters {
             mean_ds_range_nm,
@@ -224,7 +225,7 @@ impl MetaGenerator {
                 .collect_vec(),
             emission_lines: &emission_lines,
             normalize: self.simulation_parameters.normalize,
-            meta: PatternMeta {
+            meta: ADXRDMeta {
                 vol_fractions: concentration_buf
                     .iter()
                     .map(|x| f64::from(*x))
@@ -236,6 +237,65 @@ impl MetaGenerator {
                 v,
                 w,
                 background,
+            },
+        }
+    }
+
+    pub fn generate_edxrd_job<'a>(
+        &'a self,
+        all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+        all_strains: &'a Vec<Vec<Strain>>,
+        energy_disperse: &'a EnergyDisperse,
+        concentration_buf: &mut [NotNan<f64>],
+        mut rng: &mut rand::rngs::StdRng,
+    ) -> DiscretizeEnergyDispersive<'a> {
+        let SampleParameters {
+            mean_ds_range_nm,
+            eta_range,
+            structure_permutations,
+            ..
+        } = &self.sample_params;
+
+        let eta = rng.random_range(eta_range.0..=eta_range.1);
+        let ds_sampler =
+            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
+                error!("Could not sample mean domain size: {err}");
+                std::process::exit(1);
+            });
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
+        mean_ds_nm.extend(
+            ds_sampler
+                .sample_iter(&mut rng)
+                .take(concentration_buf.len()),
+        );
+
+        concentration_buf[0] = NotNan::try_from(0.0).unwrap();
+        concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
+        for i in 1..self.structures.len() {
+            concentration_buf[i] = NotNan::try_from(rng.random_range(0.0..=1.0))
+                .expect("numbers between 0 and 1 are not NaN")
+        }
+        concentration_buf.sort();
+        for i in 0..concentration_buf.len() - 1 {
+            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
+        }
+
+        DiscretizeEnergyDispersive {
+            all_simulated_peaks,
+            all_strains,
+            indices: (0..self.structures.len())
+                .map(|_| rng.random_range(0..*structure_permutations))
+                .collect_vec(),
+            normalize: self.simulation_parameters.normalize,
+            meta: EDXRDMeta {
+                vol_fractions: concentration_buf
+                    .iter()
+                    .map(|x| f64::from(*x))
+                    .collect_vec()
+                    .into(),
+                eta,
+                mean_ds_nm: mean_ds_nm.into_boxed_slice(),
+                theta_rad: energy_disperse.theta_deg.to_radians(),
             },
         }
     }

@@ -1,124 +1,16 @@
 use nalgebra::Vector3;
 use ndarray::{Array1, Array2, Array3};
 
-use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::PatternMetaData;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd,
-    C_M_S, H_EV_S,
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S
 };
-use crate::structure::Strain;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct PatternMeta {
-    pub vol_fractions: Box<[f64]>,
-    pub mean_ds_nm: Box<[f64]>,
-    pub eta: f64,
-    pub u: f64,
-    pub v: f64,
-    pub w: f64,
-    pub background: Background,
-}
+pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
-#[repr(C)]
-pub struct EmissionLine {
-    // wavelength in amstrong
-    pub wavelength_ams: f64,
-    // wavelength relative weight
-    pub weight: f64,
-}
-
-impl EmissionLine {
-    /// create a new emission line from wavelength and weight
-    ///
-    /// * `wavelength`: wavelength in amstrong
-    /// * `weight`: intensity of the emission line relative to other emission lines in the spectrum
-    pub fn new(wavelength: f64, weight: f64) -> Self {
-        Self {
-            wavelength_ams: wavelength,
-            weight,
-        }
-    }
-}
-
-pub type Peaks = Box<[Peak]>;
-
-pub struct DiscretizeAngleDisperse<'a> {
-    // all simulated peaks for all phases in order [structure, structure permutations]
-    pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
-    pub all_strains: &'a Vec<Vec<Strain>>,
-    // indices to select from simulated peaks, length is number of structures
-    pub indices: Vec<usize>,
-    pub emission_lines: &'a [EmissionLine],
-    pub normalize: bool,
-    pub meta: PatternMeta,
-}
-
-impl<'a> DiscretizeAngleDisperse<'a> {
-    pub fn discretize_into(&self, pat: &mut [f32], two_thetas: &[f32], abstol: f32) {
-        let PatternMeta {
-            vol_fractions,
-            eta,
-            mean_ds_nm,
-            u,
-            v,
-            w,
-            background,
-        } = &self.meta;
-
-        for (((phase_peaks, idx), vf), phase_mean_ds_nm) in self
-            .all_simulated_peaks
-            .iter()
-            .zip(&self.indices)
-            .zip(vol_fractions)
-            .zip(mean_ds_nm)
-        {
-            let peaks = &phase_peaks[*idx];
-            // * `pat`: target pattern
-            // * `two_thetas`: two theta values of pattern's intensities in degrees
-            // * `wavelength`: wavelength of the x-rays in nanometers
-            // * `mean_ds`: mean domain size used for scherrer broadening
-            // * `u`: caglioti parameter u
-            // * `v`: caglioti parameter v
-            // * `w`: caglioti parameter w
-            for emission_line in self.emission_lines {
-                let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                for peak in peaks.iter() {
-                    let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        *u,
-                        *v,
-                        *w,
-                        *phase_mean_ds_nm,
-                        emission_line.weight * vf,
-                    );
-                    render_peak(
-                        two_theta_hkl_deg,
-                        peak_weight,
-                        fwhm,
-                        *eta as f32,
-                        abstol,
-                        two_thetas,
-                        pat,
-                    )
-                }
-            }
-        }
-        background.render(pat, two_thetas);
-
-        if self.normalize {
-            // TODO: check for NaNs and normalization
-            let f = *pat.first().unwrap();
-            let vmin = pat.iter().fold(f, |a, b| f32::min(a, *b));
-            let vmax = pat.iter().fold(f, |a, b| f32::max(a, *b));
-            pat.iter_mut().for_each(|x| {
-                *x = (*x - vmin) / (vmax - vmin);
-            });
-        }
-    }
-}
+pub mod adxrd;
+pub mod edxrd;
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -132,6 +24,7 @@ pub struct Peak {
     pub i_hkl: f64,
     pub hkls: Vec<Vector3<i16>>,
 }
+pub type Peaks = Box<[Peak]>;
 
 pub fn render_peak(
     pos: f32,
@@ -220,7 +113,7 @@ impl Peak {
         &self,
         theta_rad: f64,
         f_lorentz: f64,
-        _mean_ds_nm: f64,
+        mean_ds_nm: f64,
         weight: f64,
         beamline_intensity: F,
     ) -> (f32, f32, f32)
@@ -247,7 +140,7 @@ impl Peak {
             * beamline_intensity(e_kev)
             * weight;
 
-        let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, 100.0);
+        let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, mean_ds_nm);
         (e_kev as f32, peak_weight as f32, fwhm as f32)
     }
 }
@@ -262,6 +155,7 @@ pub fn render_jobs(
     atol: f32,
     n_phases: usize,
 ) -> (Array2<f32>, PatternMetaData) {
+    // actual rendering of the patterns
     let intensities = if cfg!(feature = "cpu-only") {
         let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
         for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
@@ -274,6 +168,7 @@ pub fn render_jobs(
             .expect("sizes must match")
     };
 
+    // collect the pattern metadata
     let mut strains = Array3::<f32>::zeros((jobs.len(), n_phases, 6));
     let mut etas = Array1::<f32>::zeros(jobs.len());
     let mut caglioti_params = Array2::<f32>::zeros((jobs.len(), 3));

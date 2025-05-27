@@ -12,7 +12,7 @@ use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
 use log::{error, info};
 
 use yaxs::cfg::{
-    AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
+    AngleDisperse, Config, EnergyDisperse, JobCfg, SampleParameters, SimulationKind,
     SimulationParameters,
 };
 use yaxs::io::{
@@ -42,14 +42,16 @@ struct Cli {
 fn render_energy_disperse(
     kind: EnergyDisperse,
     sample_params: SampleParameters,
-    _simulation_parameters: SimulationParameters,
+    simulation_parameters: SimulationParameters,
+    structures: Box<[Structure]>,
     _args: Cli,
     all_simulated_peaks: &Vec<Vec<Peaks>>,
-    _all_strains: &Vec<Vec<Strain>>,
+    all_strains: &Vec<Vec<Strain>>,
     _timestamp_started: chrono::DateTime<Utc>,
-    _rng: &mut rand::rngs::StdRng,
+    rng: &mut rand::rngs::StdRng,
 ) {
     let begin_render = Instant::now();
+    // prepare rendering parameters
     let (e0, e1) = kind.energy_range_kev;
     let energies = (0..kind.n_steps)
         .map(|x| x as f32 / (kind.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
@@ -63,27 +65,30 @@ fn render_energy_disperse(
         NotNan::new(0.0).expect("0.0 is not NaN"),
     );
 
-    let theta_rad = kind.theta_deg.to_radians();
-    let f_lorentz = yaxs::math::lorentz_factor(theta_rad);
+    let cfg = JobCfg {
+        structures,
+        sample_params,
+        simulation_parameters,
+    };
 
-    // approximation of the petra3/desy beamline energy
-    fn beamline_intensity(e_kev: f64) -> f64 {
-        10.0f64.powf(12.30 - e_kev * 0.7 / 100.0)
-        // 1.0
+    // create rendering jobs
+    let mut jobs = Vec::with_capacity(cfg.simulation_parameters.n_patterns);
+    for _ in 0..cfg.simulation_parameters.n_patterns {
+        let job = cfg.generate_edxrd_job(
+            all_simulated_peaks,
+            all_strains,
+            &kind,
+            &mut concentration_buf,
+            rng,
+        );
+        jobs.push(job);
     }
 
-    let vfs = [0.3, 0.5, 0.5, 1.0];
-    for (structure, vf) in all_simulated_peaks.iter().zip(vfs) {
-        // for structure in all_simulated_peaks.iter() {
-        // let vf = 1.0;
-        // eprintln!("=======================================");
-        for peak in structure[0].iter() {
-            let (pos, weight, fwhm) =
-                peak.get_edxrd_render_params(theta_rad, f_lorentz, 100.0, vf, beamline_intensity);
-            // info!("{} {:.2e} {:?}", pos, weight, peak.hkls);
-            render_peak(pos, weight, fwhm, 0.5, 1e-5, &energies, &mut intensities);
-        }
-    }
+    jobs[0].discretize_into(
+        &mut intensities,
+        &energies,
+        cfg.simulation_parameters.abstol,
+    );
 
     for (e, i) in energies.iter().zip(intensities) {
         println!("{} {}", e, i);
@@ -105,33 +110,34 @@ fn render_angle_disperse(
     rng: &mut rand::rngs::StdRng,
 ) {
     let begin_render = Instant::now();
-    let gen = MetaGenerator {
-        angle_disperse,
+    let cfg = JobCfg {
         structures,
         sample_params,
         simulation_parameters,
     };
     // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(gen.angle_disperse.n_steps);
+    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
     two_thetas.resize(two_thetas.capacity(), 0.0f32);
     for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = gen.angle_disperse.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.angle_disperse.n_steps as f64 - 1.0))) as f32;
+        let r = angle_disperse.two_theta_range;
+        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
     }
 
-    let mut concentration_buf = Vec::with_capacity(gen.sample_params.structures_po.len());
+    // initialize concentration buffer for metadata generator
+    let mut concentration_buf = Vec::with_capacity(cfg.sample_params.structures_po.len());
     concentration_buf.resize(
         concentration_buf.capacity(),
         NotNan::new(0.0).expect("0.0 is not NaN"),
     );
 
     // create rendering jobs
-    let mut jobs = Vec::with_capacity(gen.simulation_parameters.n_patterns);
-    for _ in 0..gen.simulation_parameters.n_patterns {
-        let job = gen.generate_job(
+    let mut jobs = Vec::with_capacity(cfg.simulation_parameters.n_patterns);
+    for _ in 0..cfg.simulation_parameters.n_patterns {
+        let job = cfg.generate_adxrd_job(
             all_simulated_peaks,
             all_strains,
             &mut concentration_buf,
+            &angle_disperse,
             rng,
         );
         jobs.push(job);
@@ -142,16 +148,16 @@ fn render_angle_disperse(
         Some(render_write_chunked(
             &jobs,
             &two_thetas,
-            gen.simulation_parameters.abstol,
-            gen.sample_params.structures_po.len(),
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
             &args.io,
         ))
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
             &two_thetas,
-            gen.simulation_parameters.abstol,
-            gen.sample_params.structures_po.len(),
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_name);
@@ -173,14 +179,14 @@ fn render_angle_disperse(
         input_names: &io::INPUT_NAMES,
         target_names: &io::TARGET_NAMES,
         extra: io::Extra {
-            encoding: gen
+            encoding: cfg
                 .sample_params
                 .structures_po
                 .keys()
                 .map(|x| x.to_string())
                 .collect_vec(),
-            max_phases: gen.sample_params.structures_po.len(),
-            cfg: gen.angle_disperse,
+            max_phases: cfg.sample_params.structures_po.len(),
+            cfg: angle_disperse,
         },
     })
     .expect("SimulationMetadata is serializable");
@@ -333,6 +339,7 @@ fn main() {
             energy_disperse,
             cfg.sample_parameters,
             cfg.simulation_parameters,
+            structures.into(),
             args,
             &all_simulated_peaks,
             &all_strains,

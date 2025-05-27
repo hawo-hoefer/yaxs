@@ -11,7 +11,8 @@ use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
 use crate::cfg::AngleDisperse;
-use crate::pattern::{render_jobs, DiscretizeAngleDisperse};
+use crate::pattern::adxrd::DiscretizeAngleDisperse;
+use crate::pattern::render_jobs;
 
 #[derive(Args, Clone)]
 pub struct Opts {
@@ -133,6 +134,7 @@ pub fn write_to_npz(
         })?;
 
     const _: () = assert!(N_PATTERN_META == 5);
+    // Add new metadata here
     Ok(())
 }
 
