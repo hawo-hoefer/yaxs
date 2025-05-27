@@ -236,26 +236,25 @@ fn main() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
     let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
-    let structs_po = cfg
-        .sample_parameters
-        .structures_po
-        .iter()
-        .map(|(path, po)| {
-            // TODO: Errors
-            let mut reader = BufReader::new(
-                std::fs::File::open(path)
-                    .map_err(|err| {
-                        error!("Could not load cif at '{path}': {err}");
-                        std::process::exit(1);
-                    })
-                    .expect("we exit if error"),
-            );
-            let mut cif = String::new();
-            let _ = reader.read_to_string(&mut cif).unwrap();
-            let mut p = CifParser::new(&cif);
-            (Structure::from(&p.parse()), po)
-        })
-        .collect_vec();
+    let mut structures = Vec::new();
+    let mut pref_o = Vec::new();
+
+    for (path, po) in cfg.sample_parameters.structures_po.iter() {
+        // TODO: Errors
+        let mut reader = BufReader::new(
+            std::fs::File::open(path)
+                .map_err(|err| {
+                    error!("Could not load cif at '{path}': {err}");
+                    std::process::exit(1);
+                })
+                .expect("we exit if error"),
+        );
+        let mut cif = String::new();
+        let _ = reader.read_to_string(&mut cif).unwrap();
+        let mut p = CifParser::new(&cif);
+        structures.push(Structure::from(&p.parse()));
+        pref_o.push(po);
+    }
 
     let begin = Instant::now();
     let (all_simulated_peaks, all_strains) = match &cfg.kind {
@@ -276,7 +275,8 @@ fn main() {
             info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
             simulate_peaks_angle_disperse(
                 &cfg.sample_parameters,
-                todo!(),
+                &structures,
+                &pref_o,
                 two_theta_range,
                 wavelength_ams,
                 &mut rng,
@@ -284,15 +284,15 @@ fn main() {
         }
         SimulationKind::EnergyDisperse(energy_disperse) => {
             let mut all_simulated_peaks = Vec::new();
-            for (structure, p_o) in structs_po.iter() {
+            for (structure, po) in structures.iter().zip(pref_o) {
                 // let f = 1.0 + 6.4e-6 * 1900.0;
-                let f = 1.0;
-                let s = structure.apply_strain(Strain::from_diag(f, f, f));
+                // let f = 1.0;
+                // let s = structure.apply_strain(Strain::from_diag(f, f, f));
                 let p = structure
                     .get_edxrd_peaks(
                         energy_disperse.theta_deg,
                         &energy_disperse.energy_range_kev,
-                        p_o.as_ref(),
+                        po.as_ref(),
                     )
                     .into_boxed_slice();
 
@@ -314,8 +314,7 @@ fn main() {
                 cfg.sample_parameters,
                 cfg.simulation_parameters,
                 args,
-                todo!(),
-                // structs_po.into(),
+                structures.into(),
                 &all_simulated_peaks,
                 &all_strains,
                 timestamp_started,

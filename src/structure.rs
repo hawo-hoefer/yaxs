@@ -439,19 +439,20 @@ impl Structure {
 pub fn simulate_peaks_angle_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
+    pref_o: &[&Option<MarchDollase>],
     two_theta_range: (f64, f64),
     wavelength_ams: f64,
     rng: &mut rand::rngs::StdRng,
 ) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>) {
     let mut all_simulated_peaks = Vec::with_capacity(structures.len());
     let mut all_strains = Vec::with_capacity(structures.len());
-    for s in structures.iter() {
+    for (s, po) in structures.iter().zip(pref_o) {
         let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
         for _ in 0..sample_params.structure_permutations {
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
             let peaks = perm_s
-                .get_adxrd_peaks(wavelength_ams, &two_theta_range, None)
+                .get_adxrd_peaks(wavelength_ams, &two_theta_range, po.as_ref())
                 .into_boxed_slice();
             permuted_phase_peaks.push(peaks);
             strains.push(strain);
