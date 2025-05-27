@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
-use log::error;
 use nalgebra::Vector3;
 use ndarray::{Array1, Array2, Array3};
 
 use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
-use crate::io::{render_angle_disperse_and_queue_write_in_thread, PatternMetaData, WriteJob};
+use crate::io::PatternMetaData;
 use crate::math::{
     caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd,
     C_M_S, H_EV_S,
@@ -257,83 +254,6 @@ impl Peak {
 
 fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
-}
-
-pub fn render_write_chunked(
-    jobs: &[DiscretizeAngleDisperse],
-    two_thetas: &[f32],
-    abstol: f32,
-    n_phases: usize,
-    io_opts: &crate::io::Opts,
-) -> Vec<String> {
-    let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
-    let compress = io_opts.compress;
-    let io_thread_handle = std::thread::spawn(move || loop {
-        match rx.recv() {
-            Ok(v) => match *v {
-                WriteJob::Done => return,
-                WriteJob::Write {
-                    ref intensities,
-                    ref path,
-                    ref meta,
-                } => match crate::io::write_to_npz(path, intensities, meta, compress) {
-                    Err(()) => {
-                        error!("IO thread quitting...");
-                        return;
-                    }
-                    Ok(()) => (),
-                },
-            },
-            Err(err) => {
-                error!("IO thread: Could not receive from channel: {err}. Quitting...");
-                return;
-            }
-        }
-    });
-
-    let mut i = 0;
-    let l = jobs.len();
-    let chunk_size = io_opts.chunk_size.unwrap_or(l);
-    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
-    let pad_width = if n_chunks > 1 {
-        1 + (n_chunks - 1).ilog10()
-    } else {
-        1
-    };
-
-    let mut datafiles = Vec::new();
-    while i < l {
-        let chunk_file_name = format!(
-            "data_{:0width$}.npz",
-            i / chunk_size,
-            width = pad_width as usize
-        );
-        let chunk: &[DiscretizeAngleDisperse] = &jobs[i..(i + chunk_size).min(l)];
-
-        let mut chunk_path = std::path::PathBuf::new();
-        chunk_path.push(&io_opts.output_name);
-        chunk_path.push(&chunk_file_name);
-        datafiles.push(chunk_file_name);
-
-        let _ = render_angle_disperse_and_queue_write_in_thread(
-            &chunk,
-            &two_thetas,
-            chunk_path,
-            tx.clone(),
-            abstol,
-            n_phases,
-        )
-        .map_err(|_| {
-            std::process::exit(1);
-        });
-        i += chunk_size;
-    }
-    let _ = tx.send(Arc::new(WriteJob::Done));
-    io_thread_handle.join().unwrap_or_else(|err| {
-        error!("Could not join io thread: {err:?}");
-        std::process::exit(1)
-    });
-    datafiles
 }
 
 pub fn render_jobs(

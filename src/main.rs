@@ -15,8 +15,10 @@ use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
     SimulationParameters,
 };
-use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
-use yaxs::pattern::{render_jobs, render_peak, render_write_chunked, Peaks};
+use yaxs::io::{
+    self, prepare_output_directory, render_write_chunked, write_to_npz, SimulationMetadata,
+};
+use yaxs::pattern::{render_jobs, render_peak, Peaks};
 
 #[derive(Parser)]
 #[command(
@@ -39,7 +41,7 @@ struct Cli {
 
 fn render_energy_disperse(
     kind: EnergyDisperse,
-    _sample_params: SampleParameters,
+    sample_params: SampleParameters,
     _simulation_parameters: SimulationParameters,
     _args: Cli,
     all_simulated_peaks: &Vec<Vec<Peaks>>,
@@ -54,6 +56,12 @@ fn render_energy_disperse(
         .collect_vec();
     let mut intensities = Vec::new();
     intensities.resize(kind.n_steps, 0.0f32);
+
+    let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len());
+    concentration_buf.resize(
+        concentration_buf.capacity(),
+        NotNan::new(0.0).expect("0.0 is not NaN"),
+    );
 
     let theta_rad = kind.theta_deg.to_radians();
     let f_lorentz = yaxs::math::lorentz_factor(theta_rad);

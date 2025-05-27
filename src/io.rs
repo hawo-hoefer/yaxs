@@ -146,7 +146,12 @@ pub const TARGET_NAMES: [&'static str; N_PATTERN_META] = [
 
 pub const INPUT_NAMES: [&'static str; 1] = ["intensities"];
 
-pub fn render_angle_disperse_and_queue_write_in_thread<T>(
+/// render a chunk of angle dispersive XRD patterns
+///
+/// # Errors
+///
+/// This function will return an error if the writing thread has died and cannot be sent to
+pub fn render_ad_chunk_and_queue_write_in_thread<T>(
     jobs: &[DiscretizeAngleDisperse],
     two_thetas: &[f32],
     path: T,
@@ -169,6 +174,9 @@ where
     })
 }
 
+/// prepare an output directory for saving generated XRD patterns
+///
+/// * `opts`: IO options for writing the data
 pub fn prepare_output_directory(opts: &Opts) {
     match std::fs::DirBuilder::new().create(&opts.output_name) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
@@ -204,4 +212,82 @@ pub fn prepare_output_directory(opts: &Opts) {
         }
         Ok(_) => {} // all good,
     }
+}
+
+pub fn render_write_chunked(
+    jobs: &[DiscretizeAngleDisperse],
+    two_thetas: &[f32],
+    abstol: f32,
+    n_phases: usize,
+    io_opts: &crate::io::Opts,
+) -> Vec<String> {
+    let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
+    let compress = io_opts.compress;
+    let io_thread_handle = std::thread::spawn(move || loop {
+        match rx.recv() {
+            Ok(v) => match *v {
+                WriteJob::Done => return,
+                WriteJob::Write {
+                    ref intensities,
+                    ref path,
+                    ref meta,
+                } => match crate::io::write_to_npz(path, intensities, meta, compress) {
+                    Err(()) => {
+                        error!("IO thread quitting...");
+                        return;
+                    }
+                    Ok(()) => (),
+                },
+            },
+            Err(err) => {
+                error!("IO thread: Could not receive from channel: {err}. Quitting...");
+                return;
+            }
+        }
+    });
+
+    let mut i = 0;
+    let l = jobs.len();
+    let chunk_size = io_opts.chunk_size.unwrap_or(l);
+    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
+    let pad_width = if n_chunks > 1 {
+        1 + (n_chunks - 1).ilog10()
+    } else {
+        1
+    };
+
+    let mut datafiles = Vec::new();
+    while i < l {
+        let chunk_file_name = format!(
+            "data_{:0width$}.npz",
+            i / chunk_size,
+            width = pad_width as usize
+        );
+        let chunk: &[DiscretizeAngleDisperse] = &jobs[i..(i + chunk_size).min(l)];
+
+        let mut chunk_path = std::path::PathBuf::new();
+        chunk_path.push(&io_opts.output_name);
+        chunk_path.push(&chunk_file_name);
+        datafiles.push(chunk_file_name);
+
+        let _ = render_ad_chunk_and_queue_write_in_thread(
+            &chunk,
+            &two_thetas,
+            chunk_path,
+            tx.clone(),
+            abstol,
+            n_phases,
+        )
+        .map_err(|_| {
+            // Error is logged in thread
+            std::process::exit(1);
+        });
+        i += chunk_size;
+    }
+    let _ = tx.send(Arc::new(WriteJob::Done));
+    io_thread_handle.join().unwrap_or_else(|err| {
+        error!("Could not join io thread: {err:?}");
+        std::process::exit(1)
+    });
+    datafiles
 }
