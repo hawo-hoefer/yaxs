@@ -285,7 +285,7 @@ pub fn render_write_chunked(
                 },
             },
             Err(err) => {
-                error!("IO thread: Error receiving from channel: {err}. Quitting...");
+                error!("IO thread: Could not receive from channel: {err}. Quitting...");
                 return;
             }
         }

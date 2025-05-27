@@ -9,7 +9,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
 
-use log::{debug, error, info, trace, warn};
+use log::{error, info};
 
 use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, MetaGenerator, SampleParameters, SimulationKind,
@@ -212,7 +212,7 @@ fn main() {
         Ok(f) => f,
         Err(e) => {
             error!(
-                "Error: Could not open File '{}': {}",
+                "Could not open File '{}': {}",
                 args.cfg.to_str().unwrap(),
                 e
             );

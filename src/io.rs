@@ -91,13 +91,13 @@ pub fn write_to_npz(
     };
     w.add_array("intensities", &intensities).map_err(|err| {
         error!(
-            "Error writing data file '{path}': {err}",
+            "Could not write data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
     w.add_array("strain", &meta.strains).map_err(|err| {
         error!(
-            "Error writing data file '{path}': {err}",
+            "Could not write data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
@@ -105,21 +105,21 @@ pub fn write_to_npz(
     w.add_array("volume_fractions", &meta.volume_fractions)
         .map_err(|err| {
             error!(
-                "Error writing data file '{path}': {err}",
+                "Could not write data file '{path}': {err}",
                 path = path.as_ref().display()
             )
         })?;
 
     w.add_array("etas", &meta.etas).map_err(|err| {
         error!(
-            "Error writing data file '{path}': {err}",
+            "Could not write data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
 
     w.add_array("mean_ds_nm", &meta.mean_ds_nm).map_err(|err| {
         error!(
-            "Error writing data file '{path}': {err}",
+            "Could not write data file '{path}': {err}",
             path = path.as_ref().display()
         )
     })?;
@@ -127,7 +127,7 @@ pub fn write_to_npz(
     w.add_array("caglioti_params", &meta.caglioti_params)
         .map_err(|err| {
             error!(
-                "Error writing data file '{path}': {err}",
+                "Could not write data file '{path}': {err}",
                 path = path.as_ref().display()
             )
         })?;
@@ -197,7 +197,7 @@ pub fn prepare_output_directory(opts: &Opts) {
         }
         Err(e) => {
             error!(
-                "Error creating output directory {out_dir}: {e:?}",
+                "Could not create output directory {out_dir}: {e:?}",
                 out_dir = &opts.output_name
             );
             std::process::exit(1);

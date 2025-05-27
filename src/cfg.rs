@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::io::{BufReader, Read};
 
 use itertools::Itertools;
+use log::error;
 use ordered_float::NotNan;
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use log::error;
 
 use crate::background::Background;
 use crate::cif::CifParser;
