@@ -11,6 +11,7 @@ pub struct EDXRDMeta {
     pub theta_rad: f64,
 }
 
+#[derive(Debug)]
 pub struct DiscretizeEnergyDispersive<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,

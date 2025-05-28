@@ -13,7 +13,7 @@ use crate::cif::CifParser;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::Peaks;
-use crate::preferred_orientation::MarchDollase;
+use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
@@ -30,7 +30,7 @@ pub enum BackgroundSpec {
 }
 
 impl BackgroundSpec {
-    fn generate_bkg(&self, rng: &mut rand::rngs::StdRng) -> Background {
+    fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         use rand::prelude::*;
         match self {
             BackgroundSpec::None => Background::None,
@@ -93,9 +93,15 @@ pub struct SimulationParameters {
     pub abstol: f32,
 }
 
+#[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
+pub struct StructureDef {
+    pub path: String,
+    pub po: Option<MarchDollaseCfg>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleParameters {
-    pub structures_po: HashMap<String, Option<MarchDollase>>,
+    pub structures_po: Vec<StructureDef>,
     pub mean_ds_range_nm: (f64, f64),
     pub sample_displacement_range_mu_m: (f64, f64),
     pub max_strain: f64,
@@ -138,7 +144,7 @@ impl TryFrom<Config> for JobCfg {
             .sample_parameters
             .structures_po
             .iter()
-            .map(|(path, _po)| {
+            .map(|StructureDef { path, .. }| {
                 // TODO: Errors
                 let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
                 let mut cif = String::new();
@@ -150,7 +156,7 @@ impl TryFrom<Config> for JobCfg {
             .into();
 
         match cfg.kind {
-            SimulationKind::AngleDisperse(angle_disperse) => Ok(Self {
+            SimulationKind::AngleDisperse(_angle_disperse) => Ok(Self {
                 structures,
                 sample_params: cfg.sample_parameters,
                 simulation_parameters: cfg.simulation_parameters,
@@ -167,7 +173,7 @@ impl JobCfg {
         all_strains: &'a Vec<Vec<Strain>>,
         concentration_buf: &mut [NotNan<f64>],
         angle_disperse: &'a AngleDisperse,
-        mut rng: &mut rand::rngs::StdRng,
+        mut rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
             caglioti:
@@ -226,7 +232,7 @@ impl JobCfg {
             emission_lines: &emission_lines,
             normalize: self.simulation_parameters.normalize,
             meta: ADXRDMeta {
-                vol_fractions: concentration_buf
+                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
                     .iter()
                     .map(|x| f64::from(*x))
                     .collect_vec()
@@ -238,6 +244,7 @@ impl JobCfg {
                 w,
                 background,
             },
+            all_pos: todo!(),
         }
     }
 
@@ -245,9 +252,10 @@ impl JobCfg {
         &'a self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
+        all_pos: &'a Vec<Vec<Option<MarchDollase>>>,
         energy_disperse: &'a EnergyDisperse,
         concentration_buf: &mut [NotNan<f64>],
-        mut rng: &mut rand::rngs::StdRng,
+        mut rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let SampleParameters {
             mean_ds_range_nm,
@@ -288,7 +296,7 @@ impl JobCfg {
                 .collect_vec(),
             normalize: self.simulation_parameters.normalize,
             meta: EDXRDMeta {
-                vol_fractions: concentration_buf
+                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
                     .iter()
                     .map(|x| f64::from(*x))
                     .collect_vec()

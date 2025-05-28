@@ -9,7 +9,7 @@ use crate::cfg::SampleParameters;
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::MarchDollase;
+use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::site::Site;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -22,6 +22,20 @@ pub struct Lattice {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Strain(pub [f64; 6]);
+
+impl std::fmt::Display for Strain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Strain(")?;
+        for (i, a) in self.0.iter().enumerate() {
+            if i != self.0.len() - 1 {
+                write!(f, "{}, ", a)?;
+            } else {
+                write!(f, "{}", a)?;
+            }
+        }
+        write!(f, ")")
+    }
+}
 impl Strain {
     pub fn from_diag(a: f64, b: f64, c: f64) -> Self {
         Self([a, 0.0, b, 0.0, 0.0, c])
@@ -39,7 +53,7 @@ impl Strain {
     }
 
     pub fn none() -> Self {
-        Self([0.0; 6])
+        Self([1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
     }
 
     pub fn to_mat3(&self) -> Matrix3<f64> {
@@ -160,7 +174,7 @@ impl TryFrom<u8> for SGClass {
 }
 
 impl Structure {
-    pub fn permute(&self, max_strain: f64, rng: &mut rand::rngs::StdRng) -> (Structure, Strain) {
+    pub fn permute(&self, max_strain: f64, rng: &mut impl Rng) -> (Structure, Strain) {
         if max_strain == 0.0 {
             return (self.clone(), Strain::none());
         }
@@ -439,28 +453,42 @@ impl Structure {
 pub fn simulate_peaks_angle_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
-    pref_o: &[&Option<MarchDollase>],
+    structure_po_configs: &[&Option<MarchDollaseCfg>],
     two_theta_range: (f64, f64),
     wavelength_ams: f64,
-    rng: &mut rand::rngs::StdRng,
-) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>) {
+    rng: &mut impl Rng,
+) -> (
+    Vec<Vec<Peaks>>,
+    Vec<Vec<Strain>>,
+    Vec<Vec<Option<MarchDollase>>>,
+) {
     let mut all_simulated_peaks = Vec::with_capacity(structures.len());
     let mut all_strains = Vec::with_capacity(structures.len());
-    for (s, po) in structures.iter().zip(pref_o) {
+    let mut all_preferred_orientations = Vec::with_capacity(structures.len());
+
+    for (s, po_cfg) in structures.iter().zip(structure_po_configs) {
         let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
+        let mut pos = Vec::with_capacity(sample_params.structure_permutations);
         for _ in 0..sample_params.structure_permutations {
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
+            let po = match po_cfg {
+                Some(cfg) => Some(cfg.generate(rng)),
+                None => None,
+            };
             let peaks = perm_s
                 .get_adxrd_peaks(wavelength_ams, &two_theta_range, po.as_ref())
                 .into_boxed_slice();
+            pos.push(po);
             permuted_phase_peaks.push(peaks);
             strains.push(strain);
         }
         all_simulated_peaks.push(permuted_phase_peaks);
         all_strains.push(strains);
+        all_preferred_orientations.push(pos)
     }
-    (all_simulated_peaks, all_strains)
+
+    (all_simulated_peaks, all_strains, all_preferred_orientations)
 }
 
 /// Generate EDXRD Peaks for the input structures and their physical parameters.
@@ -475,25 +503,41 @@ pub fn simulate_peaks_angle_disperse(
 pub fn simulate_peaks_energy_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
+    structure_po_configs: &[&Option<MarchDollaseCfg>],
     energy_kev_range: (f64, f64),
     theta_deg: f64,
-    rng: &mut rand::rngs::StdRng,
-) -> (Vec<Vec<Peaks>>, Vec<Vec<Strain>>) {
+    rng: &mut impl Rng,
+) -> (
+    Vec<Vec<Peaks>>,
+    Vec<Vec<Strain>>,
+    Vec<Vec<Option<MarchDollase>>>,
+) {
     let mut all_simulated_peaks = Vec::with_capacity(structures.len());
     let mut all_strains = Vec::with_capacity(structures.len());
-    for s in structures.iter() {
+    let mut all_preferred_orientations = Vec::with_capacity(structures.len());
+
+    for (s, po_cfg) in structures.iter().zip(structure_po_configs) {
         let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
+        let mut pos = Vec::with_capacity(sample_params.structure_permutations);
+
         for _ in 0..sample_params.structure_permutations {
             let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
+            let po = match po_cfg {
+                Some(cfg) => Some(cfg.generate(rng)),
+                None => None,
+            };
             let peaks = perm_s
-                .get_edxrd_peaks(theta_deg, &energy_kev_range, None)
+                .get_edxrd_peaks(theta_deg, &energy_kev_range, po.as_ref())
                 .into();
+
+            pos.push(po);
             permuted_phase_peaks.push(peaks);
             strains.push(strain);
         }
         all_simulated_peaks.push(permuted_phase_peaks);
         all_strains.push(strains);
+        all_preferred_orientations.push(pos)
     }
-    (all_simulated_peaks, all_strains)
+    (all_simulated_peaks, all_strains, all_preferred_orientations)
 }

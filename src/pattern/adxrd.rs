@@ -1,5 +1,6 @@
-use super::{Peaks, render_peak};
+use super::{render_peak, Peaks};
 use crate::background::Background;
+use crate::preferred_orientation::MarchDollase;
 use crate::structure::Strain;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +40,7 @@ pub struct DiscretizeAngleDisperse<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
     pub all_strains: &'a Vec<Vec<Strain>>,
+    pub all_pos: &'a Vec<Vec<MarchDollase>>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Vec<usize>,
     pub emission_lines: &'a [EmissionLine],

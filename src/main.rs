@@ -2,23 +2,26 @@ use chrono::Utc;
 use clap::Parser;
 use itertools::Itertools;
 use ordered_float::NotNan;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::structure::{simulate_peaks_angle_disperse, Strain, Structure};
+use yaxs::preferred_orientation::MarchDollase;
+use yaxs::structure::{
+    simulate_peaks_angle_disperse, simulate_peaks_energy_disperse, Strain, Structure,
+};
 
 use log::{error, info};
 
 use yaxs::cfg::{
     AngleDisperse, Config, EnergyDisperse, JobCfg, SampleParameters, SimulationKind,
-    SimulationParameters,
+    SimulationParameters, StructureDef,
 };
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, render_peak, Peaks};
+use yaxs::pattern::{render_jobs, Peaks};
 
 #[derive(Parser)]
 #[command(
@@ -47,8 +50,9 @@ fn render_energy_disperse(
     _args: Cli,
     all_simulated_peaks: &Vec<Vec<Peaks>>,
     all_strains: &Vec<Vec<Strain>>,
+    all_preferred_orientations: &Vec<Vec<Option<MarchDollase>>>,
     _timestamp_started: chrono::DateTime<Utc>,
-    rng: &mut rand::rngs::StdRng,
+    rng: &mut impl Rng,
 ) {
     let begin_render = Instant::now();
     // prepare rendering parameters
@@ -77,6 +81,7 @@ fn render_energy_disperse(
         let job = cfg.generate_edxrd_job(
             all_simulated_peaks,
             all_strains,
+            all_preferred_orientations,
             &kind,
             &mut concentration_buf,
             rng,
@@ -84,6 +89,7 @@ fn render_energy_disperse(
         jobs.push(job);
     }
 
+    eprintln!("{:?}", jobs[0].meta.vol_fractions);
     jobs[0].discretize_into(
         &mut intensities,
         &energies,
@@ -107,7 +113,7 @@ fn render_angle_disperse(
     all_simulated_peaks: &Vec<Vec<Peaks>>,
     all_strains: &Vec<Vec<Strain>>,
     timestamp_started: chrono::DateTime<Utc>,
-    rng: &mut rand::rngs::StdRng,
+    rng: &mut impl Rng,
 ) {
     let begin_render = Instant::now();
     let cfg = JobCfg {
@@ -182,8 +188,8 @@ fn render_angle_disperse(
             encoding: cfg
                 .sample_params
                 .structures_po
-                .keys()
-                .map(|x| x.to_string())
+                .iter()
+                .map(|StructureDef { path, .. }| path.to_string())
                 .collect_vec(),
             max_phases: cfg.sample_params.structures_po.len(),
             cfg: angle_disperse,
@@ -253,7 +259,7 @@ fn main() {
     let mut structures = Vec::new();
     let mut pref_o = Vec::new();
 
-    for (path, po) in cfg.sample_parameters.structures_po.iter() {
+    for StructureDef { path, po } in cfg.sample_parameters.structures_po.iter() {
         // TODO: Errors
         let mut reader = BufReader::new(
             std::fs::File::open(path)
@@ -271,7 +277,7 @@ fn main() {
     }
 
     let begin = Instant::now();
-    let (all_simulated_peaks, all_strains) = match &cfg.kind {
+    let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {
         SimulationKind::AngleDisperse(angle_disperse) => {
             let min_line = &angle_disperse
                 .emission_lines
@@ -296,25 +302,14 @@ fn main() {
                 &mut rng,
             )
         }
-        SimulationKind::EnergyDisperse(energy_disperse) => {
-            let mut all_simulated_peaks = Vec::new();
-            for (structure, po) in structures.iter().zip(pref_o) {
-                // let f = 1.0 + 6.4e-6 * 1900.0;
-                // let f = 1.0;
-                // let s = structure.apply_strain(Strain::from_diag(f, f, f));
-                let p = structure
-                    .get_edxrd_peaks(
-                        energy_disperse.theta_deg,
-                        &energy_disperse.energy_range_kev,
-                        po.as_ref(),
-                    )
-                    .into_boxed_slice();
-
-                all_simulated_peaks.push(vec![p]);
-            }
-            let all_strains: Vec<Vec<Strain>> = Vec::new();
-            (all_simulated_peaks, all_strains)
-        }
+        SimulationKind::EnergyDisperse(energy_disperse) => simulate_peaks_energy_disperse(
+            &cfg.sample_parameters,
+            &structures,
+            &pref_o,
+            energy_disperse.energy_range_kev,
+            energy_disperse.theta_deg,
+            &mut rng,
+        ),
     };
 
     let elapsed = begin.elapsed().as_secs_f64();
@@ -343,6 +338,7 @@ fn main() {
             args,
             &all_simulated_peaks,
             &all_strains,
+            &all_preferred_orientations,
             timestamp_started,
             &mut rng,
         ),
