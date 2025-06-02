@@ -1,7 +1,9 @@
-use super::{render_peak, Peaks};
+use super::{render_peak, Discretizer, PeakRenderParams, Peaks};
 use crate::background::Background;
+use crate::io::PatternMeta;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::Strain;
+use itertools::Itertools;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ADXRDMeta {
@@ -39,13 +41,127 @@ impl EmissionLine {
 pub struct DiscretizeAngleDisperse<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    pub all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
     pub all_strains: &'a Vec<Vec<Strain>>,
-    pub all_pos: &'a Vec<Vec<MarchDollase>>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Vec<usize>,
     pub emission_lines: &'a [EmissionLine],
     pub normalize: bool,
     pub meta: ADXRDMeta,
+}
+
+impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
+    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
+        let ADXRDMeta {
+            vol_fractions,
+            mean_ds_nm,
+            eta,
+            u,
+            v,
+            w,
+            ..
+        } = &self.meta;
+
+        itertools::izip!(
+            self.all_simulated_peaks,
+            self.indices.clone(), // TODO: get rid of this clone
+            vol_fractions,
+            mean_ds_nm
+        )
+        .cartesian_product(self.emission_lines)
+        .map(
+            move |((phase_peaks, idx, vf, phase_mean_ds_nm), emission_line)| {
+                let wavelength_nm = emission_line.wavelength_ams / 10.0;
+                phase_peaks[idx].iter().map(move |peak| {
+                    let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
+                        wavelength_nm,
+                        *u,
+                        *v,
+                        *w,
+                        *phase_mean_ds_nm,
+                        vf * emission_line.weight,
+                    );
+                    PeakRenderParams {
+                        pos: two_theta_hkl_deg,
+                        intensity: peak_weight,
+                        fwhm,
+                        eta: *eta as f32,
+                    }
+                })
+            },
+        )
+        .flatten()
+    }
+
+    fn n_peaks_tot(&self) -> usize {
+        self.all_simulated_peaks
+            .iter()
+            .zip(&self.indices)
+            .map(|(phase_peaks, idx)| phase_peaks[*idx].len())
+            .sum::<usize>()
+            * self.emission_lines.len()
+    }
+
+    fn bkg(&self) -> &Background {
+        &self.meta.background
+    }
+
+    fn normalize(&self) -> bool {
+        self.normalize
+    }
+
+    fn write_meta_data(&self, data: &mut PatternMeta, pat_id: usize) {
+        use PatternMeta::*;
+        let n_phases = self.all_simulated_peaks.len();
+        match data {
+            VolumeFractions(ref mut dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.vol_fractions[i] as f32;
+                }
+            }
+            Strains(ref mut dst) => {
+                for i in 0..n_phases {
+                    let strain = &self.all_strains[i][self.indices[i]];
+
+                    for j in 0..6 {
+                        dst[(pat_id, i, j)] = strain.0[j] as f32;
+                    }
+                }
+            }
+            Etas(dst) => {
+                dst[pat_id] = self.meta.eta as f32;
+            }
+            MeanDsNm(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
+                }
+            }
+            CagliotiParams(dst) => {
+                dst[(pat_id, 0)] = self.meta.u as f32;
+                dst[(pat_id, 1)] = self.meta.v as f32;
+                dst[(pat_id, 2)] = self.meta.w as f32;
+            }
+            MarchParameter(dst) => {
+                for i in 0..n_phases {
+                    let po = &self.all_preferred_orientations[i][self.indices[i]];
+                    dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
+                }
+            }
+        }
+    }
+
+    fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta> {
+        use ndarray::{Array1, Array2, Array3};
+        use PatternMeta::*;
+        vec![
+            Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
+            Etas(Array1::<f32>::zeros(n_patterns)),
+            CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
+            MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
+            VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
+            MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
+        ]
+    }
 }
 
 impl<'a> DiscretizeAngleDisperse<'a> {

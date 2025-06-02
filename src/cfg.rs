@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::{BufReader, Read};
 
 use itertools::Itertools;
@@ -31,7 +30,6 @@ pub enum BackgroundSpec {
 
 impl BackgroundSpec {
     fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
-        use rand::prelude::*;
         match self {
             BackgroundSpec::None => Background::None,
             BackgroundSpec::Chebyshev {
@@ -94,9 +92,10 @@ pub struct SimulationParameters {
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
-    pub po: Option<MarchDollaseCfg>,
+    pub preferred_orientation: Option<MarchDollaseCfg>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -117,6 +116,7 @@ pub enum SimulationKind {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub kind: SimulationKind,
     pub sample_parameters: SampleParameters,
@@ -171,6 +171,7 @@ impl JobCfg {
         &'a self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
+        all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         concentration_buf: &mut [NotNan<f64>],
         angle_disperse: &'a AngleDisperse,
         mut rng: &mut impl Rng,
@@ -226,6 +227,7 @@ impl JobCfg {
         DiscretizeAngleDisperse {
             all_simulated_peaks,
             all_strains,
+            all_preferred_orientations,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),
@@ -244,7 +246,6 @@ impl JobCfg {
                 w,
                 background,
             },
-            all_pos: todo!(),
         }
     }
 
@@ -252,7 +253,7 @@ impl JobCfg {
         &'a self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
-        all_pos: &'a Vec<Vec<Option<MarchDollase>>>,
+        all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         energy_disperse: &'a EnergyDisperse,
         concentration_buf: &mut [NotNan<f64>],
         mut rng: &mut impl Rng,
@@ -291,6 +292,7 @@ impl JobCfg {
         DiscretizeEnergyDispersive {
             all_simulated_peaks,
             all_strains,
+            all_preferred_orientations,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),

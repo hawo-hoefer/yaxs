@@ -56,8 +56,8 @@ fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
     poly_coef
 }
 impl Background {
-    pub fn render(&self, pat: &mut [f32], two_thetas: &[f32]) {
-        let iterator = pat.iter_mut().zip(two_thetas);
+    pub fn render(&self, intensities: &mut [f32], positions: &[f32]) {
+        let iterator = intensities.iter_mut().zip(positions);
 
         match self {
             Background::None => return,

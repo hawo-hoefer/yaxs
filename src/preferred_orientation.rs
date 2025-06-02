@@ -9,8 +9,8 @@ const HKL_NORM_TOL: f64 = 1e-3;
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub struct MarchDollaseCfg {
-    hkl: Vector3<f64>,
-    r: (f64, f64),
+    pub hkl: Vector3<f64>,
+    pub r: (f64, f64),
 }
 
 impl MarchDollaseCfg {
@@ -23,9 +23,9 @@ impl MarchDollaseCfg {
 #[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct MarchDollase {
     // miller index h
-    hkl: Vector3<f64>,
+    pub hkl: Vector3<f64>,
     // march parameter
-    r: f64,
+    pub r: f64,
 }
 
 /// compute the march pole density function

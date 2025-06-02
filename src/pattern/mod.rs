@@ -1,16 +1,59 @@
 use nalgebra::Vector3;
-use ndarray::{Array1, Array2, Array3};
+use ndarray::Array2;
 
+use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
-use crate::io::PatternMetaData;
+use crate::io::PatternMeta;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd,
+    C_M_S, H_EV_S,
 };
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 
 pub mod adxrd;
 pub mod edxrd;
+
+pub struct PeakRenderParams {
+    pub pos: f32,
+    pub intensity: f32,
+    pub fwhm: f32,
+    pub eta: f32,
+}
+
+pub trait Discretizer {
+    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams>;
+    fn n_peaks_tot(&self) -> usize;
+    fn bkg(&self) -> &Background;
+    fn normalize(&self) -> bool;
+
+    fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
+    fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta>;
+
+    fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
+        for PeakRenderParams {
+            pos,
+            intensity,
+            fwhm,
+            eta,
+        } in self.peak_info_iterator()
+        {
+            render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
+        }
+
+        self.bkg().render(intensities, positions);
+
+        if self.normalize() {
+            // TODO: check for NaNs and normalization
+            let f = *intensities.first().unwrap();
+            let vmin = intensities.iter().fold(f, |a, b| f32::min(a, *b));
+            let vmax = intensities.iter().fold(f, |a, b| f32::max(a, *b));
+            intensities.iter_mut().for_each(|x| {
+                *x = (*x - vmin) / (vmax - vmin);
+            });
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -149,64 +192,36 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
-pub fn render_jobs(
-    jobs: &[DiscretizeAngleDisperse],
+pub fn render_jobs<T>(
+    jobs: &[T],
     two_thetas: &[f32],
     atol: f32,
     n_phases: usize,
-) -> (Array2<f32>, PatternMetaData) {
+) -> (Array2<f32>, Vec<PatternMeta>)
+where
+    T: Discretizer,
+{
+    let n = jobs.len();
     // actual rendering of the patterns
     let intensities = if cfg!(feature = "cpu-only") {
-        let mut intensities = Array2::<f32>::zeros((jobs.len(), two_thetas.len()));
+        let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
         for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
             job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
         }
         intensities
     } else {
-        let intensities = discretize_peaks_cuda(&jobs, &two_thetas);
-        ndarray::Array2::from_shape_vec((jobs.len(), two_thetas.len()), intensities)
+        let intensities = discretize_peaks_cuda(jobs, &two_thetas);
+        ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
             .expect("sizes must match")
     };
 
-    // collect the pattern metadata
-    let mut strains = Array3::<f32>::zeros((jobs.len(), n_phases, 6));
-    let mut etas = Array1::<f32>::zeros(jobs.len());
-    let mut caglioti_params = Array2::<f32>::zeros((jobs.len(), 3));
-    let mut mean_ds_nm = Array2::<f32>::zeros((jobs.len(), n_phases));
-    let mut volume_fractions = Array2::<f32>::zeros((jobs.len(), n_phases));
+    let mut metadata = T::init_meta_data(jobs.len(), n_phases);
 
-    for (i, (job, mut strain_loc)) in jobs.iter().zip(strains.outer_iter_mut()).enumerate() {
-        etas[i] = job.meta.eta as f32;
-        caglioti_params[(i, 0)] = job.meta.u as f32;
-        caglioti_params[(i, 1)] = job.meta.v as f32;
-        caglioti_params[(i, 2)] = job.meta.w as f32;
-
-        for (j, cs) in job.meta.mean_ds_nm.iter().enumerate() {
-            mean_ds_nm[(i, j)] = *cs as f32;
-        }
-
-        for (j, vf) in job.meta.vol_fractions.iter().enumerate() {
-            volume_fractions[(i, j)] = *vf as f32;
-        }
-
-        for (phase_idx, (permutation_idx, strain_permutations_for_phase)) in
-            job.indices.iter().zip(job.all_strains).enumerate()
-        {
-            for j in 0..6 {
-                strain_loc[(phase_idx, j)] =
-                    strain_permutations_for_phase[*permutation_idx].0[j] as f32;
-            }
+    for (i, job) in jobs.iter().enumerate() {
+        for m in metadata.iter_mut() {
+            job.write_meta_data(m, i)
         }
     }
 
-    (
-        intensities,
-        PatternMetaData {
-            volume_fractions,
-            strains,
-            etas,
-            mean_ds_nm,
-            caglioti_params,
-        },
-    )
+    (intensities, metadata)
 }

@@ -1,7 +1,10 @@
 use crate::background::Background;
-use crate::pattern::{ADXRDMeta, DiscretizeAngleDisperse};
+use crate::pattern::{Discretizer, PeakRenderParams};
 
-pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32]) -> Vec<f32> {
+pub fn discretize_peaks_cuda<T>(jobs: &[T], two_thetas: &[f32]) -> Vec<f32>
+where
+    T: Discretizer,
+{
     #[link(name = "discretize_cuda")]
     extern "C" {
         fn render_peaks_and_background(
@@ -43,16 +46,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
         n_peaks: usize,
     }
 
-    let n_peaks_tot: usize = jobs
-        .iter()
-        .map(|job| {
-            job.all_simulated_peaks
-                .iter()
-                .zip(&job.indices)
-                .map(|(phase_peaks, idx)| phase_peaks[*idx].len() * job.emission_lines.len())
-                .sum::<usize>()
-        })
-        .sum();
+    let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();
 
     let mut patterns = Vec::<CUDAPattern>::with_capacity(jobs.len());
 
@@ -72,7 +66,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
     let mut bkg_scales = Vec::new();
     let (mut bkg_soa, normalize) = {
         let fjob = jobs.first().expect("at least one discretization job");
-        let soa = match fjob.meta.background {
+        let soa = match fjob.bkg() {
             Background::None => BkgSOA::None,
             Background::Polynomial {
                 poly_coef: ref coef,
@@ -89,24 +83,13 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
                 BkgSOA::Exponential(Vec::with_capacity(jobs.len()))
             }
         };
-        (soa, fjob.normalize)
+        (soa, fjob.normalize())
     };
 
     // build SOA for peak and background rendering
     for job in jobs.iter() {
-        let ADXRDMeta {
-            vol_fractions,
-            eta,
-            mean_ds_nm,
-            u,
-            v,
-            w,
-            background,
-            ..
-        } = &job.meta;
-
         use crate::background::Background;
-        match (background, &mut bkg_soa) {
+        match (job.bkg(), &mut bkg_soa) {
             (Background::None, BkgSOA::None) => (),
             (
                 Background::Polynomial { poly_coef, scale },
@@ -126,7 +109,7 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
                 unimplemented!("rendering of varying backgrounds CUDA backend.")
             }
         }
-        if job.normalize && normalize || (!job.normalize && !normalize) {
+        if job.normalize() && normalize || (!job.normalize() && !normalize) {
             // all good; do nothing
             //
             // make sure all patterns are normalized or all aren't
@@ -141,32 +124,19 @@ pub fn discretize_peaks_cuda(jobs: &[DiscretizeAngleDisperse], two_thetas: &[f32
         }
 
         let mut n_peaks = 0;
-        for (((phase_peaks, idx), vf), phase_mean_ds_nm) in job
-            .all_simulated_peaks
-            .iter()
-            .zip(&job.indices)
-            .zip(vol_fractions)
-            .zip(mean_ds_nm)
+        for PeakRenderParams {
+            pos,
+            intensity,
+            fwhm,
+            eta,
+            ..
+        } in job.peak_info_iterator()
         {
-            let peaks = &phase_peaks[*idx];
-            for emission_line in job.emission_lines {
-                for peak in peaks.iter() {
-                    let (two_theta, peak_weight, fwhm) = peak.get_adxrd_render_params(
-                        emission_line.wavelength_ams * 0.1,
-                        *u,
-                        *v,
-                        *w,
-                        *phase_mean_ds_nm,
-                        emission_line.weight * vf,
-                    );
-
-                    ffi_peak_info_fwhm.push(fwhm as f32);
-                    ffi_peak_info_eta.push(*eta as f32);
-                    ffi_peak_pos.push(two_theta);
-                    ffi_peak_intensity.push(peak_weight);
-                    n_peaks += 1;
-                }
-            }
+            ffi_peak_info_fwhm.push(fwhm as f32);
+            ffi_peak_info_eta.push(eta as f32);
+            ffi_peak_pos.push(pos);
+            ffi_peak_intensity.push(intensity);
+            n_peaks += 1;
         }
 
         patterns.push(CUDAPattern { start_idx, n_peaks });

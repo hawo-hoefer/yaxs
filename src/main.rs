@@ -19,9 +19,10 @@ use yaxs::cfg::{
     SimulationParameters, StructureDef,
 };
 use yaxs::io::{
-    self, prepare_output_directory, render_write_chunked, write_to_npz, SimulationMetadata,
+    self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
+    SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, Peaks};
+use yaxs::pattern::{render_jobs, Discretizer, Peaks};
 
 #[derive(Parser)]
 #[command(
@@ -42,7 +43,7 @@ struct Cli {
     io: io::Opts,
 }
 
-fn render_energy_disperse(
+fn render_edxrd(
     kind: EnergyDisperse,
     sample_params: SampleParameters,
     simulation_parameters: SimulationParameters,
@@ -63,7 +64,7 @@ fn render_energy_disperse(
     let mut intensities = Vec::new();
     intensities.resize(kind.n_steps, 0.0f32);
 
-    let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len());
+    let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len() + 1);
     concentration_buf.resize(
         concentration_buf.capacity(),
         NotNan::new(0.0).expect("0.0 is not NaN"),
@@ -89,7 +90,6 @@ fn render_energy_disperse(
         jobs.push(job);
     }
 
-    eprintln!("{:?}", jobs[0].meta.vol_fractions);
     jobs[0].discretize_into(
         &mut intensities,
         &energies,
@@ -104,7 +104,7 @@ fn render_energy_disperse(
     info!("Done. Rendering Took {elapsed:.2}s")
 }
 
-fn render_angle_disperse(
+fn render_adxrd(
     angle_disperse: AngleDisperse,
     sample_params: SampleParameters,
     simulation_parameters: SimulationParameters,
@@ -112,6 +112,7 @@ fn render_angle_disperse(
     structures: Box<[Structure]>,
     all_simulated_peaks: &Vec<Vec<Peaks>>,
     all_strains: &Vec<Vec<Strain>>,
+    all_preferred_orientations: &Vec<Vec<Option<MarchDollase>>>,
     timestamp_started: chrono::DateTime<Utc>,
     rng: &mut impl Rng,
 ) {
@@ -130,7 +131,7 @@ fn render_angle_disperse(
     }
 
     // initialize concentration buffer for metadata generator
-    let mut concentration_buf = Vec::with_capacity(cfg.sample_params.structures_po.len());
+    let mut concentration_buf = Vec::with_capacity(cfg.sample_params.structures_po.len() + 1);
     concentration_buf.resize(
         concentration_buf.capacity(),
         NotNan::new(0.0).expect("0.0 is not NaN"),
@@ -142,6 +143,7 @@ fn render_angle_disperse(
         let job = cfg.generate_adxrd_job(
             all_simulated_peaks,
             all_strains,
+            all_preferred_orientations,
             &mut concentration_buf,
             &angle_disperse,
             rng,
@@ -150,14 +152,14 @@ fn render_angle_disperse(
     }
 
     // simulate and write to file(s)
-    let datafiles = if let Some(_) = args.io.chunk_size {
-        Some(render_write_chunked(
+    let output_names = if let Some(_) = args.io.chunk_size {
+        render_write_chunked(
             &jobs,
             &two_thetas,
             cfg.simulation_parameters.abstol,
             cfg.sample_params.structures_po.len(),
             &args.io,
-        ))
+        )
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
@@ -168,9 +170,14 @@ fn render_angle_disperse(
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_name);
         data_path.push("data.npz");
-        let _ = write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
-            .unwrap_or_else(|_| std::process::exit(1));
-        None
+        let (data_slot_names, metadata_slot_names) =
+            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
+                .unwrap_or_else(|_| std::process::exit(1));
+        OutputNames {
+            chunk_names: None,
+            data_slot_names,
+            metadata_slot_names,
+        }
     };
 
     let elapsed = begin_render.elapsed().as_secs_f64();
@@ -180,10 +187,10 @@ fn render_angle_disperse(
     let meta = serde_json::to_string(&SimulationMetadata {
         timestamp_started,
         timestamp_finished,
-        chunked: datafiles.is_some(),
-        datafiles,
-        input_names: &io::INPUT_NAMES,
-        target_names: &io::TARGET_NAMES,
+        chunked: args.io.chunk_size.is_some(),
+        datafiles: output_names.chunk_names,
+        input_names: &output_names.data_slot_names,
+        target_names: &output_names.metadata_slot_names,
         extra: io::Extra {
             encoding: cfg
                 .sample_params
@@ -193,6 +200,12 @@ fn render_angle_disperse(
                 .collect_vec(),
             max_phases: cfg.sample_params.structures_po.len(),
             cfg: angle_disperse,
+            preferred_orientation_hkl: cfg
+                .sample_params
+                .structures_po
+                .iter()
+                .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
+                .collect_vec(),
         },
     })
     .expect("SimulationMetadata is serializable");
@@ -259,7 +272,7 @@ fn main() {
     let mut structures = Vec::new();
     let mut pref_o = Vec::new();
 
-    for StructureDef { path, po } in cfg.sample_parameters.structures_po.iter() {
+    for StructureDef { path, preferred_orientation: po } in cfg.sample_parameters.structures_po.iter() {
         // TODO: Errors
         let mut reader = BufReader::new(
             std::fs::File::open(path)
@@ -318,7 +331,7 @@ fn main() {
 
     match cfg.kind {
         SimulationKind::AngleDisperse(angle_disperse) => {
-            render_angle_disperse(
+            render_adxrd(
                 angle_disperse,
                 cfg.sample_parameters,
                 cfg.simulation_parameters,
@@ -326,11 +339,12 @@ fn main() {
                 structures.into(),
                 &all_simulated_peaks,
                 &all_strains,
+                &all_preferred_orientations,
                 timestamp_started,
                 &mut rng,
             );
         }
-        SimulationKind::EnergyDisperse(energy_disperse) => render_energy_disperse(
+        SimulationKind::EnergyDisperse(energy_disperse) => render_edxrd(
             energy_disperse,
             cfg.sample_parameters,
             cfg.simulation_parameters,
