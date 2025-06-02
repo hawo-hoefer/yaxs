@@ -13,6 +13,7 @@ use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
 pub enum Parameter<T> {
     Fixed(T),
     Range(T, T),

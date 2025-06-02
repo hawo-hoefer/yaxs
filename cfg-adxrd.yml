@@ -12,11 +12,11 @@ kind: !AngleDisperse
     sigma_min: 0.0
     sigma_max: 1.0
   caglioti:
-    u_range: [0.0, 0.0]
-    v_range: [-0.0, 0.0]
-    w_range: [0.0, 0.0]
+    u: [0.0, 0.0]
+    v: [-0.0, 0.0]
+    w: [0.0, 0.0]
   background: !Chebyshev
-    coef_ranges: 
+    coefs: 
     - [-1.0, 1.0]
     - [-1.0, 1.0]
     - [-1.0, 1.0]
@@ -30,7 +30,7 @@ kind: !AngleDisperse
     - [-1.0, 1.0]
     - [-1.0, 1.0]
     - [-1.0, 1.0]
-    scale_range: 
+    scale: 
     - 40.0
     - 40.0
   # background: None
