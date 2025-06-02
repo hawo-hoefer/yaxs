@@ -38,102 +38,6 @@ struct Cli {
     io: io::Opts,
 }
 
-fn render_and_write_jobs<T>(
-    cfg: JobCfg,
-    args: Cli,
-    jobs: &[T],
-    xs: &[f32],
-    timestamp_started: chrono::DateTime<Utc>,
-    kind: SimulationKind,
-) where
-    T: Discretizer,
-{
-    let begin_render = Instant::now();
-    let output_names = if let Some(_) = args.io.chunk_size {
-        render_write_chunked(
-            &jobs,
-            &xs,
-            cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures_po.len(),
-            &args.io,
-        )
-    } else {
-        let (intensities, pattern_metadata) = render_jobs(
-            &jobs,
-            &xs,
-            cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures_po.len(),
-        );
-        let mut data_path = std::path::PathBuf::new();
-        data_path.push(&args.io.output_name);
-        data_path.push("data.npz");
-        let (data_slot_names, metadata_slot_names) =
-            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
-                .unwrap_or_else(|_| std::process::exit(1));
-        OutputNames {
-            chunk_names: None,
-            data_slot_names,
-            metadata_slot_names,
-        }
-    };
-
-    let elapsed = begin_render.elapsed().as_secs_f64();
-
-    let timestamp_finished: chrono::DateTime<Utc> = SystemTime::now().into();
-
-    let meta = serde_json::to_string(&SimulationMetadata {
-        timestamp_started,
-        timestamp_finished,
-        chunked: args.io.chunk_size.is_some(),
-        datafiles: output_names.chunk_names,
-        input_names: &output_names.data_slot_names,
-        target_names: &output_names.metadata_slot_names,
-        extra: io::Extra {
-            encoding: cfg
-                .sample_params
-                .structures_po
-                .iter()
-                .map(|StructureDef { path, .. }| path.to_string())
-                .collect_vec(),
-            max_phases: cfg.sample_params.structures_po.len(),
-            cfg: kind.clone(),
-            preferred_orientation_hkl: cfg
-                .sample_params
-                .structures_po
-                .iter()
-                .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
-                .collect_vec(),
-        },
-    })
-    .expect("SimulationMetadata is serializable");
-
-    let mut path = std::path::PathBuf::new();
-    path.push(args.io.output_name);
-    path.push("meta.json");
-    info!("Writing {}", path.display());
-    let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {
-        if err.kind() == ErrorKind::AlreadyExists {
-            // TODO: time of check / time of use issue?
-            error!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
-            error!("{}", meta);
-            std::process::exit(1);
-        } else {
-            // TODO: time of check / time of use issue?
-            error!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-            error!("{}", meta);
-            std::process::exit(1);
-        }
-    });
-    BufWriter::new(f).write_all(meta.as_bytes()).unwrap_or_else(|err| {
-        // TODO: time of check / time of use issue?
-        error!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-        error!("{}", meta);
-        std::process::exit(1);
-    });
-
-    info!("Done rendering patterns. Took {elapsed:.2}s");
-}
-
 fn main() {
     colog::init();
     let args = Cli::parse();
@@ -271,4 +175,100 @@ fn main() {
             )
         }
     }
+}
+
+fn render_and_write_jobs<T>(
+    cfg: JobCfg,
+    args: Cli,
+    jobs: &[T],
+    xs: &[f32],
+    timestamp_started: chrono::DateTime<Utc>,
+    kind: SimulationKind,
+) where
+    T: Discretizer,
+{
+    let begin_render = Instant::now();
+    let output_names = if let Some(_) = args.io.chunk_size {
+        render_write_chunked(
+            &jobs,
+            &xs,
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
+            &args.io,
+        )
+    } else {
+        let (intensities, pattern_metadata) = render_jobs(
+            &jobs,
+            &xs,
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
+        );
+        let mut data_path = std::path::PathBuf::new();
+        data_path.push(&args.io.output_name);
+        data_path.push("data.npz");
+        let (data_slot_names, metadata_slot_names) =
+            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
+                .unwrap_or_else(|_| std::process::exit(1));
+        OutputNames {
+            chunk_names: None,
+            data_slot_names,
+            metadata_slot_names,
+        }
+    };
+
+    let elapsed = begin_render.elapsed().as_secs_f64();
+
+    let timestamp_finished: chrono::DateTime<Utc> = SystemTime::now().into();
+
+    let meta = serde_json::to_string(&SimulationMetadata {
+        timestamp_started,
+        timestamp_finished,
+        chunked: args.io.chunk_size.is_some(),
+        datafiles: output_names.chunk_names,
+        input_names: &output_names.data_slot_names,
+        target_names: &output_names.metadata_slot_names,
+        extra: io::Extra {
+            encoding: cfg
+                .sample_params
+                .structures_po
+                .iter()
+                .map(|StructureDef { path, .. }| path.to_string())
+                .collect_vec(),
+            max_phases: cfg.sample_params.structures_po.len(),
+            cfg: kind.clone(),
+            preferred_orientation_hkl: cfg
+                .sample_params
+                .structures_po
+                .iter()
+                .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
+                .collect_vec(),
+        },
+    })
+    .expect("SimulationMetadata is serializable");
+
+    let mut path = std::path::PathBuf::new();
+    path.push(args.io.output_name);
+    path.push("meta.json");
+    info!("Writing {}", path.display());
+    let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {
+        if err.kind() == ErrorKind::AlreadyExists {
+            // TODO: time of check / time of use issue?
+            error!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
+            std::process::exit(1);
+        } else {
+            // TODO: time of check / time of use issue?
+            error!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
+            std::process::exit(1);
+        }
+    });
+    BufWriter::new(f).write_all(meta.as_bytes()).unwrap_or_else(|err| {
+        // TODO: time of check / time of use issue?
+        error!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+        error!("{}", meta);
+        std::process::exit(1);
+    });
+
+    info!("Done rendering patterns. Took {elapsed:.2}s");
 }
