@@ -24,38 +24,42 @@ pub enum Parameter<T> {
 pub enum BackgroundSpec {
     None,
     Chebyshev {
-        coef_ranges: Vec<(f32, f32)>,
-        scale_range: (f32, f32),
+        coefs: Vec<Parameter<f32>>,
+        scale: Parameter<f32>,
     },
     Exponential {
-        slope_range: (f32, f32),
-        scale_range: (f32, f32),
+        slope: Parameter<f32>,
+        scale: Parameter<f32>,
     },
+}
+
+impl<T> Parameter<T>
+where
+    T: SampleUniform + PartialOrd + Copy,
+{
+    pub fn generate(&self, rng: &mut impl Rng) -> T {
+        match self {
+            Parameter::Fixed(v) => *v,
+            Parameter::Range(lo, hi) => rng.random_range(*lo..=*hi),
+        }
+    }
 }
 
 impl BackgroundSpec {
     fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
             BackgroundSpec::None => Background::None,
-            BackgroundSpec::Chebyshev {
-                ref coef_ranges,
-                scale_range,
-            } => {
-                let mut cheby_coefs = Vec::with_capacity(coef_ranges.len());
-                for (lo, hi) in coef_ranges.iter() {
-                    cheby_coefs.push(rng.random_range(*lo..=*hi));
+            BackgroundSpec::Chebyshev { ref coefs, scale } => {
+                let mut cheby_coefs = Vec::with_capacity(coefs.len());
+                for param in coefs.iter() {
+                    cheby_coefs.push(param.generate(rng));
                 }
-                Background::chebyshev_polynomial(
-                    &cheby_coefs,
-                    rng.random_range(scale_range.0..=scale_range.1),
-                )
+                let scale = scale.generate(rng);
+                Background::chebyshev_polynomial(&cheby_coefs, scale)
             }
-            BackgroundSpec::Exponential {
-                slope_range: (lo, hi),
-                scale_range: (scale_lo, scale_hi),
-            } => Background::Exponential {
-                slope: rng.random_range(*lo..=*hi),
-                scale: rng.random_range(*scale_lo..=*scale_hi),
+            BackgroundSpec::Exponential { slope, scale } => Background::Exponential {
+                slope: slope.generate(rng),
+                scale: scale.generate(rng),
             },
         }
     }
