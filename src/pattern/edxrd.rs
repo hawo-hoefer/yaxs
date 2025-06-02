@@ -1,8 +1,13 @@
+use itertools::Itertools;
+use ordered_float::NotNan;
+use rand::Rng;
+
 use crate::background::Background;
+use crate::cfg::{EnergyDisperse, JobCfg, SampleParameters, SimulationParameters};
 use crate::io::PatternMeta;
 use crate::pattern::lorentz_factor;
 use crate::preferred_orientation::MarchDollase;
-use crate::structure::Strain;
+use crate::structure::{Strain, Structure};
 
 use super::{Discretizer, PeakRenderParams, Peaks};
 
@@ -130,4 +135,50 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
         ]
     }
+}
+
+pub fn generate_edxrd_jobs<'a>(
+    energy_disperse: &'a EnergyDisperse,
+    sample_params: &'a SampleParameters,
+    simulation_parameters: &'a SimulationParameters,
+    structures: &'a [Structure],
+    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    all_strains: &'a Vec<Vec<Strain>>,
+    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    rng: &mut impl Rng,
+) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>, JobCfg<'a>) {
+    let (e0, e1) = energy_disperse.energy_range_kev;
+    let energies = (0..energy_disperse.n_steps)
+        .map(|x| x as f32 / (energy_disperse.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
+        .collect_vec();
+    let mut intensities = Vec::new();
+    intensities.resize(energy_disperse.n_steps, 0.0f32);
+
+    let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len() + 1);
+    concentration_buf.resize(
+        concentration_buf.capacity(),
+        NotNan::new(0.0).expect("0.0 is not NaN"),
+    );
+
+    let job_cfg = JobCfg {
+        structures,
+        sample_params,
+        simulation_parameters,
+    };
+
+    // create rendering jobs
+    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
+    for _ in 0..job_cfg.simulation_parameters.n_patterns {
+        let job = job_cfg.generate_edxrd_job(
+            all_simulated_peaks,
+            all_strains,
+            all_preferred_orientations,
+            &energy_disperse,
+            &mut concentration_buf,
+            rng,
+        );
+        jobs.push(job);
+    }
+
+    (jobs, energies, job_cfg)
 }

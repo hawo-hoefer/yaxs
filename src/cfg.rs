@@ -1,5 +1,3 @@
-use std::io::{BufReader, Read};
-
 use itertools::Itertools;
 use log::error;
 use ordered_float::NotNan;
@@ -8,7 +6,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cif::CifParser;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::Peaks;

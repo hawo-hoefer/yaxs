@@ -1,9 +1,12 @@
 use super::{render_peak, Discretizer, PeakRenderParams, Peaks};
 use crate::background::Background;
+use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};
 use crate::io::PatternMeta;
 use crate::preferred_orientation::MarchDollase;
-use crate::structure::Strain;
+use crate::structure::{Strain, Structure};
 use itertools::Itertools;
+use ordered_float::NotNan;
+use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ADXRDMeta {
@@ -225,4 +228,49 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             });
         }
     }
+}
+pub fn generate_adxrd_jobs<'a>(
+    angle_disperse: &'a AngleDisperse,
+    sample_params: &'a SampleParameters,
+    simulation_parameters: &'a SimulationParameters,
+    structures: &'a [Structure],
+    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    all_strains: &'a Vec<Vec<Strain>>,
+    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    rng: &mut impl Rng,
+) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>, JobCfg<'a>) {
+    let job_cfg = JobCfg {
+        structures,
+        sample_params,
+        simulation_parameters,
+    };
+    // Prepare rendering / generation (two_thetas buffer, concentrations)
+    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
+    two_thetas.resize(two_thetas.capacity(), 0.0f32);
+    for (i, t) in two_thetas.iter_mut().enumerate() {
+        let r = angle_disperse.two_theta_range;
+        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
+    }
+
+    // initialize concentration buffer for metadata generator
+    let mut concentration_buf = Vec::with_capacity(job_cfg.sample_params.structures_po.len() + 1);
+    concentration_buf.resize(
+        concentration_buf.capacity(),
+        NotNan::new(0.0).expect("0.0 is not NaN"),
+    );
+
+    // create rendering jobs
+    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
+    for _ in 0..job_cfg.simulation_parameters.n_patterns {
+        let job = job_cfg.generate_adxrd_job(
+            all_simulated_peaks,
+            all_strains,
+            all_preferred_orientations,
+            &mut concentration_buf,
+            &angle_disperse,
+            rng,
+        );
+        jobs.push(job);
+    }
+    (jobs, two_thetas, job_cfg)
 }

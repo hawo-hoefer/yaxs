@@ -11,7 +11,6 @@ use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
-use crate::cfg::AngleDisperse;
 use crate::cfg::SimulationKind;
 use crate::pattern::render_jobs;
 use crate::pattern::Discretizer;
