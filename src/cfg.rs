@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use log::error;
 use ordered_float::NotNan;
-use rand::distr::uniform::SampleUniform;
+use rand::distr::uniform::{SampleUniform, UniformSampler};
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,16 @@ where
         match self {
             Parameter::Fixed(v) => *v,
             Parameter::Range(lo, hi) => rng.random_range(*lo..=*hi),
+        }
+    }
+
+    pub fn sampler(&self) -> Result<Uniform<T>, T> {
+        match self {
+            Parameter::Fixed(v) => Err(*v),
+            Parameter::Range(lo, hi) => Ok(Uniform::try_from(*lo..=*hi).unwrap_or_else(|err| {
+                error!("Could not sample mean domain size: {err}");
+                std::process::exit(1);
+            })),
         }
     }
 }
@@ -112,11 +122,11 @@ pub struct StructureDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleParameters {
     pub structures_po: Vec<StructureDef>,
-    pub mean_ds_range_nm: (f64, f64),
-    pub sample_displacement_range_mu_m: (f64, f64),
+    pub mean_ds_nm: Parameter<f64>,
+    pub sample_displacement_mu_m: Parameter<f64>,
     pub max_strain: f64,
 
-    pub eta_range: (f64, f64),
+    pub eta: Parameter<f64>,
     pub structure_permutations: usize,
 }
 
@@ -166,24 +176,23 @@ impl JobCfg<'_> {
         } = angle_disperse;
 
         let SampleParameters {
-            mean_ds_range_nm,
-            eta_range,
+            mean_ds_nm,
+            eta,
             structure_permutations,
             ..
         } = &self.sample_params;
 
-        let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let ds_sampler =
-            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            });
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
-        mean_ds_nm.extend(
-            ds_sampler
-                .sample_iter(&mut rng)
-                .take(concentration_buf.len()),
-        );
+        let n_phases = all_simulated_peaks.len();
+
+        let eta = eta.generate(rng);
+        let ds_sampler = mean_ds_nm.sampler();
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
+        match ds_sampler {
+            Ok(sampler) => {
+                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
+            }
+            Err(v) => mean_ds_nm.resize(n_phases, v),
+        }
         let u = u.generate(rng);
         let v = v.generate(rng);
         let w = w.generate(rng);
@@ -235,24 +244,23 @@ impl JobCfg<'_> {
         mut rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let SampleParameters {
-            mean_ds_range_nm,
-            eta_range,
+            mean_ds_nm,
+            eta,
             structure_permutations,
             ..
         } = &self.sample_params;
 
-        let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let ds_sampler =
-            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            });
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
-        mean_ds_nm.extend(
-            ds_sampler
-                .sample_iter(&mut rng)
-                .take(concentration_buf.len()),
-        );
+        let n_phases = all_simulated_peaks.len();
+
+        let eta = eta.generate(rng);
+        let ds_sampler = mean_ds_nm.sampler();
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
+        match ds_sampler {
+            Ok(sampler) => {
+                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
+            }
+            Err(v) => mean_ds_nm.resize(n_phases, v),
+        }
 
         concentration_buf[0] = NotNan::try_from(0.0).unwrap();
         concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();

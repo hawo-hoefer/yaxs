@@ -43,9 +43,9 @@ kind: !AngleDisperse
   #   - 800.0
 
 sample_parameters:
-  mean_ds_range_nm: [15.0, 25.0]
-  eta_range: [0.5, 0.5]
-  sample_displacement_range_mu_m: [0.0, 250.0]
+  mean_ds_nm: [15.0, 25.0]
+  eta: [0.5, 0.5]
+  sample_displacement_mu_m: [0.0, 250.0]
   max_strain: 0.005
   structure_permutations: 100
   structures_po:
