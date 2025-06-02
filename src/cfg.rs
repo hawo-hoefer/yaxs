@@ -12,7 +12,15 @@ use crate::pattern::Peaks;
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Parameter<T> {
+    Fixed(T),
+    Range(T, T),
+    // Choice(Vec<T>),
+    // ChoiceWithWeights(Vec<T>, Vec<f32>)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
