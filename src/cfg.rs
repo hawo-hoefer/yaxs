@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use log::error;
 use ordered_float::NotNan;
+use rand::distr::uniform::SampleUniform;
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -68,9 +69,9 @@ impl BackgroundSpec {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Caglioti {
-    pub u_range: (f64, f64),
-    pub v_range: (f64, f64),
-    pub w_range: (f64, f64),
+    pub u: Parameter<f64>,
+    pub v: Parameter<f64>,
+    pub w: Parameter<f64>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -157,12 +158,7 @@ impl JobCfg<'_> {
         mut rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
-            caglioti:
-                Caglioti {
-                    u_range,
-                    v_range,
-                    w_range,
-                },
+            caglioti: Caglioti { u, v, w },
             // sample_displacement_range_mu_m,
             background,
             emission_lines,
@@ -188,9 +184,9 @@ impl JobCfg<'_> {
                 .sample_iter(&mut rng)
                 .take(concentration_buf.len()),
         );
-        let u = rng.random_range(u_range.0..=u_range.1);
-        let v = rng.random_range(v_range.0..=v_range.1);
-        let w = rng.random_range(w_range.0..=w_range.1);
+        let u = u.generate(rng);
+        let v = v.generate(rng);
+        let w = w.generate(rng);
         let background = background.generate_bkg(rng);
 
         concentration_buf[0] = NotNan::try_from(0.0).unwrap();
