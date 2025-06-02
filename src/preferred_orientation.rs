@@ -3,6 +3,7 @@ use rand::Rng;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
+use crate::cfg::Parameter;
 use crate::structure::Lattice;
 
 const HKL_NORM_TOL: f64 = 1e-3;
@@ -10,13 +11,15 @@ const HKL_NORM_TOL: f64 = 1e-3;
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub struct MarchDollaseCfg {
     pub hkl: Vector3<f64>,
-    pub r: (f64, f64),
+    pub r: Parameter<f64>,
 }
 
 impl MarchDollaseCfg {
     pub fn generate(&self, rng: &mut impl Rng) -> MarchDollase {
-        let r = rng.random_range(self.r.0..=self.r.1);
-        MarchDollase { hkl: self.hkl, r }
+        MarchDollase {
+            hkl: self.hkl,
+            r: self.r.generate(rng),
+        }
     }
 }
 

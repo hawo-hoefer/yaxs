@@ -8,7 +8,7 @@ kind: !EnergyDisperse
 sample_parameters:
   mean_ds_nm: 100.0
   eta: 0.5
-  sample_displacement_mu_m: [0.0, 0.0]
+  sample_displacement_mu_m: 0.0
   max_strain: 0.000
   structure_permutations: 100
   structures_po:
@@ -18,7 +18,7 @@ sample_parameters:
     # - path: ./cif/Ir_53813.cif
       preferred_orientation: 
         hkl: [1, 1, 1]
-        r: [0.3, 0.3]
+        r: 0.3 
     # ./cif/SiO2_16331.cif
     # ./cif/Si_51688.cif
     # ./cif/Si_101017.cif

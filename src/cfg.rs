@@ -13,7 +13,7 @@ use crate::pattern::Peaks;
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Parameter<T> {
     Fixed(T),
@@ -103,6 +103,13 @@ pub struct AngleDisperse {
     pub background: BackgroundSpec,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnergyDisperse {
+    pub n_steps: usize,
+    pub energy_range_kev: (f64, f64),
+    pub theta_deg: f64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
@@ -142,13 +149,6 @@ pub struct Config {
     pub kind: SimulationKind,
     pub sample_parameters: SampleParameters,
     pub simulation_parameters: SimulationParameters,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EnergyDisperse {
-    pub n_steps: usize,
-    pub energy_range_kev: (f64, f64),
-    pub theta_deg: f64,
 }
 
 pub struct JobCfg<'a> {

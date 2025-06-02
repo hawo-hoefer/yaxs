@@ -53,7 +53,7 @@ sample_parameters:
     - path: ./cif/Fe3O4_183969.cif
       preferred_orientation:
         hkl: [1, 1, 1]
-        r: [0.1, 1.0]
+        r: 0.8
     - path: ./cif/Fe3O4_183969.cif
 
 
