@@ -20,7 +20,6 @@ typedef struct {
 typedef struct {
   float *intensity;
   float *pos;
-  float *weight;
   float *fwhm;
   float *eta;
   size_t n_peaks_tot;
@@ -77,7 +76,7 @@ __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info,
        peak_index < pat.n_peaks + pat.start_idx; ++peak_index) {
     float dx = pat_pos - soa.pos[peak_index];
     float pv = pseudo_voigt(dx, soa.eta[peak_index], soa.fwhm[peak_index]);
-    delta_intens += soa.weight[peak_index] * soa.intensity[peak_index] * pv;
+    delta_intens += soa.intensity[peak_index] * pv;
   }
 
   intensities[tid] = delta_intens;
@@ -254,6 +253,14 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
   return true;
 }
 
+#define check_error(val)                                                       \
+  do {                                                                         \
+    if (!val) {                                                                \
+      return_value = val;                                                      \
+      goto defer;                                                              \
+    }                                                                          \
+  } while (0)
+
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                  float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len,
@@ -264,6 +271,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   float *intensities_d, *two_thetas_d;
   float *peaks_d;
   CUDAPattern *patterns_d;
+  bool return_value = true;
 
   // clang-format off
   cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
@@ -273,25 +281,22 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   ret = cudaMalloc(&patterns_d, n_patterns * sizeof(CUDAPattern));
   log_cuda_err(ret, "allocating pattern buffer");
 
-  static_assert(sizeof(PeakSOA) == 6 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
-  cudaMalloc(&peaks_d, 5 * sizeof(float) * peaks_soa.n_peaks_tot);
+  static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
+  cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
 
   ret = cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peaks_soa to device");
   ret = cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peaks_soa to device");
-  ret = cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],    peaks_soa.weight, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
+  ret = cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peaks_soa to device");
-  ret = cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peaks_soa to device");
-  ret = cudaMemcpy(&peaks_d[4 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
+  ret = cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peaks_soa to device");
   PeakSOA peak_soa_d = (PeakSOA){
     .intensity = &peaks_d[0 * peaks_soa.n_peaks_tot],
     .pos = &peaks_d[1 * peaks_soa.n_peaks_tot],
-    .weight = &peaks_d[2 * peaks_soa.n_peaks_tot],
-    .fwhm = &peaks_d[3 * peaks_soa.n_peaks_tot],
-    .eta= &peaks_d[4 * peaks_soa.n_peaks_tot],
+    .fwhm = &peaks_d[2 * peaks_soa.n_peaks_tot],
+    .eta= &peaks_d[3 * peaks_soa.n_peaks_tot],
     .n_peaks_tot = peaks_soa.n_peaks_tot,
   };
 
@@ -318,16 +323,10 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
       render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data,
                          bkg_degree_if_poly, bkg_scales_if_not_none, n_patterns,
                          pat_len, grid_size, block_size);
-  if (!bkg_ok) {
-    // TODO: memory management using GOTO
-    return bkg_ok;
-  }
-
+  check_error(bkg_ok);
   if (normalize) {
     bool normalize_ok = normalize_patterns(intensities_d, n_patterns, pat_len);
-    if (!bkg_ok) {
-      return bkg_ok;
-    }
+    check_error(normalize_ok);
   }
 
   ret = cudaDeviceSynchronize();
@@ -336,13 +335,15 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   ret =
       cudaMemcpy(intensities, intensities_d,
                  n_patterns * pat_len * sizeof(float), cudaMemcpyDeviceToHost);
-  log_cuda_err(ret, "copying intensities from device to host");
+  log_cuda_err(ret, "copying intensities from "
+                    "device to host");
 
+defer:
   cudaFree(peaks_d);
   cudaFree(patterns_d);
   cudaFree(two_thetas_d);
   cudaFree(intensities_d);
-  return true;
+  return return_value;
 }
 
 } // extern "C"

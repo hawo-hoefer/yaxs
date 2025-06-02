@@ -1,17 +1,18 @@
-use std::io::{BufReader, Read};
-
 use itertools::Itertools;
+use log::error;
 use ordered_float::NotNan;
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cif::CifParser;
-use crate::pattern::{DiscretizationJob, EmissionLine, PatternMeta, Peaks};
+use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
+use crate::pattern::edxrd::{DiscretizeEnergyDispersive, EDXRDMeta};
+use crate::pattern::Peaks;
+use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
@@ -25,8 +26,7 @@ pub enum BackgroundSpec {
 }
 
 impl BackgroundSpec {
-    fn generate_bkg(&self, rng: &mut rand::rngs::StdRng) -> Background {
-        use rand::prelude::*;
+    fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
             BackgroundSpec::None => Background::None,
             BackgroundSpec::Chebyshev {
@@ -53,114 +53,97 @@ impl BackgroundSpec {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Caglioti {
     pub u_range: (f64, f64),
     pub v_range: (f64, f64),
     pub w_range: (f64, f64),
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Noise {
     None,
     Gaussian { sigma_min: f64, sigma_max: f64 },
     // Uniform // TODO
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct Config {
-    pub struct_cifs: Box<[String]>,
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct AngleDisperse {
     pub emission_lines: Box<[EmissionLine]>,
 
     pub n_steps: usize,
     pub two_theta_range: (f64, f64),
 
-    pub mean_ds_range_nm: (f64, f64),
-    pub eta_range: (f64, f64),
-    pub sample_displacement_range_mu_m: (f64, f64),
-    pub max_strain: f64,
-
     pub noise: Noise,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
+}
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
-    pub structure_permutations: usize,
 
     pub abstol: f32,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            struct_cifs: Box::new([]),
-            emission_lines: Box::new([]),
-            n_steps: 2048,
-            two_theta_range: (10.0, 70.0),
-            eta_range: (0.1, 0.9),
-            noise: Noise::Gaussian {
-                sigma_min: 0.0,
-                sigma_max: 100.0,
-            },
-            mean_ds_range_nm: (50.0, 50.0),
-            caglioti: Caglioti {
-                u_range: (0.0, 0.025),
-                v_range: (-0.025, 0.0),
-                w_range: (0.0, 0.025),
-            },
-            sample_displacement_range_mu_m: (-250.0, 250.0),
-            background: BackgroundSpec::None,
-            normalize: false,
-            seed: Some(1234),
-            n_patterns: 1,
-            max_strain: 0.01,
-            structure_permutations: 1,
-            abstol: 1e-2,
-        }
-    }
+#[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StructureDef {
+    pub path: String,
+    pub preferred_orientation: Option<MarchDollaseCfg>,
 }
 
-pub struct MetaGenerator {
-    pub structures: Box<[Structure]>,
-    pub cfg: Config,
-    pub i: usize,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SampleParameters {
+    pub structures_po: Vec<StructureDef>,
+    pub mean_ds_range_nm: (f64, f64),
+    pub sample_displacement_range_mu_m: (f64, f64),
+    pub max_strain: f64,
+
+    pub eta_range: (f64, f64),
+    pub structure_permutations: usize,
 }
 
-impl From<Config> for MetaGenerator {
-    fn from(cfg: Config) -> Self {
-        let structures = cfg
-            .struct_cifs
-            .iter()
-            .map(|path| {
-                // TODO: Errors
-                let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
-                let mut cif = String::new();
-                let _ = reader.read_to_string(&mut cif).unwrap();
-                let mut p = CifParser::new(&cif);
-                Structure::from(&p.parse())
-            })
-            .collect_vec();
-        Self {
-            cfg,
-            structures: structures.into_boxed_slice(),
-            i: 0,
-        }
-    }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum SimulationKind {
+    AngleDisperse(AngleDisperse),
+    EnergyDisperse(EnergyDisperse),
 }
 
-impl MetaGenerator {
-    pub fn generate_job<'a>(
-        &'a self,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    pub kind: SimulationKind,
+    pub sample_parameters: SampleParameters,
+    pub simulation_parameters: SimulationParameters,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnergyDisperse {
+    pub n_steps: usize,
+    pub energy_range_kev: (f64, f64),
+    pub theta_deg: f64,
+}
+
+pub struct JobCfg<'a> {
+    pub structures: &'a [Structure],
+    pub sample_params: &'a SampleParameters,
+    pub simulation_parameters: &'a SimulationParameters,
+}
+
+impl JobCfg<'_> {
+    pub fn generate_adxrd_job<'a>(
+        &self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
+        all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         concentration_buf: &mut [NotNan<f64>],
-        mut rng: &mut rand::rngs::StdRng,
-    ) -> DiscretizationJob<'a> {
-        let Config {
-            eta_range,
-            mean_ds_range_nm,
+        angle_disperse: &'a AngleDisperse,
+        mut rng: &mut impl Rng,
+    ) -> DiscretizeAngleDisperse<'a> {
+        let AngleDisperse {
             caglioti:
                 Caglioti {
                     u_range,
@@ -170,15 +153,20 @@ impl MetaGenerator {
             // sample_displacement_range_mu_m,
             background,
             emission_lines,
-            normalize,
+            ..
+        } = angle_disperse;
+
+        let SampleParameters {
+            mean_ds_range_nm,
+            eta_range,
             structure_permutations,
             ..
-        } = &self.cfg;
+        } = &self.sample_params;
 
         let eta = rng.random_range(eta_range.0..=eta_range.1);
         let ds_sampler =
             Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                eprintln!("Could not sample mean domain size: {err}");
+                error!("Could not sample mean domain size: {err}");
                 std::process::exit(1);
             });
         let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
@@ -203,16 +191,17 @@ impl MetaGenerator {
             concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
         }
 
-        DiscretizationJob {
+        DiscretizeAngleDisperse {
             all_simulated_peaks,
             all_strains,
+            all_preferred_orientations,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),
             emission_lines: &emission_lines,
-            normalize: *normalize,
-            meta: PatternMeta {
-                vol_fractions: concentration_buf
+            normalize: self.simulation_parameters.normalize,
+            meta: ADXRDMeta {
+                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
                     .iter()
                     .map(|x| f64::from(*x))
                     .collect_vec()
@@ -223,6 +212,67 @@ impl MetaGenerator {
                 v,
                 w,
                 background,
+            },
+        }
+    }
+
+    pub fn generate_edxrd_job<'a>(
+        &self,
+        all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+        all_strains: &'a Vec<Vec<Strain>>,
+        all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+        energy_disperse: &'a EnergyDisperse,
+        concentration_buf: &mut [NotNan<f64>],
+        mut rng: &mut impl Rng,
+    ) -> DiscretizeEnergyDispersive<'a> {
+        let SampleParameters {
+            mean_ds_range_nm,
+            eta_range,
+            structure_permutations,
+            ..
+        } = &self.sample_params;
+
+        let eta = rng.random_range(eta_range.0..=eta_range.1);
+        let ds_sampler =
+            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
+                error!("Could not sample mean domain size: {err}");
+                std::process::exit(1);
+            });
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
+        mean_ds_nm.extend(
+            ds_sampler
+                .sample_iter(&mut rng)
+                .take(concentration_buf.len()),
+        );
+
+        concentration_buf[0] = NotNan::try_from(0.0).unwrap();
+        concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
+        for i in 1..self.structures.len() {
+            concentration_buf[i] = NotNan::try_from(rng.random_range(0.0..=1.0))
+                .expect("numbers between 0 and 1 are not NaN")
+        }
+        concentration_buf.sort();
+        for i in 0..concentration_buf.len() - 1 {
+            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
+        }
+
+        DiscretizeEnergyDispersive {
+            all_simulated_peaks,
+            all_strains,
+            all_preferred_orientations,
+            indices: (0..self.structures.len())
+                .map(|_| rng.random_range(0..*structure_permutations))
+                .collect_vec(),
+            normalize: self.simulation_parameters.normalize,
+            meta: EDXRDMeta {
+                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
+                    .iter()
+                    .map(|x| f64::from(*x))
+                    .collect_vec()
+                    .into(),
+                eta,
+                mean_ds_nm: mean_ds_nm.into_boxed_slice(),
+                theta_rad: energy_disperse.theta_deg.to_radians(),
             },
         }
     }

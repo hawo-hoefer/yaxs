@@ -1,32 +1,23 @@
 use chrono::Utc;
 use clap::Parser;
-use ordered_float::NotNan;
+use itertools::Itertools;
 use rand::SeedableRng;
-use std::io::{BufReader, BufWriter, ErrorKind, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
-use yaxs::structure::simulate_peaks;
+use yaxs::cif::CifParser;
+use yaxs::pattern::adxrd::generate_adxrd_jobs;
+use yaxs::pattern::edxrd::generate_edxrd_jobs;
+use yaxs::structure::{simulate_peaks_angle_disperse, simulate_peaks_energy_disperse, Structure};
 
-use yaxs::cfg::{Config, MetaGenerator};
-use yaxs::io::{self, prepare_output_directory, write_to_npz, SimulationMetadata};
-use yaxs::pattern::{render_jobs, render_write_chunked};
+use log::{error, info};
 
-const H_EV_S: f64 = 4.135_667_696e-15f64;
-const C_M_S: f64 = 299_792_485.0f64;
-
-fn output_exists(path: &str) -> bool {
-    std::fs::exists(&path).unwrap_or_else(|err| {
-        eprintln!("Could not check whether output file/directory {path} exists: {err}");
-        std::process::exit(1);
-    })
-}
-
-pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
-    // e = h * c / lambda
-    // lambda = h * c / e
-    // m      = ev * s * m / ev
-    H_EV_S * C_M_S / e_kev * 1e7
-}
+use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef};
+use yaxs::io::{
+    self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
+    SimulationMetadata,
+};
+use yaxs::pattern::{render_jobs, Discretizer};
 
 #[derive(Parser)]
 #[command(
@@ -48,13 +39,14 @@ struct Cli {
 }
 
 fn main() {
+    colog::init();
     let args = Cli::parse();
 
     let f = match std::fs::File::open(&args.cfg) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "Error: Could not open File '{}': {}",
+            error!(
+                "Could not open File '{}': {}",
                 args.cfg.to_str().unwrap(),
                 e
             );
@@ -62,92 +54,166 @@ fn main() {
         }
     };
 
-    let (gen, mut rng) = {
-        let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!(
-                    "Could not parse config: '{x}': {e}",
-                    x = args.cfg.to_str().unwrap()
-                );
-                std::process::exit(1);
-            }
-        };
-        eprintln!("struct_cifs: {:?}", cfg.struct_cifs);
-        let rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.unwrap_or(0));
-        (MetaGenerator::from(cfg), rng)
-    };
-
-    let output_path_exists = output_exists(&args.io.output_name);
-    if output_path_exists {
-        if args.io.overwrite {
-            std::fs::remove_dir_all(&args.io.output_name).unwrap_or_else(|err| {
-                eprintln!(
-                    "Could not delete output directory '{}': {}",
-                    &args.io.output_name, err
-                );
-                std::process::exit(1);
-            });
-        } else {
-            eprintln!("Output path '{}' already exists.", args.io.output_name);
+    let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            error!(
+                "Could not parse config: '{x}': {e}",
+                x = args.cfg.to_str().unwrap()
+            );
             std::process::exit(1);
         }
-    }
-
-    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
-
-    let begin = Instant::now();
-    let (all_simulated_peaks, all_strains) = simulate_peaks(&gen, &mut rng);
-    let elapsed = begin.elapsed().as_secs_f64();
-
-    eprintln!("Simulating Peak Positions took {elapsed:.2}s");
-
-    let begin_render = Instant::now();
-
-    // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(gen.cfg.n_steps);
-    two_thetas.resize(two_thetas.capacity(), 0.0f32);
-    for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = gen.cfg.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (gen.cfg.n_steps as f64 - 1.0))) as f32;
-    }
-
-    let mut concentration_buf = Vec::with_capacity(gen.cfg.struct_cifs.len());
-    concentration_buf.resize(
-        concentration_buf.capacity(),
-        NotNan::new(0.0).expect("0.0 is not NaN"),
-    );
-
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(gen.cfg.n_patterns);
-    for _ in 0..gen.cfg.n_patterns {
-        let job = gen.generate_job(
-            &all_simulated_peaks,
-            &all_strains,
-            &mut concentration_buf,
-            &mut rng,
-        );
-        jobs.push(job);
-    }
+    };
 
     prepare_output_directory(&args.io);
 
-    // simulate and write to file(s)
-    let datafiles = if let Some(_) = args.io.chunk_size {
-        Some(render_write_chunked(&jobs, &two_thetas, &gen.cfg, &args.io))
+    let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
+    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
+
+    let mut structures = Vec::new();
+    let mut pref_o = Vec::new();
+
+    for StructureDef {
+        path,
+        preferred_orientation: po,
+    } in cfg.sample_parameters.structures_po.iter()
+    {
+        let mut reader = BufReader::new(
+            std::fs::File::open(path)
+                .map_err(|err| {
+                    error!("Could not load cif at '{path}': {err}");
+                    std::process::exit(1);
+                })
+                .expect("we exit if error"),
+        );
+        let mut cif = String::new();
+        let _ = reader.read_to_string(&mut cif).unwrap();
+        let mut p = CifParser::new(&cif);
+        structures.push(Structure::from(&p.parse()));
+        pref_o.push(po);
+    }
+
+    let begin = Instant::now();
+    let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {
+        SimulationKind::AngleDisperse(angle_disperse) => {
+            let min_line = &angle_disperse
+                .emission_lines
+                .iter()
+                .min_by(|a, b| {
+                    a.wavelength_ams
+                        .partial_cmp(&b.wavelength_ams)
+                        .expect("no NaNs in wavelengths")
+                })
+                .expect("at least one emission line");
+
+            let (two_theta_range, wavelength_ams) =
+                (angle_disperse.two_theta_range, min_line.wavelength_ams);
+
+            info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
+            simulate_peaks_angle_disperse(
+                &cfg.sample_parameters,
+                &structures,
+                &pref_o,
+                two_theta_range,
+                wavelength_ams,
+                &mut rng,
+            )
+        }
+        SimulationKind::EnergyDisperse(energy_disperse) => simulate_peaks_energy_disperse(
+            &cfg.sample_parameters,
+            &structures,
+            &pref_o,
+            energy_disperse.energy_range_kev,
+            energy_disperse.theta_deg,
+            &mut rng,
+        ),
+    };
+
+    let elapsed = begin.elapsed().as_secs_f64();
+
+    info!("Simulating Peak Positions took {elapsed:.2}s");
+
+    match &cfg.kind {
+        SimulationKind::AngleDisperse(angle_disperse) => {
+            let (jobs, xs, job_cfg) = generate_adxrd_jobs(
+                &angle_disperse,
+                &cfg.sample_parameters,
+                &cfg.simulation_parameters,
+                &structures,
+                &all_simulated_peaks,
+                &all_strains,
+                &all_preferred_orientations,
+                &mut rng,
+            );
+            render_and_write_jobs(
+                job_cfg,
+                args,
+                &jobs,
+                &xs,
+                timestamp_started,
+                cfg.kind.clone(),
+            )
+        }
+        SimulationKind::EnergyDisperse(energy_disperse) => {
+            let (jobs, xs, job_cfg) = generate_edxrd_jobs(
+                &energy_disperse,
+                &cfg.sample_parameters,
+                &cfg.simulation_parameters,
+                &structures,
+                &all_simulated_peaks,
+                &all_strains,
+                &all_preferred_orientations,
+                &mut rng,
+            );
+            render_and_write_jobs(
+                job_cfg,
+                args,
+                &jobs,
+                &xs,
+                timestamp_started,
+                cfg.kind.clone(),
+            )
+        }
+    }
+}
+
+fn render_and_write_jobs<T>(
+    cfg: JobCfg,
+    args: Cli,
+    jobs: &[T],
+    xs: &[f32],
+    timestamp_started: chrono::DateTime<Utc>,
+    kind: SimulationKind,
+) where
+    T: Discretizer,
+{
+    let begin_render = Instant::now();
+    let output_names = if let Some(_) = args.io.chunk_size {
+        render_write_chunked(
+            &jobs,
+            &xs,
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
+            &args.io,
+        )
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
-            &two_thetas,
-            gen.cfg.abstol,
-            gen.cfg.struct_cifs.len(),
+            &xs,
+            cfg.simulation_parameters.abstol,
+            cfg.sample_params.structures_po.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_name);
         data_path.push("data.npz");
-        let _ = write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
-            .unwrap_or_else(|_| std::process::exit(1));
-        None
+        let (data_slot_names, metadata_slot_names) =
+            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
+                .unwrap_or_else(|_| std::process::exit(1));
+        OutputNames {
+            chunk_names: None,
+            data_slot_names,
+            metadata_slot_names,
+        }
     };
 
     let elapsed = begin_render.elapsed().as_secs_f64();
@@ -157,14 +223,25 @@ fn main() {
     let meta = serde_json::to_string(&SimulationMetadata {
         timestamp_started,
         timestamp_finished,
-        chunked: datafiles.is_some(),
-        datafiles,
-        input_names: &io::INPUT_NAMES,
-        target_names: &io::TARGET_NAMES,
+        chunked: args.io.chunk_size.is_some(),
+        datafiles: output_names.chunk_names,
+        input_names: &output_names.data_slot_names,
+        target_names: &output_names.metadata_slot_names,
         extra: io::Extra {
-            encoding: gen.cfg.struct_cifs.clone().to_vec(),
-            max_phases: gen.cfg.struct_cifs.len(),
-            cfg: gen.cfg,
+            encoding: cfg
+                .sample_params
+                .structures_po
+                .iter()
+                .map(|StructureDef { path, .. }| path.to_string())
+                .collect_vec(),
+            max_phases: cfg.sample_params.structures_po.len(),
+            cfg: kind.clone(),
+            preferred_orientation_hkl: cfg
+                .sample_params
+                .structures_po
+                .iter()
+                .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
+                .collect_vec(),
         },
     })
     .expect("SimulationMetadata is serializable");
@@ -172,26 +249,26 @@ fn main() {
     let mut path = std::path::PathBuf::new();
     path.push(args.io.output_name);
     path.push("meta.json");
-    eprintln!("Writing {}", path.display());
+    info!("Writing {}", path.display());
     let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {
         if err.kind() == ErrorKind::AlreadyExists {
             // TODO: time of check / time of use issue?
-            eprintln!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
-            eprintln!("{}", meta);
+            error!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
             std::process::exit(1);
         } else {
             // TODO: time of check / time of use issue?
-            eprintln!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-            eprintln!("{}", meta);
+            error!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+            error!("{}", meta);
             std::process::exit(1);
         }
     });
     BufWriter::new(f).write_all(meta.as_bytes()).unwrap_or_else(|err| {
         // TODO: time of check / time of use issue?
-        eprintln!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-        eprintln!("{}", meta);
+        error!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
+        error!("{}", meta);
         std::process::exit(1);
     });
 
-    eprintln!("Done rendering patterns. Took {elapsed:.2}s");
+    info!("Done rendering patterns. Took {elapsed:.2}s");
 }
