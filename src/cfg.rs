@@ -130,45 +130,15 @@ pub struct EnergyDisperse {
     pub theta_deg: f64,
 }
 
-pub struct JobCfg {
-    pub structures: Box<[Structure]>,
-    pub sample_params: SampleParameters,
-    pub simulation_parameters: SimulationParameters,
+pub struct JobCfg<'a> {
+    pub structures: &'a [Structure],
+    pub sample_params: &'a SampleParameters,
+    pub simulation_parameters: &'a SimulationParameters,
 }
 
-impl TryFrom<Config> for JobCfg {
-    type Error = String;
-
-    fn try_from(cfg: Config) -> Result<Self, String> {
-        let structures = cfg
-            .sample_parameters
-            .structures_po
-            .iter()
-            .map(|StructureDef { path, .. }| {
-                // TODO: Errors
-                let mut reader = BufReader::new(std::fs::File::open(path).unwrap());
-                let mut cif = String::new();
-                let _ = reader.read_to_string(&mut cif).unwrap();
-                let mut p = CifParser::new(&cif);
-                Structure::from(&p.parse())
-            })
-            .collect_vec()
-            .into();
-
-        match cfg.kind {
-            SimulationKind::AngleDisperse(_angle_disperse) => Ok(Self {
-                structures,
-                sample_params: cfg.sample_parameters,
-                simulation_parameters: cfg.simulation_parameters,
-            }),
-            SimulationKind::EnergyDisperse(_energy_disperse) => todo!(),
-        }
-    }
-}
-
-impl JobCfg {
+impl JobCfg<'_> {
     pub fn generate_adxrd_job<'a>(
-        &'a self,
+        &self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
@@ -250,7 +220,7 @@ impl JobCfg {
     }
 
     pub fn generate_edxrd_job<'a>(
-        &'a self,
+        &self,
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,

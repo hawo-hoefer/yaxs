@@ -22,7 +22,7 @@ use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, Discretizer, Peaks};
+use yaxs::pattern::{render_jobs, DiscretizeAngleDisperse, Discretizer, Peaks};
 
 #[derive(Parser)]
 #[command(
@@ -43,26 +43,26 @@ struct Cli {
     io: io::Opts,
 }
 
-fn render_edxrd(
-    kind: EnergyDisperse,
-    sample_params: SampleParameters,
-    simulation_parameters: SimulationParameters,
-    structures: Box<[Structure]>,
-    _args: Cli,
-    all_simulated_peaks: &Vec<Vec<Peaks>>,
-    all_strains: &Vec<Vec<Strain>>,
-    all_preferred_orientations: &Vec<Vec<Option<MarchDollase>>>,
-    _timestamp_started: chrono::DateTime<Utc>,
+fn generate_edxrd_jobs<'a>(
+    energy_disperse: &'a EnergyDisperse,
+    sample_params: &'a SampleParameters,
+    simulation_parameters: &'a SimulationParameters,
+    structures: &'a [Structure],
+    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    all_strains: &'a Vec<Vec<Strain>>,
+    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
     rng: &mut impl Rng,
+) -> (
+    Vec<yaxs::pattern::edxrd::DiscretizeEnergyDispersive<'a>>,
+    Vec<f32>,
+    JobCfg<'a>,
 ) {
-    let begin_render = Instant::now();
-    // prepare rendering parameters
-    let (e0, e1) = kind.energy_range_kev;
-    let energies = (0..kind.n_steps)
-        .map(|x| x as f32 / (kind.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
+    let (e0, e1) = energy_disperse.energy_range_kev;
+    let energies = (0..energy_disperse.n_steps)
+        .map(|x| x as f32 / (energy_disperse.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
         .collect_vec();
     let mut intensities = Vec::new();
-    intensities.resize(kind.n_steps, 0.0f32);
+    intensities.resize(energy_disperse.n_steps, 0.0f32);
 
     let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len() + 1);
     concentration_buf.resize(
@@ -70,92 +70,44 @@ fn render_edxrd(
         NotNan::new(0.0).expect("0.0 is not NaN"),
     );
 
-    let cfg = JobCfg {
+    let job_cfg = JobCfg {
         structures,
         sample_params,
         simulation_parameters,
     };
 
     // create rendering jobs
-    let mut jobs = Vec::with_capacity(cfg.simulation_parameters.n_patterns);
-    for _ in 0..cfg.simulation_parameters.n_patterns {
-        let job = cfg.generate_edxrd_job(
+    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
+    for _ in 0..job_cfg.simulation_parameters.n_patterns {
+        let job = job_cfg.generate_edxrd_job(
             all_simulated_peaks,
             all_strains,
             all_preferred_orientations,
-            &kind,
+            &energy_disperse,
             &mut concentration_buf,
             rng,
         );
         jobs.push(job);
     }
 
-    jobs[0].discretize_into(
-        &mut intensities,
-        &energies,
-        cfg.simulation_parameters.abstol,
-    );
-
-    for (e, i) in energies.iter().zip(intensities) {
-        println!("{} {}", e, i);
-    }
-
-    let elapsed = begin_render.elapsed().as_secs_f64();
-    info!("Done. Rendering Took {elapsed:.2}s")
+    (jobs, energies, job_cfg)
 }
 
-fn render_adxrd(
-    angle_disperse: AngleDisperse,
-    sample_params: SampleParameters,
-    simulation_parameters: SimulationParameters,
+fn render_and_write_jobs<T>(
+    cfg: JobCfg,
     args: Cli,
-    structures: Box<[Structure]>,
-    all_simulated_peaks: &Vec<Vec<Peaks>>,
-    all_strains: &Vec<Vec<Strain>>,
-    all_preferred_orientations: &Vec<Vec<Option<MarchDollase>>>,
+    jobs: &[T],
+    xs: &[f32],
     timestamp_started: chrono::DateTime<Utc>,
-    rng: &mut impl Rng,
-) {
+    kind: SimulationKind,
+) where
+    T: Discretizer,
+{
     let begin_render = Instant::now();
-    let cfg = JobCfg {
-        structures,
-        sample_params,
-        simulation_parameters,
-    };
-    // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
-    two_thetas.resize(two_thetas.capacity(), 0.0f32);
-    for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = angle_disperse.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
-    }
-
-    // initialize concentration buffer for metadata generator
-    let mut concentration_buf = Vec::with_capacity(cfg.sample_params.structures_po.len() + 1);
-    concentration_buf.resize(
-        concentration_buf.capacity(),
-        NotNan::new(0.0).expect("0.0 is not NaN"),
-    );
-
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(cfg.simulation_parameters.n_patterns);
-    for _ in 0..cfg.simulation_parameters.n_patterns {
-        let job = cfg.generate_adxrd_job(
-            all_simulated_peaks,
-            all_strains,
-            all_preferred_orientations,
-            &mut concentration_buf,
-            &angle_disperse,
-            rng,
-        );
-        jobs.push(job);
-    }
-
-    // simulate and write to file(s)
     let output_names = if let Some(_) = args.io.chunk_size {
         render_write_chunked(
             &jobs,
-            &two_thetas,
+            &xs,
             cfg.simulation_parameters.abstol,
             cfg.sample_params.structures_po.len(),
             &args.io,
@@ -163,7 +115,7 @@ fn render_adxrd(
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
-            &two_thetas,
+            &xs,
             cfg.simulation_parameters.abstol,
             cfg.sample_params.structures_po.len(),
         );
@@ -199,7 +151,7 @@ fn render_adxrd(
                 .map(|StructureDef { path, .. }| path.to_string())
                 .collect_vec(),
             max_phases: cfg.sample_params.structures_po.len(),
-            cfg: angle_disperse,
+            cfg: kind.clone(),
             preferred_orientation_hkl: cfg
                 .sample_params
                 .structures_po
@@ -237,6 +189,52 @@ fn render_adxrd(
     info!("Done rendering patterns. Took {elapsed:.2}s");
 }
 
+fn generate_adxrd_jobs<'a>(
+    angle_disperse: &'a AngleDisperse,
+    sample_params: &'a SampleParameters,
+    simulation_parameters: &'a SimulationParameters,
+    structures: &'a [Structure],
+    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    all_strains: &'a Vec<Vec<Strain>>,
+    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    rng: &mut impl Rng,
+) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>, JobCfg<'a>) {
+    let job_cfg = JobCfg {
+        structures,
+        sample_params,
+        simulation_parameters,
+    };
+    // Prepare rendering / generation (two_thetas buffer, concentrations)
+    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
+    two_thetas.resize(two_thetas.capacity(), 0.0f32);
+    for (i, t) in two_thetas.iter_mut().enumerate() {
+        let r = angle_disperse.two_theta_range;
+        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
+    }
+
+    // initialize concentration buffer for metadata generator
+    let mut concentration_buf = Vec::with_capacity(job_cfg.sample_params.structures_po.len() + 1);
+    concentration_buf.resize(
+        concentration_buf.capacity(),
+        NotNan::new(0.0).expect("0.0 is not NaN"),
+    );
+
+    // create rendering jobs
+    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
+    for _ in 0..job_cfg.simulation_parameters.n_patterns {
+        let job = job_cfg.generate_adxrd_job(
+            all_simulated_peaks,
+            all_strains,
+            all_preferred_orientations,
+            &mut concentration_buf,
+            &angle_disperse,
+            rng,
+        );
+        jobs.push(job);
+    }
+    (jobs, two_thetas, job_cfg)
+}
+
 fn main() {
     colog::init();
     let args = Cli::parse();
@@ -272,8 +270,11 @@ fn main() {
     let mut structures = Vec::new();
     let mut pref_o = Vec::new();
 
-    for StructureDef { path, preferred_orientation: po } in cfg.sample_parameters.structures_po.iter() {
-        // TODO: Errors
+    for StructureDef {
+        path,
+        preferred_orientation: po,
+    } in cfg.sample_parameters.structures_po.iter()
+    {
         let mut reader = BufReader::new(
             std::fs::File::open(path)
                 .map_err(|err| {
@@ -329,32 +330,46 @@ fn main() {
 
     info!("Simulating Peak Positions took {elapsed:.2}s");
 
-    match cfg.kind {
+    match &cfg.kind {
         SimulationKind::AngleDisperse(angle_disperse) => {
-            render_adxrd(
-                angle_disperse,
-                cfg.sample_parameters,
-                cfg.simulation_parameters,
-                args,
-                structures.into(),
+            let (jobs, xs, job_cfg) = generate_adxrd_jobs(
+                &angle_disperse,
+                &cfg.sample_parameters,
+                &cfg.simulation_parameters,
+                &structures,
                 &all_simulated_peaks,
                 &all_strains,
                 &all_preferred_orientations,
-                timestamp_started,
                 &mut rng,
             );
+            render_and_write_jobs(
+                job_cfg,
+                args,
+                &jobs,
+                &xs,
+                timestamp_started,
+                cfg.kind.clone(),
+            )
         }
-        SimulationKind::EnergyDisperse(energy_disperse) => render_edxrd(
-            energy_disperse,
-            cfg.sample_parameters,
-            cfg.simulation_parameters,
-            structures.into(),
-            args,
-            &all_simulated_peaks,
-            &all_strains,
-            &all_preferred_orientations,
-            timestamp_started,
-            &mut rng,
-        ),
+        SimulationKind::EnergyDisperse(energy_disperse) => {
+            let (jobs, xs, job_cfg) = generate_edxrd_jobs(
+                &energy_disperse,
+                &cfg.sample_parameters,
+                &cfg.simulation_parameters,
+                &structures,
+                &all_simulated_peaks,
+                &all_strains,
+                &all_preferred_orientations,
+                &mut rng,
+            );
+            render_and_write_jobs(
+                job_cfg,
+                args,
+                &jobs,
+                &xs,
+                timestamp_started,
+                cfg.kind.clone(),
+            )
+        }
     }
 }

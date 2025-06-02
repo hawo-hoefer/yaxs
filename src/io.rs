@@ -12,6 +12,7 @@ use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
 use crate::cfg::AngleDisperse;
+use crate::cfg::SimulationKind;
 use crate::pattern::render_jobs;
 use crate::pattern::Discretizer;
 
@@ -72,7 +73,7 @@ impl PatternMeta {
 
 #[derive(Serialize)]
 pub struct Extra {
-    pub cfg: AngleDisperse,
+    pub cfg: SimulationKind,
     pub max_phases: usize,
     pub encoding: Vec<String>,
     pub preferred_orientation_hkl: Vec<Option<Vector3<f64>>>,

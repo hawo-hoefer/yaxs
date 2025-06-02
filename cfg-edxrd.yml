@@ -16,7 +16,7 @@ sample_parameters:
     - path: ./cif/HfO2_polar_orthorombic_matproj.cif
     - path: ./cif/HfO2_monoclinic_27313.cif
     - path: ./cif/Ir_53813.cif
-      po: 
+      preferred_orientation: 
         hkl: [1, 1, 1]
         r: [0.3, 0.3]
     # ./cif/SiO2_16331.cif
@@ -39,5 +39,5 @@ sample_parameters:
 simulation_parameters:
   normalize: true 
   seed: 1234
-  n_patterns: 1
+  n_patterns: 100000
   abstol: 1e-5
