@@ -66,6 +66,22 @@ fn main() {
     };
 
     prepare_output_directory(&args.io);
+    let cfg_file_name = args
+        .cfg
+        .file_name()
+        .expect("configuration file was hopefully not moved until now.");
+    let mut copied_cfg_path = args.io.output_path.clone();
+    copied_cfg_path.push(cfg_file_name);
+    let _ = std::fs::copy(&args.cfg, copied_cfg_path)
+        .map_err(|err| {
+            error!(
+            "Could not copy configuration file '{infile}' to output directory '{outdir}': {err}",
+            infile = args.cfg.display(),
+            outdir = args.io.output_path.display()
+        );
+            std::process::exit(1);
+        })
+        .expect("we deal with the error inside");
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
     let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
@@ -204,7 +220,7 @@ fn render_and_write_jobs<T>(
             cfg.sample_params.structures_po.len(),
         );
         let mut data_path = std::path::PathBuf::new();
-        data_path.push(&args.io.output_name);
+        data_path.push(&args.io.output_path);
         data_path.push("data.npz");
         let (data_slot_names, metadata_slot_names) =
             write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
@@ -247,7 +263,7 @@ fn render_and_write_jobs<T>(
     .expect("SimulationMetadata is serializable");
 
     let mut path = std::path::PathBuf::new();
-    path.push(args.io.output_name);
+    path.push(args.io.output_path);
     path.push("meta.json");
     info!("Writing {}", path.display());
     let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {

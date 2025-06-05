@@ -1,5 +1,6 @@
 use std::io::BufWriter;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
@@ -31,7 +32,7 @@ pub struct Opts {
         default_value = "out",
         help = "Name of the output to wite. If --chunk-size is specified, this is the output directory name. If not, '.npz' will be appended as a file name."
     )]
-    pub output_name: String,
+    pub output_path: PathBuf,
 
     #[arg(long, default_value_t = false, help = "Write to compressed numpy .npz")]
     pub compress: bool,
@@ -181,35 +182,35 @@ where
 ///
 /// * `opts`: IO options for writing the data
 pub fn prepare_output_directory(opts: &Opts) {
-    match std::fs::DirBuilder::new().create(&opts.output_name) {
+    match std::fs::DirBuilder::new().create(&opts.output_path) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
             info!(
                 "Removing '{out_dir}' according to user input...",
-                out_dir = &opts.output_name
+                out_dir = opts.output_path.display()
             );
-            std::fs::remove_dir_all(&opts.output_name).unwrap_or_else(|err| {
+            std::fs::remove_dir_all(&opts.output_path).unwrap_or_else(|err| {
                 error!(
                     "Could not remove output directory '{out_dir}': {err}",
-                    out_dir = &opts.output_name
+                    out_dir = opts.output_path.display()
                 );
                 std::process::exit(1);
             });
-            std::fs::create_dir(&opts.output_name).unwrap_or_else(|err| {
+            std::fs::create_dir(&opts.output_path).unwrap_or_else(|err| {
                 error!(
                     "Could not (re)create output directory '{out_dir}': {err}",
-                    out_dir = opts.output_name
+                    out_dir = opts.output_path.display()
                 );
                 std::process::exit(1);
             });
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !opts.overwrite => {
-            error!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", &opts.output_name);
+            error!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", opts.output_path.display());
             std::process::exit(1);
         }
         Err(e) => {
             error!(
                 "Could not create output directory {out_dir}: {e:?}",
-                out_dir = &opts.output_name
+                out_dir = opts.output_path.display()
             );
             std::process::exit(1);
         }
@@ -281,7 +282,7 @@ where
         let chunk: &[T] = &jobs[i..(i + chunk_size).min(l)];
 
         let mut chunk_path = std::path::PathBuf::new();
-        chunk_path.push(&io_opts.output_name);
+        chunk_path.push(&io_opts.output_path);
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
