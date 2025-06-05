@@ -28,7 +28,11 @@ An (ED-)XRD simulation tool implemented in rust.
 - [x] IO
     - [x] output pattern-wise metadata to target arrays in data files
     - [x] output configuration-metadata to `meta.json`
+    - [ ] specify output directory
+    - [ ] copy simulation input file to output directory
 - [ ] Add documentation for config YAML file
+- [ ] Add support for impurity peaks
+- [ ] EDXRD: add fluorescence peaks?
 - [ ] peak intensities
     - what about the computation of structure factors?
     - keep using pymatgen's version for now -> i really should understand what is going on there
