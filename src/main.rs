@@ -21,7 +21,7 @@ use yaxs::pattern::{render_jobs, Discretizer};
 
 #[derive(Parser)]
 #[command(
-    version,
+    version = env!("YAXS_VERSION"),
     about = "Simulate a dataset of XRD patterns from YAML config.",
     long_about = if cfg!(feature="cpu-only") { 
         "YaXS simulates XRD patterns from CIF

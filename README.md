@@ -53,6 +53,7 @@ Further information on the input file structure can be found [here](./inputfile.
 - [ ] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
 - [ ] feature: weights for the volume fractions of each phase or make them fixed
 - [ ] feature: Add support for impurity peaks
+- [x] feature: bake git commit hash into executable
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] peak intensities
     - what about the computation of structure factors?
