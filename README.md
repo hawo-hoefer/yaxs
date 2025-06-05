@@ -48,11 +48,12 @@ Further information on the input file structure can be found [here](./inputfile.
 - [x] IO
     - [x] output pattern-wise metadata to target arrays in data files
     - [x] output configuration-metadata to `meta.json`
-    - [ ] copy simulation input file to output directory
+    - [x] copy simulation input file to output directory
 - [x] Add documentation for config YAML file
 - [ ] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
 - [ ] feature: weights for the volume fractions of each phase or make them fixed
-- [ ] Add support for impurity peaks
+- [ ] feature: Add support for impurity peaks
+- [x] feature: bake git commit hash into executable
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] peak intensities
     - what about the computation of structure factors?
