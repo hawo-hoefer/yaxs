@@ -1,0 +1,50 @@
+kind: !EnergyDisperse
+    n_steps: 1024
+    # energy_range_kev: [10, 160]
+    energy_range_kev: [20, 160]
+    # energy_range_kev: [20, 50]
+    theta_deg: 3.965
+    beamline: 
+      storage_ring_electron_energy_gev: 6
+      storage_ring_current_a: 0.1
+      n_wiggler_magnets: 10
+      distance_from_device_m: 100
+
+sample_parameters:
+  mean_ds_nm: 100.0
+  eta: 0.5
+  sample_displacement_mu_m: 0.0
+  max_strain: 0.000
+  structure_permutations: 100
+  structures_po:
+    - path: ./cif/HfO2_polar_orthorombic_matproj.cif
+    - path: ./cif/HfO2_monoclinic_27313.cif
+    - path: ./cif/Ir_53813.cif
+      preferred_orientation: 
+        hkl: [1, 1, 1]
+        r: 0.9 
+    - path: ./cif/Al2O3_10425.cif
+      preferred_orientation: 
+        hkl: [0, 2, 4]
+        r: 0.3
+    # ./cif/SiO2_16331.cif
+    # ./cif/Si_51688.cif
+    # ./cif/Si_101017.cif
+    # ./cif/Cu_7954.cif
+    # ./cif/CaCO3_40107.cif
+    # ./cif/HfO2_pnma_173968.cif
+    # ./cif/HfO2_tetragonal_7146.cif
+    # ./cif/HfO2_pbca_143640.cif
+    # ./cif/Hf_53023.cif
+    # ./cif/IrO2_84577.cif
+    # ./cif/Fe3C_16593.cif
+    # ./cif/Fe_alpha_bcc_48382.cif
+    # ./cif/Fe_gamma_fcc_149921.cif
+    # ./cif/HfIr3_104212.cif
+    # ./cif/HfIr_185633.cif
+
+simulation_parameters:
+  normalize: true 
+  seed: 1234
+  n_patterns: 10000
+  abstol: 1e-2
