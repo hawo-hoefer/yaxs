@@ -1,11 +1,12 @@
 use itertools::Itertools;
+use log::error;
 use std::collections::HashMap;
 
 use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
-use crate::cfg::SampleParameters;
+use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::{Peak, Peaks};
@@ -39,6 +40,18 @@ impl std::fmt::Display for Strain {
 impl Strain {
     pub fn from_diag(a: f64, b: f64, c: f64) -> Self {
         Self([a, 0.0, b, 0.0, 0.0, c])
+    }
+
+    pub fn new_verified(data: [f64; 6]) -> Option<Self> {
+        // TODO: find a better way to do this. we may not actually need to try calculating the inverse
+
+        // strain is ok if we can take the inverse of the strain matrix
+        // use this to verify user input
+        let v = Self(data);
+        if v.to_mat3().try_inverse().is_some() {
+            return Some(v);
+        }
+        None
     }
 
     pub fn from_mat3(mat: &Matrix3<f64>) -> Self {
@@ -253,7 +266,7 @@ impl Structure {
         (r, Strain::from_mat3(&strain_tensor))
     }
 
-    pub fn apply_strain(&self, strain: Strain) -> Structure {
+    pub fn apply_strain(&self, strain: &Strain) -> Structure {
         let mut ret = self.clone();
 
         ret.lat.mat = ret.lat.mat * strain.to_mat3();
@@ -454,6 +467,8 @@ pub fn simulate_peaks_angle_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
     structure_po_configs: &[&Option<MarchDollaseCfg>],
+    structure_strain_configs: &[&Option<StrainCfg>],
+    structure_files: &[&String],
     two_theta_range: (f64, f64),
     wavelength_ams: f64,
     rng: &mut impl Rng,
@@ -466,12 +481,21 @@ pub fn simulate_peaks_angle_disperse(
     let mut all_strains = Vec::with_capacity(structures.len());
     let mut all_preferred_orientations = Vec::with_capacity(structures.len());
 
-    for (s, po_cfg) in structures.iter().zip(structure_po_configs) {
+    for (s, po_cfg, strain_cfg, file) in itertools::izip!(
+        structures.iter(),
+        structure_po_configs.iter(),
+        structure_strain_configs.iter(),
+        structure_files,
+    ) {
         let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
         let mut pos = Vec::with_capacity(sample_params.structure_permutations);
         for _ in 0..sample_params.structure_permutations {
-            let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
+            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, s, rng) else {
+                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.");
+                error!("Exiting...");
+                std::process::exit(1);
+            };
             let po = match po_cfg {
                 Some(cfg) => Some(cfg.generate(rng)),
                 None => None,
@@ -504,6 +528,8 @@ pub fn simulate_peaks_energy_disperse(
     sample_params: &SampleParameters,
     structures: &[Structure],
     structure_po_configs: &[&Option<MarchDollaseCfg>],
+    structure_strain_configs: &[&Option<StrainCfg>],
+    structure_files: &[&String],
     energy_kev_range: (f64, f64),
     theta_deg: f64,
     rng: &mut impl Rng,
@@ -516,13 +542,23 @@ pub fn simulate_peaks_energy_disperse(
     let mut all_strains = Vec::with_capacity(structures.len());
     let mut all_preferred_orientations = Vec::with_capacity(structures.len());
 
-    for (s, po_cfg) in structures.iter().zip(structure_po_configs) {
+    for (i, (s, po_cfg, strain_cfg)) in itertools::izip!(
+        structures.iter(),
+        structure_po_configs.iter(),
+        structure_strain_configs.iter(),
+    )
+    .enumerate()
+    {
         let mut permuted_phase_peaks = Vec::with_capacity(sample_params.structure_permutations);
         let mut strains = Vec::with_capacity(sample_params.structure_permutations);
         let mut pos = Vec::with_capacity(sample_params.structure_permutations);
 
         for _ in 0..sample_params.structure_permutations {
-            let (perm_s, strain) = s.permute(sample_params.max_strain, rng);
+            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, s, rng) else {
+                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=structure_files[i]);
+                error!("Exiting...");
+                std::process::exit(1);
+            };
             let po = match po_cfg {
                 Some(cfg) => Some(cfg.generate(rng)),
                 None => None,

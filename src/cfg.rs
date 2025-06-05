@@ -120,19 +120,59 @@ pub struct SimulationParameters {
     pub abstol: f32,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[serde(untagged)]
+pub enum StrainCfg {
+    Maximum(f64),
+    ParameterizedOrtho([Parameter<f64>; 3]),
+    ParameterizedFull([Parameter<f64>; 6]),
+}
+
+pub fn apply_strain_cfg(
+    cfg: &Option<StrainCfg>,
+    s: &Structure,
+    rng: &mut impl Rng,
+) -> Option<(Structure, Strain)> {
+    use StrainCfg::*;
+    match cfg {
+        Some(Maximum(max_strain)) => Some(s.permute(*max_strain, rng)),
+        Some(ParameterizedOrtho(params)) => {
+            let strain = Strain::from_diag(
+                params[0].generate(rng),
+                params[1].generate(rng),
+                params[2].generate(rng),
+            );
+            Some((s.apply_strain(&strain), strain))
+        }
+        Some(ParameterizedFull(params)) => {
+            let strain = Strain::new_verified([
+                params[0].generate(rng),
+                params[1].generate(rng),
+                params[2].generate(rng),
+                params[3].generate(rng),
+                params[4].generate(rng),
+                params[5].generate(rng),
+            ])?;
+            Some((s.apply_strain(&strain), strain))
+        }
+        None => Some((s.clone(), Strain::none())),
+    }
+}
+
 #[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
     pub preferred_orientation: Option<MarchDollaseCfg>,
+    pub strain: Option<StrainCfg>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures_po: Vec<StructureDef>,
     pub mean_ds_nm: Parameter<f64>,
     pub sample_displacement_mu_m: Parameter<f64>,
-    pub max_strain: f64,
 
     pub eta: Parameter<f64>,
     pub structure_permutations: usize,
