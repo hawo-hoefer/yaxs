@@ -1,14 +1,14 @@
 use itertools::Itertools;
 use log::error;
 use ordered_float::NotNan;
-use rand::distr::uniform::{SampleUniform, UniformSampler};
+use rand::distr::uniform::SampleUniform;
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
-use crate::pattern::edxrd::{DiscretizeEnergyDispersive, EDXRDMeta};
+use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
@@ -108,6 +108,7 @@ pub struct EnergyDisperse {
     pub n_steps: usize,
     pub energy_range_kev: (f64, f64),
     pub theta_deg: f64,
+    pub beamline: Beamline,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -277,6 +278,7 @@ impl JobCfg<'_> {
             all_simulated_peaks,
             all_strains,
             all_preferred_orientations,
+            beamline: &energy_disperse.beamline,
             indices: (0..self.structures.len())
                 .map(|_| rng.random_range(0..*structure_permutations))
                 .collect_vec(),

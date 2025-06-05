@@ -6,6 +6,12 @@ pub const H_EV_S: f64 = 4.135_667_696e-15f64;
 /// speed of light in m / s
 pub const C_M_S: f64 = 299_792_485.0f64;
 
+/// electron mass in kg
+pub const ELECTRON_MASS_KG: f64 = 9.10938188e-31;
+
+/// electron mass in kg
+pub const EV_TO_JOULE: f64 = 1.60217646e-19;
+
 /// vacuum permeability in N A^-2
 pub const MU_0_N_A2: f64 = 1.25663706127e-6;
 

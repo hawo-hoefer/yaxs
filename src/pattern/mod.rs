@@ -10,6 +10,7 @@ use crate::math::{
 };
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
+use self::edxrd::Beamline;
 
 pub mod adxrd;
 pub mod edxrd;
@@ -152,17 +153,15 @@ impl Peak {
     /// * `mean_ds_nm`: mean domain size in nanometers
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
     /// emission line's relative intensity)
-    pub fn get_edxrd_render_params<F>(
+    pub fn get_edxrd_render_params(
         &self,
         theta_rad: f64,
         f_lorentz: f64,
         mean_ds_nm: f64,
         weight: f64,
-        beamline_intensity: F,
+        beamline: &Beamline,
     ) -> (f32, f32, f32)
-    where
-        F: Fn(f64) -> f64,
-    {
+where {
         // here, we apply intensity corrections to each peak, and
         // convert positions from d_hkl in Amstrong to energy in keV
         let hc = H_EV_S * C_M_S * 1e7;
@@ -177,10 +176,11 @@ impl Peak {
         // ev * e-10
         // g_hkl in ams = m^-10
         let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+        let beamline_intensity = beamline.get_intensity(e_kev);
         let peak_weight = self.i_hkl
             * f_lorentz
             * e_kev_to_lambda_ams(e_kev).powi(3)
-            * beamline_intensity(e_kev)
+            * beamline_intensity
             * weight;
 
         let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, mean_ds_nm);

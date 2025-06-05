@@ -1,15 +1,189 @@
 use itertools::Itertools;
 use ordered_float::NotNan;
 use rand::Rng;
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::cfg::{EnergyDisperse, JobCfg, SampleParameters, SimulationParameters};
 use crate::io::PatternMeta;
+use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::pattern::lorentz_factor;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
-use super::{Discretizer, PeakRenderParams, Peaks};
+use super::{Discretizer, Peak, PeakRenderParams, Peaks};
+
+/// Wiggler Beamline Parameters
+///
+/// * `e_crit_kev`: critical electron energy in keV
+/// * `storage_ring_electron_energy_gev`: storage ring electron energy in GeV
+/// * `storage_ring_current_a`: storage ring current in ampere
+/// * `n_wiggler_magnets`: number of wiggler magnets
+/// * `distance_from_device_m`: distance of sample from device in m
+#[derive(Serialize, Debug, Clone)]
+pub struct Beamline {
+    #[serde(skip_serializing)]
+    e_crit_kev: f64,
+    #[serde(skip_serializing)]
+    electron_lorentz_factor: f64,
+
+    storage_ring_electron_energy_gev: f64,
+    storage_ring_current_a: f64,
+    n_wiggler_magnets: f64,
+    distance_from_device_m: f64,
+}
+
+impl<'de> Deserialize<'de> for Beamline {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            StorageRingElectronEnergyGev,
+            StorageRingCurrentA,
+            NWigglerMagnets,
+            DistanceFromDeviceM,
+        }
+
+        struct BeamlineVisitor;
+        impl<'de> Visitor<'de> for BeamlineVisitor {
+            type Value = Beamline;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct Beamline")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Beamline, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                use serde::de;
+                let mut storage_ring_electron_energy_gev = None;
+                let mut storage_ring_current_a = None;
+                let mut n_wiggler_magnets = None;
+                let mut distance_from_device_m = None;
+
+                while let Some(key) = map.next_key()? {
+                    use Field::*;
+                    match key {
+                        StorageRingElectronEnergyGev => {
+                            if storage_ring_electron_energy_gev.is_some() {
+                                return Err(de::Error::duplicate_field(
+                                    "storage_ring_electron_energy_gev",
+                                ));
+                            }
+                            storage_ring_electron_energy_gev = Some(map.next_value()?);
+                        }
+                        StorageRingCurrentA => {
+                            if storage_ring_current_a.is_some() {
+                                return Err(de::Error::duplicate_field("storage_ring_current_a"));
+                            }
+                            storage_ring_current_a = Some(map.next_value()?);
+                        }
+                        NWigglerMagnets => {
+                            if n_wiggler_magnets.is_some() {
+                                return Err(de::Error::duplicate_field("n_wiggler_magnets"));
+                            }
+                            n_wiggler_magnets = Some(map.next_value()?);
+                        }
+                        DistanceFromDeviceM => {
+                            if distance_from_device_m.is_some() {
+                                return Err(de::Error::duplicate_field("distance_from_device_m"));
+                            }
+                            distance_from_device_m = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let storage_ring_electron_energy_gev = storage_ring_electron_energy_gev
+                    .ok_or_else(|| de::Error::missing_field("storage_ring_electron_energy_gev"))?;
+                let storage_ring_current_a = storage_ring_current_a
+                    .ok_or_else(|| de::Error::missing_field("storage_ring_current_a"))?;
+                let n_wiggler_magnets = n_wiggler_magnets
+                    .ok_or_else(|| de::Error::missing_field("n_wiggler_magnets"))?;
+                let distance_from_device_m = distance_from_device_m
+                    .ok_or_else(|| de::Error::missing_field("distance_from_device_m"))?;
+
+                Ok(Beamline::new(
+                    storage_ring_electron_energy_gev,
+                    storage_ring_current_a,
+                    n_wiggler_magnets,
+                    distance_from_device_m,
+                ))
+            }
+        }
+
+        const FIELDS: &[&str] = &[
+            "storage_ring_electron_energy_gev",
+            "storage_ring_current_a",
+            "n_wiggler_magnets",
+            "distance_from_device_m",
+        ];
+        deserializer.deserialize_struct("Beamline", FIELDS, BeamlineVisitor)
+    }
+}
+
+impl Beamline {
+    /// Compute relativistic lorentz factor of an electron with given energy.
+    ///
+    /// The lorentz factor is defined as:
+    ///     gamma = 1 / sqrt(1 - (u^2) / c^2).
+    ///
+    /// Alternatively, from kinetic energy:
+    ///     gamma = e_kin / (c * m_e).
+    ///
+    /// * `e_gev`: electron kinetic energy in giga electron volts
+    fn electron_lorentz_factor(e_gev: f64) -> f64 {
+        e_gev * 1e9 * EV_TO_JOULE / (C_M_S.powi(2) * ELECTRON_MASS_KG)
+    }
+
+    /// Compute number of photons at energy e_kev for beamline
+    ///
+    /// Taken from [here](http://pirate.shu.edu/~sahineme/synchrotron/Synchrotron%20Radiation%20Introduction.pdf)
+    /// page 17, section 1.7. We translate photon fluxe per solid angle to area using the opening
+    /// angle and circular area approximation. This seems to be good enough for now, but we may
+    /// need to change this in the future.
+    ///
+    /// * `e_kev`: photon energy in kev
+    pub fn get_intensity(&self, e_kev: f64) -> f64 {
+        use crate::math::acm757::synch_2;
+        use std::f64::consts::PI;
+        let y = e_kev / self.e_crit_kev;
+        let photon_flux_per_solid_angle = 1.327e13
+            * self.storage_ring_electron_energy_gev.powi(2)
+            * self.storage_ring_current_a
+            * synch_2(y).expect("energy is larger than 0"); // TODO: is this ok?
+
+        let opening_angle = 1.0 / self.electron_lorentz_factor;
+        let r = self.distance_from_device_m * opening_angle.tan();
+        let a = PI * r.powi(2) * 1e6; // Area in mm^2
+
+        photon_flux_per_solid_angle / a * self.n_wiggler_magnets
+    }
+
+    fn new(
+        storage_ring_electron_energy_gev: f64,
+        storage_ring_current_a: f64,
+        n_wiggler_magnets: f64,
+        distance_from_device_m: f64,
+    ) -> Self {
+        let electron_lorentz_factor =
+            Self::electron_lorentz_factor(storage_ring_electron_energy_gev);
+        let e_crit_kev = 3.0 * H_EV_S * C_M_S * electron_lorentz_factor * 1e3;
+
+        Self {
+            e_crit_kev,
+            electron_lorentz_factor,
+            storage_ring_electron_energy_gev,
+            storage_ring_current_a,
+            n_wiggler_magnets,
+            distance_from_device_m,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EDXRDMeta {
@@ -25,6 +199,7 @@ pub struct DiscretizeEnergyDispersive<'a> {
     pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
     pub all_strains: &'a Vec<Vec<Strain>>,
     pub all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    pub beamline: &'a Beamline,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Vec<usize>,
     pub normalize: bool,
@@ -33,10 +208,6 @@ pub struct DiscretizeEnergyDispersive<'a> {
 
 impl Discretizer for DiscretizeEnergyDispersive<'_> {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
-        fn beamline_intensity(e_kev: f64) -> f64 {
-            10.0f64.powf(12.30 - e_kev * 0.7 / 100.0)
-            // 1.0
-        }
         let f_lorentz = lorentz_factor(self.meta.theta_rad);
 
         let EDXRDMeta {
@@ -53,13 +224,13 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             mean_ds_nm
         )
         .map(move |(phase_peaks, idx, vf, phase_mean_ds_nm)| {
-            phase_peaks[idx].iter().map(move |peak| {
+            phase_peaks[idx].iter().map(move |peak: &Peak| {
                 let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
                     *theta_rad,
                     f_lorentz,
                     *phase_mean_ds_nm,
                     *vf,
-                    beamline_intensity,
+                    &self.beamline,
                 );
                 PeakRenderParams {
                     pos: e_hkl_kev,

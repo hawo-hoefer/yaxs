@@ -1224,6 +1224,7 @@ dependencies = [
  "nalgebra",
  "ndarray",
  "ndarray-npy",
+ "num-complex",
  "ordered-float",
  "rand",
  "serde",
