@@ -15,7 +15,7 @@ If you want to install the program, use
 $ cargo install --path /path/to/yaxs/directory
 ```
 
-Then, use 
+Then, use
 ```bash
 $ /path/to/yaxs <path/to/configuration.yml>
 ```
@@ -42,15 +42,16 @@ Further information on the input file structure can be found [here](./inputfile.
     - [ ] Air Scattering
     - [x] Preferred Orientation
 - [x] rendering using cuda backend
-    - [x] peak positions 
+    - [x] peak positions
     - [x] backgrounds
     - [x] normalization
 - [x] IO
     - [x] output pattern-wise metadata to target arrays in data files
     - [x] output configuration-metadata to `meta.json`
     - [x] copy simulation input file to output directory
+    - [ ] custom parameter deserialization with range checking
 - [x] Add documentation for config YAML file
-- [ ] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
+- [x] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
 - [ ] feature: weights for the volume fractions of each phase or make them fixed
 - [ ] feature: Add support for impurity peaks
 - [x] feature: bake git commit hash into executable
@@ -62,7 +63,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - right now, the cpu backend is single threaded, which is really slow
     - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
     - therefore, this is low priority
-- [ ] Implement support for noise 
+- [ ] Implement support for noise
     - Usually noise is added during augmentation anyway, so we may not need this
     - therefore, low priority
 - [ ] Debye-Waller correction

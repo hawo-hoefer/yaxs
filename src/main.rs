@@ -23,7 +23,7 @@ use yaxs::pattern::{render_jobs, Discretizer};
 #[command(
     version = env!("YAXS_VERSION"),
     about = "Simulate a dataset of XRD patterns from YAML config.",
-    long_about = if cfg!(feature="cpu-only") { 
+    long_about = if cfg!(feature="cpu-only") {
         "YaXS simulates XRD patterns from CIF
 CPU-only build: This may be much slower than GPU with support."
     } else {
@@ -88,10 +88,13 @@ fn main() {
 
     let mut structures = Vec::new();
     let mut pref_o = Vec::new();
+    let mut strain_cfgs = Vec::new();
+    let mut structure_paths = Vec::new();
 
     for StructureDef {
         path,
         preferred_orientation: po,
+        strain,
     } in cfg.sample_parameters.structures_po.iter()
     {
         let mut reader = BufReader::new(
@@ -105,7 +108,10 @@ fn main() {
         let mut cif = String::new();
         let _ = reader.read_to_string(&mut cif).unwrap();
         let mut p = CifParser::new(&cif);
+
+        structure_paths.push(path);
         structures.push(Structure::from(&p.parse()));
+        strain_cfgs.push(strain);
         pref_o.push(po);
     }
 
@@ -130,6 +136,8 @@ fn main() {
                 &cfg.sample_parameters,
                 &structures,
                 &pref_o,
+                &strain_cfgs,
+                &structure_paths,
                 two_theta_range,
                 wavelength_ams,
                 &mut rng,
@@ -139,6 +147,8 @@ fn main() {
             &cfg.sample_parameters,
             &structures,
             &pref_o,
+            &strain_cfgs,
+            &structure_paths,
             energy_disperse.energy_range_kev,
             energy_disperse.theta_deg,
             &mut rng,
