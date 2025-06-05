@@ -229,6 +229,7 @@ impl<'a> DiscretizeAngleDisperse<'a> {
         }
     }
 }
+
 pub fn generate_adxrd_jobs<'a>(
     angle_disperse: &'a AngleDisperse,
     sample_params: &'a SampleParameters,

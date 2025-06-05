@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use log::error;
 use ordered_float::NotNan;
+use rand::distr::uniform::{SampleUniform, UniformSampler};
 use rand::distr::{Distribution, Uniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -12,42 +13,65 @@ use crate::pattern::Peaks;
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Parameter<T> {
+    Fixed(T),
+    Range(T, T),
+    // Choice(Vec<T>),
+    // ChoiceWithWeights(Vec<T>, Vec<f32>)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BackgroundSpec {
     None,
     Chebyshev {
-        coef_ranges: Vec<(f32, f32)>,
-        scale_range: (f32, f32),
+        coefs: Vec<Parameter<f32>>,
+        scale: Parameter<f32>,
     },
     Exponential {
-        slope_range: (f32, f32),
-        scale_range: (f32, f32),
+        slope: Parameter<f32>,
+        scale: Parameter<f32>,
     },
+}
+
+impl<T> Parameter<T>
+where
+    T: SampleUniform + PartialOrd + Copy,
+{
+    pub fn generate(&self, rng: &mut impl Rng) -> T {
+        match self {
+            Parameter::Fixed(v) => *v,
+            Parameter::Range(lo, hi) => rng.random_range(*lo..=*hi),
+        }
+    }
+
+    pub fn sampler(&self) -> Result<Uniform<T>, T> {
+        match self {
+            Parameter::Fixed(v) => Err(*v),
+            Parameter::Range(lo, hi) => Ok(Uniform::try_from(*lo..=*hi).unwrap_or_else(|err| {
+                error!("Could not sample mean domain size: {err}");
+                std::process::exit(1);
+            })),
+        }
+    }
 }
 
 impl BackgroundSpec {
     fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
             BackgroundSpec::None => Background::None,
-            BackgroundSpec::Chebyshev {
-                ref coef_ranges,
-                scale_range,
-            } => {
-                let mut cheby_coefs = Vec::with_capacity(coef_ranges.len());
-                for (lo, hi) in coef_ranges.iter() {
-                    cheby_coefs.push(rng.random_range(*lo..=*hi));
+            BackgroundSpec::Chebyshev { ref coefs, scale } => {
+                let mut cheby_coefs = Vec::with_capacity(coefs.len());
+                for param in coefs.iter() {
+                    cheby_coefs.push(param.generate(rng));
                 }
-                Background::chebyshev_polynomial(
-                    &cheby_coefs,
-                    rng.random_range(scale_range.0..=scale_range.1),
-                )
+                let scale = scale.generate(rng);
+                Background::chebyshev_polynomial(&cheby_coefs, scale)
             }
-            BackgroundSpec::Exponential {
-                slope_range: (lo, hi),
-                scale_range: (scale_lo, scale_hi),
-            } => Background::Exponential {
-                slope: rng.random_range(*lo..=*hi),
-                scale: rng.random_range(*scale_lo..=*scale_hi),
+            BackgroundSpec::Exponential { slope, scale } => Background::Exponential {
+                slope: slope.generate(rng),
+                scale: scale.generate(rng),
             },
         }
     }
@@ -55,9 +79,9 @@ impl BackgroundSpec {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Caglioti {
-    pub u_range: (f64, f64),
-    pub v_range: (f64, f64),
-    pub w_range: (f64, f64),
+    pub u: Parameter<f64>,
+    pub v: Parameter<f64>,
+    pub w: Parameter<f64>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -79,6 +103,13 @@ pub struct AngleDisperse {
     pub background: BackgroundSpec,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnergyDisperse {
+    pub n_steps: usize,
+    pub energy_range_kev: (f64, f64),
+    pub theta_deg: f64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
@@ -98,11 +129,11 @@ pub struct StructureDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleParameters {
     pub structures_po: Vec<StructureDef>,
-    pub mean_ds_range_nm: (f64, f64),
-    pub sample_displacement_range_mu_m: (f64, f64),
+    pub mean_ds_nm: Parameter<f64>,
+    pub sample_displacement_mu_m: Parameter<f64>,
     pub max_strain: f64,
 
-    pub eta_range: (f64, f64),
+    pub eta: Parameter<f64>,
     pub structure_permutations: usize,
 }
 
@@ -118,13 +149,6 @@ pub struct Config {
     pub kind: SimulationKind,
     pub sample_parameters: SampleParameters,
     pub simulation_parameters: SimulationParameters,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EnergyDisperse {
-    pub n_steps: usize,
-    pub energy_range_kev: (f64, f64),
-    pub theta_deg: f64,
 }
 
 pub struct JobCfg<'a> {
@@ -144,12 +168,7 @@ impl JobCfg<'_> {
         mut rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
-            caglioti:
-                Caglioti {
-                    u_range,
-                    v_range,
-                    w_range,
-                },
+            caglioti: Caglioti { u, v, w },
             // sample_displacement_range_mu_m,
             background,
             emission_lines,
@@ -157,27 +176,26 @@ impl JobCfg<'_> {
         } = angle_disperse;
 
         let SampleParameters {
-            mean_ds_range_nm,
-            eta_range,
+            mean_ds_nm,
+            eta,
             structure_permutations,
             ..
         } = &self.sample_params;
 
-        let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let ds_sampler =
-            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            });
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
-        mean_ds_nm.extend(
-            ds_sampler
-                .sample_iter(&mut rng)
-                .take(concentration_buf.len()),
-        );
-        let u = rng.random_range(u_range.0..=u_range.1);
-        let v = rng.random_range(v_range.0..=v_range.1);
-        let w = rng.random_range(w_range.0..=w_range.1);
+        let n_phases = all_simulated_peaks.len();
+
+        let eta = eta.generate(rng);
+        let ds_sampler = mean_ds_nm.sampler();
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
+        match ds_sampler {
+            Ok(sampler) => {
+                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
+            }
+            Err(v) => mean_ds_nm.resize(n_phases, v),
+        }
+        let u = u.generate(rng);
+        let v = v.generate(rng);
+        let w = w.generate(rng);
         let background = background.generate_bkg(rng);
 
         concentration_buf[0] = NotNan::try_from(0.0).unwrap();
@@ -226,24 +244,23 @@ impl JobCfg<'_> {
         mut rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let SampleParameters {
-            mean_ds_range_nm,
-            eta_range,
+            mean_ds_nm,
+            eta,
             structure_permutations,
             ..
         } = &self.sample_params;
 
-        let eta = rng.random_range(eta_range.0..=eta_range.1);
-        let ds_sampler =
-            Uniform::try_from(mean_ds_range_nm.0..=mean_ds_range_nm.1).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            });
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(concentration_buf.len());
-        mean_ds_nm.extend(
-            ds_sampler
-                .sample_iter(&mut rng)
-                .take(concentration_buf.len()),
-        );
+        let n_phases = all_simulated_peaks.len();
+
+        let eta = eta.generate(rng);
+        let ds_sampler = mean_ds_nm.sampler();
+        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
+        match ds_sampler {
+            Ok(sampler) => {
+                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
+            }
+            Err(v) => mean_ds_nm.resize(n_phases, v),
+        }
 
         concentration_buf[0] = NotNan::try_from(0.0).unwrap();
         concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
