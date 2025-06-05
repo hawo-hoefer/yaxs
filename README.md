@@ -2,6 +2,26 @@
 
 An (ED-)XRD simulation tool implemented in rust.
 
+## Quickstart
+To use this simulation tool, just clone this repository and build the project.
+```bash
+$ git clone gitlab.kit.edu/hawo.hoefer/yaxs.git
+$ cd yaxs
+$ cargo build --release
+```
+
+If you want to install the program, use
+```bash
+$ cargo install --path /path/to/yaxs/directory
+```
+
+Then, use 
+```bash
+$ /path/to/yaxs <path/to/configuration.yml>
+```
+to simulate a dataset from the input `yaml`-file describing the simulation parameters.
+Further information on the input file structure can be found [here](./inputfile.md)
+
 ## Roadmap
 - [x] Parse Structure from CIF
     - [x] implement parsing of CIF to HashMap and Vector of Tables
@@ -14,7 +34,7 @@ An (ED-)XRD simulation tool implemented in rust.
     - [x] Scherrer Broadening
     - [x] Reading Config from yaml
     - [x] writing to numpy `.npz`
-    - [ ] background height
+    - [x] background height
 - [x] EDXRD Simulation
 - [x] Do we need to save peak info as d-spacing? then, we can use the same code for AD- and EDXRD
 - [x] rendering info is computed only at render time then, less conversions needed -> better numerical accuracy?
@@ -28,9 +48,10 @@ An (ED-)XRD simulation tool implemented in rust.
 - [x] IO
     - [x] output pattern-wise metadata to target arrays in data files
     - [x] output configuration-metadata to `meta.json`
-    - [ ] specify output directory
     - [ ] copy simulation input file to output directory
-- [ ] Add documentation for config YAML file
+- [x] Add documentation for config YAML file
+- [ ] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
+- [ ] feature: weights for the volume fractions of each phase or make them fixed
 - [ ] Add support for impurity peaks
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] peak intensities
