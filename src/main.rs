@@ -12,7 +12,7 @@ use yaxs::structure::{simulate_peaks_angle_disperse, simulate_peaks_energy_dispe
 
 use log::{error, info};
 
-use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef, VolumeFraction};
+use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,

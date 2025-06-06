@@ -1,11 +1,10 @@
 use super::{render_peak, Discretizer, PeakRenderParams, Peaks, VFGenerator};
 use crate::background::Background;
-use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters, VolumeFraction};
+use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};
 use crate::io::PatternMeta;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 use itertools::Itertools;
-use ordered_float::NotNan;
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]

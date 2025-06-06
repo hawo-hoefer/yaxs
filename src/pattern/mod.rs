@@ -1,7 +1,5 @@
 use nalgebra::Vector3;
 use ndarray::Array2;
-use ordered_float::NotNan;
-use rand::distr::uniform::UniformSampler;
 use rand::Rng;
 
 use crate::background::Background;

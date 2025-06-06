@@ -1,11 +1,7 @@
-use std::fmt::Display;
-use std::marker::PhantomData;
-
 use log::error;
 use rand::distr::uniform::SampleUniform;
 use rand::distr::Uniform;
 use rand::Rng;
-use serde::de::{VariantAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -86,17 +82,18 @@ mod test {
 
     #[test]
     fn deserialize_parameter_list_bounds_nok() {
-        let err = serde_yaml::from_str::<Vec<Parameter<f64>>>("[1.0, [1.2, 0.8]]")
+        let _ = serde_yaml::from_str::<Vec<Parameter<f64>>>("[1.0, [1.2, 0.8]]")
             .expect_err("invalid range");
     }
 
     #[test]
     fn deserialize_parameter_struct_bounds_nok() {
         #[derive(Deserialize, Debug)]
+        #[allow(unused)]
         struct DummyCfg {
             data: f64,
             coefs: [Parameter<f64>; 3],
-        };
+        }
 
         let err = serde_yaml::from_str::<DummyCfg>(
             "data: 1.2
@@ -111,10 +108,11 @@ coefs: [0.1, [1.2, 0.8], 0.8]
     fn deserialize_parameter_enum_bounds_nok() {
         #[derive(Deserialize, Debug)]
         #[serde(untagged)]
+        #[allow(unused)]
         enum DummyCfg {
             V0(f64),
             V1([Parameter<f64>; 2]),
-        };
+        }
 
         let err = serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
         println!("{err}");

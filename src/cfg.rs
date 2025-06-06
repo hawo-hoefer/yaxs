@@ -1,8 +1,5 @@
 use itertools::Itertools;
-use log::error;
-use ordered_float::NotNan;
-use rand::distr::uniform::SampleUniform;
-use rand::distr::{Distribution, Uniform};
+use rand::distr::Distribution;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
