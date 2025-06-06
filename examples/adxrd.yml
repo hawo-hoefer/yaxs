@@ -44,13 +44,13 @@ sample_parameters:
   structures:
     - path: ./cif/CuO_16025.cif
       strain: !Maximum 0.005
-      volume_fraction: 0.0
+      volume_fraction: 0.1
     - path: ./cif/Fe3O4_183969.cif
       strain: !Maximum 0.005
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
-      volume_fraction: 0.9
+      volume_fraction: 0.6
     - path: ./cif/Fe3O4_183969.cif
       strain: !Maximum 0.005
 

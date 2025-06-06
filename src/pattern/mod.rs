@@ -38,6 +38,12 @@ impl<'a> VFGenerator<'a> {
             warn!("Fraction sum ({fraction_sum:.3}) is close to 1. There are {n_free} non-fixed volume fractions which are strongly constrained because of this.");
         }
 
+        if n_free == 0 && fraction_sum < 1.0 - 1e-5 {
+            // no free parameters and fraction sum smaller than 1
+            error!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum);
+            return Err(());
+        }
+
         Ok(Self {
             n_free,
             fraction_sum,
@@ -389,11 +395,7 @@ mod test {
 
     #[test]
     fn vf_generation_no_degrees_of_freedom() {
-        let vfs = vec![
-            Some(VolumeFraction(0.2)),
-            Some(VolumeFraction(0.1)),
-            None,
-        ];
+        let vfs = vec![Some(VolumeFraction(0.2)), Some(VolumeFraction(0.1)), None];
 
         let n = vfs.len();
         let gen = VFGenerator::try_new(&vfs).unwrap();
