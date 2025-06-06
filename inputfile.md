@@ -29,6 +29,7 @@ are fixed for all simulations, while parameters specified as ranges will be samp
 | background parameters     | both          |
 | simulation parameters     | value         |
 | strain                    | (see below)   |
+| volume factions           | value         |
 
 ## 1. Simulation Kind
 This section contains the type of the simulation (EnergyDisperse or AngleDisperse)
@@ -94,17 +95,23 @@ sample_parameters:
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
   sample_displacement_mu_m: 0.0                         # sample displacement
-  max_strain: 0.000                                     # maximum unit cell strain
   structure_permutations: 100                           # number of structure permutations to simulate
-  structures_po:                                        # phases and their preferred orientation
+  structures:                                           # phases and their preferred orientation
                                                         # configuration using march-dollase model
     - path: phase-1.cif                                 # path to phase's cif, no preferred orientation here
     - path: phase-2-with-preferred-orientation.cif
       preferred_orientation:                            # march-dollase parameters
         hkl: [1, 1, 1]                                  # axis of preferred orientation
         r: 0.9                                          # march parameter
-      strain: 0.01
+      strain: 0.01                                      # optional strain specification
+      volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
+    - path: phase-3.cif
 ```
+
+### Structure Definition
+The `structures` field specifies a list of phases and their modifications. 
+Preferred orientation and strain can be specified using fixed or range parameters,
+and each phase's volume fraction may be fixed to specified values.
 
 ### Specifying Strain
 Strain is specified for each structure separately, and may be omitted if no strain should be applied to the structures before simulation.

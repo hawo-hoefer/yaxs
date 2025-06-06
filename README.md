@@ -52,7 +52,8 @@ Further information on the input file structure can be found [here](./inputfile.
     - [x] custom parameter deserialization with range checking
 - [x] Add documentation for config YAML file
 - [x] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
-- [ ] feature: weights for the volume fractions of each phase or make them fixed
+- [x] feature: weights for the volume fractions of each phase or make them fixed
+    - volume fractions can be fixed optionally 
 - [ ] feature: Add support for impurity peaks
 - [x] feature: bake git commit hash into executable
 - [ ] EDXRD: add fluorescence peaks?
