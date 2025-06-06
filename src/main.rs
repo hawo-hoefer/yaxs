@@ -97,7 +97,7 @@ fn main() {
         preferred_orientation: po,
         strain,
         volume_fraction,
-    } in cfg.sample_parameters.structures_po.iter()
+    } in cfg.sample_parameters.structures.iter()
     {
         let mut reader = BufReader::new(
             std::fs::File::open(path)
@@ -228,7 +228,7 @@ fn render_and_write_jobs<T>(
             &jobs,
             &xs,
             cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures_po.len(),
+            cfg.sample_params.structures.len(),
             &args.io,
         )
     } else {
@@ -236,7 +236,7 @@ fn render_and_write_jobs<T>(
             &jobs,
             &xs,
             cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures_po.len(),
+            cfg.sample_params.structures.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
@@ -265,15 +265,15 @@ fn render_and_write_jobs<T>(
         extra: io::Extra {
             encoding: cfg
                 .sample_params
-                .structures_po
+                .structures
                 .iter()
                 .map(|StructureDef { path, .. }| path.to_string())
                 .collect_vec(),
-            max_phases: cfg.sample_params.structures_po.len(),
+            max_phases: cfg.sample_params.structures.len(),
             cfg: kind.clone(),
             preferred_orientation_hkl: cfg
                 .sample_params
-                .structures_po
+                .structures
                 .iter()
                 .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
                 .collect_vec(),

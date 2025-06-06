@@ -126,6 +126,7 @@ pub fn apply_strain_cfg(
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
+#[serde(transparent)]
 pub struct VolumeFraction(pub f64);
 
 impl<'de> Deserialize<'de> for VolumeFraction {
@@ -151,14 +152,13 @@ pub struct StructureDef {
     pub path: String,
     pub preferred_orientation: Option<MarchDollaseCfg>,
     pub strain: Option<StrainCfg>,
-    #[serde(flatten)]
     pub volume_fraction: Option<VolumeFraction>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
-    pub structures_po: Vec<StructureDef>,
+    pub structures: Vec<StructureDef>,
     pub mean_ds_nm: Parameter<f64>,
     pub sample_displacement_mu_m: Parameter<f64>,
 

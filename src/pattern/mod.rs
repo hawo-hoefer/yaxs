@@ -1,3 +1,4 @@
+use log::{error, warn};
 use nalgebra::Vector3;
 use ndarray::Array2;
 use rand::Rng;
@@ -29,7 +30,12 @@ impl<'a> VFGenerator<'a> {
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
 
         if fraction_sum > 1.0 {
+            error!("Could not create volume fraction generator. Specified fractions need to sum to less than or equal to 1.0. Got sum: {}", fraction_sum);
             return Err(());
+        }
+
+        if fraction_sum > 0.99 && n_free > 0 {
+            warn!("Fraction sum ({fraction_sum:.3}) is close to 1. There are {n_free} non-fixed volume fractions which are strongly constrained because of this.");
         }
 
         Ok(Self {
