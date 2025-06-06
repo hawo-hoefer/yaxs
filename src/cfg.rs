@@ -7,20 +7,12 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
+use crate::parameter::Parameter;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Parameter<T> {
-    Fixed(T),
-    Range(T, T),
-    // Choice(Vec<T>),
-    // ChoiceWithWeights(Vec<T>, Vec<f32>)
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BackgroundSpec {
@@ -33,28 +25,6 @@ pub enum BackgroundSpec {
         slope: Parameter<f32>,
         scale: Parameter<f32>,
     },
-}
-
-impl<T> Parameter<T>
-where
-    T: SampleUniform + PartialOrd + Copy,
-{
-    pub fn generate(&self, rng: &mut impl Rng) -> T {
-        match self {
-            Parameter::Fixed(v) => *v,
-            Parameter::Range(lo, hi) => rng.random_range(*lo..=*hi),
-        }
-    }
-
-    pub fn sampler(&self) -> Result<Uniform<T>, T> {
-        match self {
-            Parameter::Fixed(v) => Err(*v),
-            Parameter::Range(lo, hi) => Ok(Uniform::try_from(*lo..=*hi).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            })),
-        }
-    }
 }
 
 impl BackgroundSpec {
@@ -121,11 +91,10 @@ pub struct SimulationParameters {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-#[serde(untagged)]
 pub enum StrainCfg {
     Maximum(f64),
-    ParameterizedOrtho([Parameter<f64>; 3]),
-    ParameterizedFull([Parameter<f64>; 6]),
+    Ortho([Parameter<f64>; 3]),
+    Full([Parameter<f64>; 6]),
 }
 
 pub fn apply_strain_cfg(
@@ -136,7 +105,7 @@ pub fn apply_strain_cfg(
     use StrainCfg::*;
     match cfg {
         Some(Maximum(max_strain)) => Some(s.permute(*max_strain, rng)),
-        Some(ParameterizedOrtho(params)) => {
+        Some(Ortho(params)) => {
             let strain = Strain::from_diag(
                 params[0].generate(rng),
                 params[1].generate(rng),
@@ -144,7 +113,7 @@ pub fn apply_strain_cfg(
             );
             Some((s.apply_strain(&strain), strain))
         }
-        Some(ParameterizedFull(params)) => {
+        Some(Full(params)) => {
             let strain = Strain::new_verified([
                 params[0].generate(rng),
                 params[1].generate(rng),

@@ -49,7 +49,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - [x] output pattern-wise metadata to target arrays in data files
     - [x] output configuration-metadata to `meta.json`
     - [x] copy simulation input file to output directory
-    - [ ] custom parameter deserialization with range checking
+    - [x] custom parameter deserialization with range checking
 - [x] Add documentation for config YAML file
 - [x] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
 - [ ] feature: weights for the volume fractions of each phase or make them fixed

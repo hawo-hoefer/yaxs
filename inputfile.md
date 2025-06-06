@@ -107,23 +107,41 @@ sample_parameters:
 ```
 
 ### Specifying Strain
-Strain is specified for each structure separately. Valid specifications are:
-- A 3-tuple of parameters (either single values or 2-tuples for random ranges) for
-    orthogonal strain (only in the three lattice directions). They will be used to
-    generate the main diagonal of the strain tensor. For example, the configuration
-    `[1.01, 1.2, [0.8, 1.2]]` will generate strain tensors `A` with non-zero elements
-    at positions `(1, 1)`, `(2, 2)` and `(3, 3)`. `A[1, 1] = 1.01`, `A[2, 2] = 1.2`,
-    and `A[3, 3]` will be sampled uniformly from 0.8 to 1.2.
-- A 6-tuple of parameters for specifying the lower triangular half of the strain matrix.
-    Parameter ranges may be used to specify sampling ranges, but note that this may produce
-    non-invertible strain tensors. The order of the parameters is
-    `A[1, 1], A[2, 1], A[2, 2], A[3, 1], A[3, 2], A[3, 3]`.
-- A single value specifying the maximum strain amplitude. In this case, the strain will be
-    computed from a range of values to respect the original symmetry of the phase.
-- If the strain specification is omitted, no strain will be applied to the structures.
+Strain is specified for each structure separately, and may be omitted if no strain should be applied to the structures before simulation.
 
-Some of the methods above may produce non-invertible strain tensors. In those cases, the
+If the strain specification is not omitted, it's tag dictates it's behavior. 
+| tag        | behavior                                                                               |
+|------------|----------------------------------------------------------------------------------------|
+| `!Maximum` | Space-Group respecting strain, uniformly sampled using maximum amplitude               |
+| `!Ortho`   | Orthogonal strain, diagonal strain matrix sampled according to parameter specification |
+| `!Full`    | Parameter specification for the full strain Matrix                                     |
+
+Some of the methods may produce non-invertible strain tensors. In those cases, the
 program will notify the user and exit.
+
+#### Space-Group Respecting Strain using Maximum Amplitude
+```yaml
+strain: !Maximum 0.1
+```
+Maximum strain amplitude is 0.1 in each direction. The unit cell is stretched 
+with a strain matrix preserving the original unit cell's symmetry.
+
+#### Orthogonal Strain
+```yaml
+strain: !Ortho [1.0, [0.8, 1.2], 1.1]
+```
+Strain is applied using a diagonal strain matrix. The first diagonal component is 
+set to 1.0, the second varies uniformly from 0.8 to 1.2, and the third component will be
+fixed at 1.1.
+
+#### Full Strain Matrix Specification
+```yaml
+strain: !Full [1.0, [-0.01, 0.01], 0.01, 1.1, 0.0, 1.0]
+```
+Parameter ranges may be used to specify sampling ranges, but note that this may produce
+non-invertible strain tensors. The order of the parameters is 
+`A[1, 1]`, `A[2, 1]`, `A[2, 2]`, `A[3, 1]`, `A[3, 2]`, `A[3, 3]`.
+
 
 ## 3. Simulation Parameters
 Here, simulation specific parameters are set.
