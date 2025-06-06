@@ -30,17 +30,11 @@ kind: !AngleDisperse
     - [-1.0, 1.0]
     - [-1.0, 1.0]
     - [-1.0, 1.0]
-    scale: 
-    - 40.0
-    - 40.0
+    scale: 40.0
   # background: None
   # background: !Exponential
-  #   slope_range: 
-  #   - -0.05
-  #   - -0.025
-  #   scale_range: 
-  #   - 200.0
-  #   - 800.0
+  #   slope: [-0.05, -0.025]
+  #   scale: [200.0, 800.0]
 
 sample_parameters:
   mean_ds_nm: [15.0, 25.0]
@@ -49,14 +43,14 @@ sample_parameters:
   structure_permutations: 100
   structures_po:
     - path: ./cif/CuO_16025.cif
-      strain: 0.005
+      strain: !Maximum 0.005
     - path: ./cif/Fe3O4_183969.cif
-      strain: 0.005
+      strain: !Maximum 0.005
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
     - path: ./cif/Fe3O4_183969.cif
-      strain: 0.005
+      strain: !Maximum 0.005
 
 
 simulation_parameters:
