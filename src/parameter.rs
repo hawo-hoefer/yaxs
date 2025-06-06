@@ -95,13 +95,12 @@ mod test {
             coefs: [Parameter<f64>; 3],
         }
 
-        let err = serde_yaml::from_str::<DummyCfg>(
+        let _ = serde_yaml::from_str::<DummyCfg>(
             "data: 1.2
 coefs: [0.1, [1.2, 0.8], 0.8]
 ",
         )
         .expect_err("invalid range");
-        println!("{err}");
     }
 
     #[test]
@@ -115,7 +114,6 @@ coefs: [0.1, [1.2, 0.8], 0.8]
         }
 
         let err = serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
-        println!("{err}");
         panic!()
     }
 }

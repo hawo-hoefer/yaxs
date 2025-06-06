@@ -118,7 +118,9 @@ fn main() {
         pref_o.push(po);
     }
 
-    let vf_generator = VFGenerator::new(&vf_constraints);
+    let vf_generator = VFGenerator::try_new(&vf_constraints).map_err(|_| {
+        std::process::exit(1);
+    }).unwrap();
 
     let begin = Instant::now();
     let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {
