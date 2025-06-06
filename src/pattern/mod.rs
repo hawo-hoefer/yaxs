@@ -386,4 +386,23 @@ mod test {
         assert_eq!(generated.len(), n);
         assert_eq!(generated.iter().sum::<f64>(), 1.0);
     }
+
+    #[test]
+    fn vf_generation_no_degrees_of_freedom() {
+        let vfs = vec![
+            Some(VolumeFraction(0.2)),
+            Some(VolumeFraction(0.1)),
+            None,
+        ];
+
+        let n = vfs.len();
+        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let generated = gen.generate(&mut rng);
+        assert_eq!(generated[0], 0.2);
+        assert_eq!(generated[1], 0.1);
+        assert_eq!(generated[2], 0.7);
+        assert_eq!(generated.len(), n);
+        assert_eq!(generated.iter().sum::<f64>(), 1.0);
+    }
 }
