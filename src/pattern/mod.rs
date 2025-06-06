@@ -1,5 +1,8 @@
 use nalgebra::Vector3;
 use ndarray::Array2;
+use ordered_float::NotNan;
+use rand::distr::uniform::UniformSampler;
+use rand::Rng;
 
 use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
@@ -11,9 +14,47 @@ use crate::math::{
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
+use crate::cfg::VolumeFraction;
 
 pub mod adxrd;
 pub mod edxrd;
+
+pub struct VFGenerator<'a> {
+    pub fraction_sum: f64,
+    pub fractions: &'a Vec<Option<VolumeFraction>>,
+}
+
+impl<'a> VFGenerator<'a> {
+    pub fn new(fractions: &'a Vec<Option<VolumeFraction>>) -> Self {
+        let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
+
+        Self {
+            fraction_sum,
+            fractions,
+        }
+    }
+
+    pub fn generate(&self, rng: &mut impl Rng) -> Box<[f64]> {
+        let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
+        concentration_buf.push(0.0);
+
+        concentration_buf.resize_with(concentration_buf.capacity() - 1, || {
+            rng.random_range(0.0..=1.0 - self.fraction_sum)
+        });
+
+        concentration_buf.push(1.0 - self.fraction_sum);
+
+        concentration_buf.sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
+
+        for i in 0..concentration_buf.len() - 1 {
+            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
+        }
+
+        concentration_buf.truncate(self.fractions.len());
+
+        concentration_buf.into_boxed_slice()
+    }
+}
 
 pub struct PeakRenderParams {
     pub pos: f32,
@@ -224,4 +265,23 @@ where
     }
 
     (intensities, metadata)
+}
+
+#[cfg(test)]
+mod test {
+    use itertools::Itertools;
+    use rand::SeedableRng;
+
+    use super::*;
+
+    #[test]
+    fn vf_generation_basic() {
+        let n = 5;
+        let vfs = (0..n).map(|_| None).collect_vec();
+        let gen = VFGenerator::new(&vfs);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let generated = gen.generate(&mut rng);
+        assert_eq!(generated.len(), n);
+        assert_eq!(generated.iter().sum::<f64>(), 1.0);
+    }
 }

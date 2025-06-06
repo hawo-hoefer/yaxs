@@ -5,14 +5,14 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDisperse, JobCfg, SampleParameters, SimulationParameters};
+use crate::cfg::{EnergyDisperse, JobCfg, SampleParameters, SimulationParameters, VolumeFraction};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::pattern::lorentz_factor;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
-use super::{Discretizer, Peak, PeakRenderParams, Peaks};
+use super::{Discretizer, Peak, PeakRenderParams, Peaks, VFGenerator};
 
 /// Wiggler Beamline Parameters
 ///
@@ -316,6 +316,7 @@ pub fn generate_edxrd_jobs<'a>(
     all_simulated_peaks: &'a Vec<Vec<Peaks>>,
     all_strains: &'a Vec<Vec<Strain>>,
     all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    vf_generator: &VFGenerator<'a>,
     rng: &mut impl Rng,
 ) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>, JobCfg<'a>) {
     let (e0, e1) = energy_disperse.energy_range_kev;
@@ -324,12 +325,6 @@ pub fn generate_edxrd_jobs<'a>(
         .collect_vec();
     let mut intensities = Vec::new();
     intensities.resize(energy_disperse.n_steps, 0.0f32);
-
-    let mut concentration_buf = Vec::with_capacity(sample_params.structures_po.len() + 1);
-    concentration_buf.resize(
-        concentration_buf.capacity(),
-        NotNan::new(0.0).expect("0.0 is not NaN"),
-    );
 
     let job_cfg = JobCfg {
         structures,
@@ -345,7 +340,7 @@ pub fn generate_edxrd_jobs<'a>(
             all_strains,
             all_preferred_orientations,
             &energy_disperse,
-            &mut concentration_buf,
+            vf_generator,
             rng,
         );
         jobs.push(job);

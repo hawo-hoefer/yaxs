@@ -12,12 +12,12 @@ use yaxs::structure::{simulate_peaks_angle_disperse, simulate_peaks_energy_dispe
 
 use log::{error, info};
 
-use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef};
+use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef, VolumeFraction};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, Discretizer};
+use yaxs::pattern::{render_jobs, Discretizer, VFGenerator};
 
 #[derive(Parser)]
 #[command(
@@ -90,11 +90,13 @@ fn main() {
     let mut pref_o = Vec::new();
     let mut strain_cfgs = Vec::new();
     let mut structure_paths = Vec::new();
+    let mut vf_constraints = Vec::new();
 
     for StructureDef {
         path,
         preferred_orientation: po,
         strain,
+        volume_fraction,
     } in cfg.sample_parameters.structures_po.iter()
     {
         let mut reader = BufReader::new(
@@ -109,11 +111,14 @@ fn main() {
         let _ = reader.read_to_string(&mut cif).unwrap();
         let mut p = CifParser::new(&cif);
 
+        vf_constraints.push(*volume_fraction);
         structure_paths.push(path);
         structures.push(Structure::from(&p.parse()));
         strain_cfgs.push(strain);
         pref_o.push(po);
     }
+
+    let vf_generator = VFGenerator::new(&vf_constraints);
 
     let begin = Instant::now();
     let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {
@@ -169,6 +174,7 @@ fn main() {
                 &all_simulated_peaks,
                 &all_strains,
                 &all_preferred_orientations,
+                &vf_generator,
                 &mut rng,
             );
             render_and_write_jobs(
@@ -189,6 +195,7 @@ fn main() {
                 &all_simulated_peaks,
                 &all_strains,
                 &all_preferred_orientations,
+                &vf_generator,
                 &mut rng,
             );
             render_and_write_jobs(

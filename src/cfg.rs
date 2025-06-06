@@ -10,7 +10,7 @@ use crate::background::Background;
 use crate::parameter::Parameter;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::Peaks;
+use crate::pattern::{Peaks, VFGenerator};
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
@@ -128,12 +128,34 @@ pub fn apply_strain_cfg(
     }
 }
 
+#[derive(Debug, Serialize, PartialEq, Clone, Copy)]
+pub struct VolumeFraction(pub f64);
+
+impl<'de> Deserialize<'de> for VolumeFraction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = f64::deserialize(deserializer)?;
+        if v < 0.0 || v > 1.0 {
+            return Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Float(v),
+                &"Volume fraction needs to be in [0.0, 1.0]",
+            ));
+        }
+
+        Ok(VolumeFraction(v))
+    }
+}
+
 #[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
     pub preferred_orientation: Option<MarchDollaseCfg>,
     pub strain: Option<StrainCfg>,
+    #[serde(flatten)]
+    pub volume_fraction: Option<VolumeFraction>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -173,7 +195,7 @@ impl JobCfg<'_> {
         all_simulated_peaks: &'a Vec<Vec<Peaks>>,
         all_strains: &'a Vec<Vec<Strain>>,
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
-        concentration_buf: &mut [NotNan<f64>],
+        vf_generator: &VFGenerator<'a>,
         angle_disperse: &'a AngleDisperse,
         mut rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
@@ -208,17 +230,6 @@ impl JobCfg<'_> {
         let w = w.generate(rng);
         let background = background.generate_bkg(rng);
 
-        concentration_buf[0] = NotNan::try_from(0.0).unwrap();
-        concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
-        for i in 1..self.structures.len() {
-            concentration_buf[i] = NotNan::try_from(rng.random_range(0.0..=1.0))
-                .expect("numbers between 0 and 1 are not NaN")
-        }
-        concentration_buf.sort();
-        for i in 0..concentration_buf.len() - 1 {
-            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
-        }
-
         DiscretizeAngleDisperse {
             all_simulated_peaks,
             all_strains,
@@ -229,11 +240,7 @@ impl JobCfg<'_> {
             emission_lines: &emission_lines,
             normalize: self.simulation_parameters.normalize,
             meta: ADXRDMeta {
-                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
-                    .iter()
-                    .map(|x| f64::from(*x))
-                    .collect_vec()
-                    .into(),
+                vol_fractions: vf_generator.generate(rng),
                 eta,
                 mean_ds_nm: mean_ds_nm.into_boxed_slice(),
                 u,
@@ -250,7 +257,7 @@ impl JobCfg<'_> {
         all_strains: &'a Vec<Vec<Strain>>,
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         energy_disperse: &'a EnergyDisperse,
-        concentration_buf: &mut [NotNan<f64>],
+        vf_generator: &VFGenerator<'a>,
         mut rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let SampleParameters {
@@ -272,17 +279,6 @@ impl JobCfg<'_> {
             Err(v) => mean_ds_nm.resize(n_phases, v),
         }
 
-        concentration_buf[0] = NotNan::try_from(0.0).unwrap();
-        concentration_buf[concentration_buf.len() - 1] = NotNan::try_from(1.0).unwrap();
-        for i in 1..self.structures.len() {
-            concentration_buf[i] = NotNan::try_from(rng.random_range(0.0..=1.0))
-                .expect("numbers between 0 and 1 are not NaN")
-        }
-        concentration_buf.sort();
-        for i in 0..concentration_buf.len() - 1 {
-            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
-        }
-
         DiscretizeEnergyDispersive {
             all_simulated_peaks,
             all_strains,
@@ -293,11 +289,7 @@ impl JobCfg<'_> {
                 .collect_vec(),
             normalize: self.simulation_parameters.normalize,
             meta: EDXRDMeta {
-                vol_fractions: concentration_buf[..concentration_buf.len() - 1]
-                    .iter()
-                    .map(|x| f64::from(*x))
-                    .collect_vec()
-                    .into(),
+                vol_fractions: vf_generator.generate(rng),
                 eta,
                 mean_ds_nm: mean_ds_nm.into_boxed_slice(),
                 theta_rad: energy_disperse.theta_deg.to_radians(),

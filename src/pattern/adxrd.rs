@@ -1,6 +1,6 @@
-use super::{render_peak, Discretizer, PeakRenderParams, Peaks};
+use super::{render_peak, Discretizer, PeakRenderParams, Peaks, VFGenerator};
 use crate::background::Background;
-use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};
+use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters, VolumeFraction};
 use crate::io::PatternMeta;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
@@ -238,6 +238,7 @@ pub fn generate_adxrd_jobs<'a>(
     all_simulated_peaks: &'a Vec<Vec<Peaks>>,
     all_strains: &'a Vec<Vec<Strain>>,
     all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    vf_generator: &VFGenerator<'a>,
     rng: &mut impl Rng,
 ) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>, JobCfg<'a>) {
     let job_cfg = JobCfg {
@@ -253,13 +254,6 @@ pub fn generate_adxrd_jobs<'a>(
         *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
     }
 
-    // initialize concentration buffer for metadata generator
-    let mut concentration_buf = Vec::with_capacity(job_cfg.sample_params.structures_po.len() + 1);
-    concentration_buf.resize(
-        concentration_buf.capacity(),
-        NotNan::new(0.0).expect("0.0 is not NaN"),
-    );
-
     // create rendering jobs
     let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
     for _ in 0..job_cfg.simulation_parameters.n_patterns {
@@ -267,7 +261,7 @@ pub fn generate_adxrd_jobs<'a>(
             all_simulated_peaks,
             all_strains,
             all_preferred_orientations,
-            &mut concentration_buf,
+            vf_generator,
             &angle_disperse,
             rng,
         );
