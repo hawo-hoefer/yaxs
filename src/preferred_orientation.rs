@@ -3,7 +3,7 @@ use rand::Rng;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
-use crate::cfg::Parameter;
+use crate::parameter::Parameter;
 use crate::structure::Lattice;
 
 const HKL_NORM_TOL: f64 = 1e-3;
