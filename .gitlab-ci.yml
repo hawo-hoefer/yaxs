@@ -1,0 +1,27 @@
+stages:
+  - build
+  - test
+  - doc
+
+build:
+  stage: build
+  image: rust:1.83-bullseye
+  script: 
+    - cargo build -F cpu-only
+  artifacts:
+    paths:
+      - target
+
+rustdoc:
+  stage: doc
+  dependencies: [build]
+  image: rust:1.83-bullseye
+  script: 
+    - cargo doc -F cpu-only
+
+test:
+  stage: test
+  dependencies: [build]
+  image: rust:1.83-bullseye
+  script:
+    - cargo test -F cpu-only

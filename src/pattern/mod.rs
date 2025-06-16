@@ -1,13 +1,14 @@
+use cfg_if::cfg_if;
 use log::{error, warn};
 use nalgebra::Vector3;
 use ndarray::Array2;
 use rand::Rng;
 
 use crate::background::Background;
-use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::PatternMeta;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad, scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
+    scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
@@ -230,7 +231,7 @@ impl Peak {
         mean_ds_nm: f64,
         weight: f64,
         sample_displacement_mu_m: f64,
-        goniometer_radius_mm: f64
+        goniometer_radius_mm: f64,
     ) -> (f32, f32, f32) {
         // bragg condition
         // lambda = 2 d sin(theta)
@@ -308,16 +309,18 @@ where
 {
     let n = jobs.len();
     // actual rendering of the patterns
-    let intensities = if cfg!(feature = "cpu-only") {
-        let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
-        for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
-            job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+    cfg_if! {
+        if #[cfg(feature = "cpu-only")] {
+            let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
+            for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
+                job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+            }
+        } else {
+            use crate::discretize_cuda::discretize_peaks_cuda;
+            let intensities = discretize_peaks_cuda(jobs, &two_thetas);
+            let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
+                .expect("sizes must match");
         }
-        intensities
-    } else {
-        let intensities = discretize_peaks_cuda(jobs, &two_thetas);
-        ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
-            .expect("sizes must match")
     };
 
     let mut metadata = T::init_meta_data(jobs.len(), n_phases);

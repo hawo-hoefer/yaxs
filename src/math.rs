@@ -53,7 +53,7 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
 
 /// calculate scherrer broadening in energy dispersive XRD from
 /// Ellmer, K., et al. Measurement Science and Technology 14.3 (2003): 336
-/// https://doi.org/10.1088/0957-0233/14/3/313
+/// DOI: <https://doi.org/10.1088/0957-0233/14/3/313>
 ///
 /// * `wavelength`: wavelength in nanometers
 /// * `theta_rad`: theta in radians
@@ -102,7 +102,7 @@ pub mod acm757 {
     /// Evaluate a chebyshev series using the Clenshaw method with Reinsch modification,
     /// as analyzed in the paper by Oliver. This function is adapted from
     /// Algorithm 757: MISCFUN, a software package to compute uncommon special functions.
-    /// DOI: https://doi.org/10.1145/232826.232846
+    /// DOI: <https://doi.org/10.1145/232826.232846>
     ///
     /// Original Author:
     ///     Dr. Allan J. MacLeod,
@@ -187,7 +187,7 @@ pub mod acm757 {
     ///
     /// This function is adapted from
     /// Algorithm 757: MISCFUN, a software package to compute uncommon special functions.
-    /// DOI: https://doi.org/10.1145/232826.232846
+    /// DOI: <https://doi.org/10.1145/232826.232846>
     ///
     /// Original Author:
     ///     Dr. Allan J. MacLeod,
@@ -334,7 +334,7 @@ pub mod acm757 {
     ///
     /// This function is adapted from
     /// Algorithm 757: MISCFUN, a software package to compute uncommon special functions.
-    /// DOI: https://doi.org/10.1145/232826.232846
+    /// DOI: <https://doi.org/10.1145/232826.232846>
     ///
     /// Original Author:
     ///     Dr. Allan J. MacLeod,
