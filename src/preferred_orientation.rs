@@ -46,7 +46,7 @@ impl MarchDollase {
 
     /// compute march-dollase scaling of peak intensities
     /// Using equation (1) from Zolotoyabko, E. (2009). J. Appl. Cryst. 42, 513-518.
-    /// https://doi.org/10.1107/S0021889809013727
+    /// DOI: <https://doi.org/10.1107/S0021889809013727>
     ///
     /// * `hkl`: hkl vector for scaling
     /// * `lat`: lattice to scale for
