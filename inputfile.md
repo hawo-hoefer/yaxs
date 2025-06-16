@@ -30,6 +30,7 @@ are fixed for all simulations, while parameters specified as ranges will be samp
 | simulation parameters     | value         |
 | strain                    | (see below)   |
 | volume factions           | value         |
+| sample displacement       | both          |
 
 ## 1. Simulation Kind
 This section contains the type of the simulation (EnergyDisperse or AngleDisperse)
@@ -49,24 +50,27 @@ kind: !EnergyDisperse
 ```
 
 ### An example ADXRD configuration
+Angle dispersive simulation simulates XRD patterns for the Bragg-Brentano diffractometer geometry.
 ```yaml
 kind: !AngleDisperse
-  emission_lines:                # list of emission lines with wavelength and relative strength
-  - wavelength_ams: 1.5406       # wavelength in Amstrong
-    weight: 1.0                  # relative emission line strength in arbitrary units
+  emission_lines:                       # list of emission lines with wavelength and relative strength
+  - wavelength_ams: 1.5406              # wavelength in Amstrong
+    weight: 1.0                         # relative emission line strength in arbitrary units
   - wavelength_ams: 1.3923
     weight: 0.4121
-  n_steps: 2048                  # number of steps for rastering two-theta
-  two_theta_range: [10.0, 70.0]  # two-theta range
-  noise: !Gaussian               # ignored for now
+  n_steps: 2048                         # number of steps for rastering two-theta
+  two_theta_range: [10.0, 70.0]         # two-theta range
+  goniometer_radius_mm: 180             # radius of the goniometer in bragg-brentano geometry
+  sample_displacement_mu_m: [-250, 250] # sample displacement in micrometers (optional)
+  noise: !Gaussian                      # ignored for now
     sigma_min: 0.0
     sigma_max: 1.0
-  caglioti:                      # caglioti parameters of the device
+  caglioti:                             # caglioti parameters of the device
     u: 0.0
     v: 0.0
     w: 0.0
-  background: !Chebyshev         # background type and parameters
-    coefs:                       # chebyshev coefficient ranges
+  background: !Chebyshev                # background type and parameters
+    coefs:                              # chebyshev coefficient ranges
     - [-1.0, 1.0]
     - [-1.0, 1.0]
     - [-1.0, 1.0]
@@ -94,13 +98,12 @@ They are shared for energy- and angle dispersive XRD simulation.
 sample_parameters:
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
-  sample_displacement_mu_m: 0.0                         # sample displacement
   structure_permutations: 100                           # number of structure permutations to simulate
   structures:                                           # phases and their preferred orientation
                                                         # configuration using march-dollase model
     - path: phase-1.cif                                 # path to phase's cif, no preferred orientation here
     - path: phase-2-with-preferred-orientation.cif
-      preferred_orientation:                            # march-dollase parameters
+      preferred_orientation:                            # march-dollase parameters (optional)
         hkl: [1, 1, 1]                                  # axis of preferred orientation
         r: 0.9                                          # march parameter
       strain: 0.01                                      # optional strain specification
