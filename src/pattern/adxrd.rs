@@ -15,6 +15,7 @@ pub struct ADXRDMeta {
     pub u: f64,
     pub v: f64,
     pub w: f64,
+    pub sample_displacement_mu_m: f64,
     pub background: Background,
 }
 
@@ -50,6 +51,7 @@ pub struct DiscretizeAngleDisperse<'a> {
     pub emission_lines: &'a [EmissionLine],
     pub normalize: bool,
     pub meta: ADXRDMeta,
+    pub goniometer_radius_mm: f64,
 }
 
 impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
@@ -61,7 +63,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             u,
             v,
             w,
-            ..
+            sample_displacement_mu_m,
+            background: _,
         } = &self.meta;
 
         itertools::izip!(
@@ -82,6 +85,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
                         *w,
                         *phase_mean_ds_nm,
                         vf * emission_line.weight,
+                        *sample_displacement_mu_m,
+                        self.goniometer_radius_mm,
                     );
                     PeakRenderParams {
                         pos: two_theta_hkl_deg,
@@ -176,6 +181,7 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             v,
             w,
             background,
+            sample_displacement_mu_m,
         } = &self.meta;
         for (((phase_peaks, idx), vf), phase_mean_ds_nm) in self
             .all_simulated_peaks
@@ -192,6 +198,7 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             // * `u`: caglioti parameter u
             // * `v`: caglioti parameter v
             // * `w`: caglioti parameter w
+            // $$\Delta 2\theta = 2 \Delta_\text{R} / R \cos\theta$$
             for emission_line in self.emission_lines {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 for peak in peaks.iter() {
@@ -202,6 +209,8 @@ impl<'a> DiscretizeAngleDisperse<'a> {
                         *w,
                         *phase_mean_ds_nm,
                         vf * emission_line.weight,
+                        *sample_displacement_mu_m,
+                        self.goniometer_radius_mm,
                     );
                     render_peak(
                         two_theta_hkl_deg,

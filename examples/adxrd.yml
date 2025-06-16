@@ -8,6 +8,7 @@ kind: !AngleDisperse
     weight: 0.4121
   n_steps: 2048 
   two_theta_range: [10.0, 70.0]
+  goniometer_radius_mm: 180
   noise: !Gaussian
     sigma_min: 0.0
     sigma_max: 1.0

@@ -64,7 +64,9 @@ pub struct AngleDisperse {
 
     pub n_steps: usize,
     pub two_theta_range: (f64, f64),
+    pub goniometer_radius_mm: f64,
 
+    pub sample_displacement_mu_m: Parameter<f64>,
     pub noise: Noise,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
@@ -160,7 +162,6 @@ pub struct StructureDef {
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
     pub mean_ds_nm: Parameter<f64>,
-    pub sample_displacement_mu_m: Parameter<f64>,
 
     pub eta: Parameter<f64>,
     pub structure_permutations: usize,
@@ -201,14 +202,18 @@ impl JobCfg<'_> {
             // sample_displacement_range_mu_m,
             background,
             emission_lines,
-            ..
+            n_steps: _,
+            two_theta_range: _,
+            goniometer_radius_mm,
+            sample_displacement_mu_m,
+            noise: _,
         } = angle_disperse;
 
         let SampleParameters {
+            structures: _,
             mean_ds_nm,
             eta,
             structure_permutations,
-            ..
         } = &self.sample_params;
 
         let n_phases = all_simulated_peaks.len();
@@ -226,6 +231,7 @@ impl JobCfg<'_> {
         let v = v.generate(rng);
         let w = w.generate(rng);
         let background = background.generate_bkg(rng);
+        let sample_displacement_mu_m = sample_displacement_mu_m.generate(rng);
 
         DiscretizeAngleDisperse {
             all_simulated_peaks,
@@ -244,7 +250,9 @@ impl JobCfg<'_> {
                 v,
                 w,
                 background,
+                sample_displacement_mu_m,
             },
+            goniometer_radius_mm: *goniometer_radius_mm,
         }
     }
 
