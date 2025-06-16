@@ -2,61 +2,63 @@ kind: !AngleDisperse
   emission_lines:
   - wavelength_ams: 1.5406
     weight: 1.0
-  - wavelength_ams: 1.5445
-    weight: 0.5206
-  - wavelength_ams: 1.3923
-    weight: 0.4121
+  # - wavelength_ams: 1.5445
+  #   weight: 0.5206
+  # - wavelength_ams: 1.3923
+  #   weight: 0.4121
   n_steps: 2048 
   two_theta_range: [10.0, 70.0]
   goniometer_radius_mm: 180
-  noise: !Gaussian
-    sigma_min: 0.0
-    sigma_max: 1.0
+  noise: !None
   caglioti:
     u: 0.0
     v: 0.0
     w: 0.0
-  background: !Chebyshev
-    coefs: 
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    - [-1.0, 1.0]
-    scale: 40.0
-  # background: None
+  # background: !Chebyshev
+  #   coefs: 
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   - [-1.0, 1.0]
+  #   scale: 40.0
+  background: None
   # background: !Exponential
   #   slope: [-0.05, -0.025]
   #   scale: [200.0, 800.0]
 
 sample_parameters:
   mean_ds_nm: [15.0, 25.0]
-  eta: [0.5, 0.5]
-  structure_permutations: 100
+  eta: 0.5
+  impurities:
+    - d_hkl_ams: 2
+      intensity: 1
+      eta: 0.5
+      mean_ds_nm: 100
+  structure_permutations: 1
   structures:
     - path: ./cif/CuO_16025.cif
       strain: !Maximum 0.005
-      volume_fraction: 0.1
+      # volume_fraction: 0.4
     - path: ./cif/Fe3O4_183969.cif
       strain: !Maximum 0.005
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
-      volume_fraction: 0.6
-    - path: ./cif/Fe3O4_183969.cif
-      strain: !Maximum 0.005
+    # - path: ./cif/Fe3O4_183969.cif
+    #   strain: !Maximum 0.005
 
 
 simulation_parameters:
-  normalize: true 
+  normalize: false
   seed: 1234
-  n_patterns: 100000
+  n_patterns: 100
   abstol: 1e-2

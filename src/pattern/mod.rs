@@ -10,6 +10,8 @@ use crate::math::{
     caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
+use crate::preferred_orientation::MarchDollase;
+use crate::structure::Strain;
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
@@ -89,7 +91,6 @@ impl<'a> VFGenerator<'a> {
         }
         concentration_buf.resize(concentration_buf.capacity(), 0.0);
 
-
         // place the fixed numbers at the correct positions
         if self.n_free < self.fractions.len() {
             let mut free_idx = self.n_free;
@@ -132,6 +133,13 @@ pub struct PeakRenderParams {
     pub intensity: f32,
     pub fwhm: f32,
     pub eta: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImpurityPeak {
+    pub peak: Peak,
+    pub eta: f64,
+    pub mean_ds_nm: f64,
 }
 
 pub trait Discretizer {

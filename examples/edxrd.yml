@@ -15,6 +15,11 @@ sample_parameters:
   eta: 0.5
   sample_displacement_mu_m: 0.0
   structure_permutations: 100
+  impurities:
+    - d_hkl_ams: 6
+      intensity: 10
+      eta: 0.5
+      mean_ds_nm: 10
   structures:
     - path: ./cif/HfO2_polar_orthorombic_matproj.cif
       strain: !Full [1.0, 1.1, [0.8, 1.2], 0.8, 0.7, 1.0] # full strain matrix

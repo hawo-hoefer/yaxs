@@ -7,7 +7,7 @@ use crate::background::Background;
 use crate::parameter::Parameter;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{Peak, Peaks, VFGenerator};
+use crate::pattern::{ImpurityPeak, Peak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
@@ -160,10 +160,12 @@ pub struct StructureDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ImpuritySpec {
-    d_hkl: Parameter<f64>,
+    d_hkl_ams: Parameter<f64>,
     intensity: Parameter<f64>,
     probability: Option<f64>,
     n_peaks: Option<usize>,
+    eta: Parameter<f64>,
+    mean_ds_nm: Parameter<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -197,19 +199,23 @@ pub struct JobCfg<'a> {
     pub simulation_parameters: &'a SimulationParameters,
 }
 
-fn generate_impurities(impurity_specs: &[ImpuritySpec], rng: &mut impl Rng) -> Peaks {
+fn generate_impurities(impurity_specs: &[ImpuritySpec], rng: &mut impl Rng) -> Box<[ImpurityPeak]> {
     let mut impurity_peaks = Vec::new();
     for spec in impurity_specs.iter() {
         for _ in 0..spec.n_peaks.unwrap_or(1) {
             if !spec.probability.map(|p| rng.random_bool(p)).unwrap_or(true) {
                 continue;
             }
-            let d_hkl = spec.d_hkl.generate(rng);
+            let d_hkl = spec.d_hkl_ams.generate(rng);
             let i_hkl = spec.intensity.generate(rng);
-            impurity_peaks.push(Peak {
-                d_hkl,
-                i_hkl,
-                hkls: Vec::new(),
+            impurity_peaks.push(ImpurityPeak {
+                peak: Peak {
+                    d_hkl,
+                    i_hkl,
+                    hkls: Vec::new(),
+                },
+                eta: spec.eta.generate(rng),
+                mean_ds_nm: spec.mean_ds_nm.generate(rng),
             })
         }
     }
@@ -268,12 +274,15 @@ impl JobCfg<'_> {
             .unwrap_or(Box::new([]));
 
         DiscretizeAngleDisperse {
-            all_simulated_peaks,
-            all_strains,
-            all_preferred_orientations,
-            indices: (0..self.structures.len())
-                .map(|_| rng.random_range(0..*structure_permutations))
-                .collect_vec(),
+            common: RenderCommon {
+                all_simulated_peaks,
+                all_strains,
+                all_preferred_orientations,
+                impurity_peaks,
+                indices: (0..self.structures.len())
+                    .map(|_| rng.random_range(0..*structure_permutations))
+                    .collect_vec(),
+            },
             emission_lines: &emission_lines,
             normalize: self.simulation_parameters.normalize,
             meta: ADXRDMeta {
@@ -287,7 +296,6 @@ impl JobCfg<'_> {
                 sample_displacement_mu_m,
             },
             goniometer_radius_mm: *goniometer_radius_mm,
-            impurity_peaks,
         }
     }
 
@@ -304,7 +312,8 @@ impl JobCfg<'_> {
             mean_ds_nm,
             eta,
             structure_permutations,
-            ..
+            structures: _,
+            impurities,
         } = &self.sample_params;
 
         let n_phases = all_simulated_peaks.len();
@@ -319,14 +328,22 @@ impl JobCfg<'_> {
             Err(v) => mean_ds_nm.resize(n_phases, v),
         }
 
+        let impurity_peaks = impurities
+            .as_ref()
+            .map(|impurities| generate_impurities(impurities, rng))
+            .unwrap_or(Box::new([]));
+
         DiscretizeEnergyDispersive {
-            all_simulated_peaks,
-            all_strains,
-            all_preferred_orientations,
+            common: RenderCommon {
+                all_simulated_peaks,
+                all_strains,
+                all_preferred_orientations,
+                indices: (0..self.structures.len())
+                    .map(|_| rng.random_range(0..*structure_permutations))
+                    .collect_vec(),
+                impurity_peaks,
+            },
             beamline: &energy_disperse.beamline,
-            indices: (0..self.structures.len())
-                .map(|_| rng.random_range(0..*structure_permutations))
-                .collect_vec(),
             normalize: self.simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions: vf_generator.generate(rng),
