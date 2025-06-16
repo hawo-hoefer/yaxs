@@ -283,27 +283,30 @@ impl<'a> CifParser<'a> {
         }
     }
 
-    fn parse_value(&mut self) -> Value {
+    fn parse_value(&mut self) -> Result<Value, String> {
         self.skip_whitespace();
         match self
             .c
             .chars()
             .next()
-            .expect("cannot parse anything on empty string")
+            .ok_or_else(|| format!("Cannot parse value from empty contents"))?
         {
             '+' | '-' | '0'..='9' => {
                 // try to parse number. if it fails, we parse as string
-                self.parse_number().unwrap_or_else(|_e| self.parse_text())
+                match self.parse_number() {
+                    Ok(num) => Ok(num),
+                    Err(_) => Ok(self.parse_text()?),
+                }
             }
             '.' => {
                 let _ = self.consume_once('.');
-                Value::Inapplicable
+                Ok(Value::Inapplicable)
             }
             '?' => {
                 let _ = self.consume_once('?');
-                Value::Unknown
+                Ok(Value::Unknown)
             }
-            _ => self.parse_text(), // this includes ';'
+            _ => Ok(self.parse_text()?), // this includes ';'
         }
     }
 
@@ -340,7 +343,7 @@ impl<'a> CifParser<'a> {
             // we are reading a tag
             let tag = self.parse_tag()?.to_string();
             let val = self.parse_value();
-            return Ok(DataItem::KV(tag.to_string(), val));
+            return Ok(DataItem::KV(tag.to_string(), val?));
         } else if self.c.starts_with(LOOP_HEADER_START) {
             return Ok(DataItem::Table(self.parse_loop()?));
         }
@@ -364,7 +367,7 @@ impl<'a> CifParser<'a> {
         false
     }
 
-    fn parse_text(&mut self) -> Value {
+    fn parse_text(&mut self) -> Result<Value, String> {
         match self.c.chars().next() {
             Some(c) if c == ';' => {
                 // multiline string ';'
@@ -372,21 +375,21 @@ impl<'a> CifParser<'a> {
                 let (text, rest) = self
                     .c
                     .split_once("\n;")
-                    .unwrap_or_else(|| todo!("handle unterminated '{c}'-string"));
+                    .ok_or_else(|| format!("unterminated '{c}'-string"))?;
                 self.c = rest;
                 // re-append the newline we stripped off before
                 let mut text = text.to_string();
                 text.push('\n');
-                Value::Text(text)
+                Ok(Value::Text(text))
             }
             Some(c) if matches!(c, '\'' | '\"') => {
                 assert!(self.consume_once(c));
                 let (text, rest) = self
                     .c
                     .split_once(c)
-                    .unwrap_or_else(|| todo!("handle unterminated '{c}'-string"));
+                    .ok_or_else(|| format!("unterminated '{c}'-string"))?;
                 self.c = rest;
-                Value::Text(text.to_string())
+                Ok(Value::Text(text.to_string()))
             }
             Some(_) => {
                 // UnquotedString
@@ -395,13 +398,13 @@ impl<'a> CifParser<'a> {
                     .split_once(|x: char| x.is_whitespace())
                     .unwrap_or((self.c, ""));
                 self.c = rest;
-                Value::Text(text.to_string())
+                Ok(Value::Text(text.to_string()))
             }
-            None => todo!("Cannot Parse from empty contents"),
+            None => return Err(format!("Cannot Parse CIF value from empty contents")),
         }
     }
 
-    fn parse_number(&mut self) -> Result<Value, ParseFloatError> {
+    fn parse_number(&mut self) -> Result<Value, String> {
         let (mut text, rest) = self
             .c
             .split_once(|x: char| x.is_whitespace())
@@ -409,7 +412,7 @@ impl<'a> CifParser<'a> {
 
         if let Some((num, p_range)) = text.split_once('(') {
             if !p_range.ends_with(')') {
-                todo!("Handle unterminated precision. missing ')'")
+                return Err("Handle unterminated precision. missing ')'".to_string());
             }
 
             // NOTE: we probably are handling this wrong.
@@ -420,7 +423,9 @@ impl<'a> CifParser<'a> {
                 || num.find(|x: char| x == '.' || x == 'e').is_none()
             // is an integer because no decimal point or scientific notation 'e'
             {
-                todo!("Handle precision brackets after integer or scientific notation")
+                return Err(format!(
+                    "Precision parentheses are only valid after decimal notation. Tried to parse '{num}({p_range}'"
+                ));
             }
 
             text = num;
@@ -431,7 +436,7 @@ impl<'a> CifParser<'a> {
             return Ok(Value::Int(v));
         }
 
-        let v = text.parse::<f64>()?;
+        let v = text.parse::<f64>().map_err(|err| err.to_string())?;
         self.c = rest;
         Ok(Value::Float(v))
     }
@@ -452,7 +457,7 @@ impl<'a> CifParser<'a> {
             && !self.c.is_empty()
         {
             for (_, v) in kvs.iter_mut() {
-                let val = self.parse_value();
+                let val = self.parse_value()?;
                 v.push(val);
             }
             self.skip_ws_comments();
@@ -483,7 +488,7 @@ mod test {
     #[test]
     fn parse_float_test() {
         let mut p = CifParser::new("1.2123 aroistena");
-        let v = p.parse_number().unwrap();
+        let v = p.parse_number().expect("valid float");
         assert_eq!(v, Value::Float(1.2123));
         assert_eq!(p.c, "aroistena");
     }
@@ -491,7 +496,7 @@ mod test {
     #[test]
     fn parse_int_test() {
         let mut p = CifParser::new("12123 arstr");
-        let v = p.parse_number().unwrap();
+        let v = p.parse_number().expect("valid int");
         assert_eq!(v, Value::Int(12123));
         assert_eq!(p.c, "arstr");
     }
@@ -748,7 +753,7 @@ loop_
   _c
   1 2 3",
         );
-        p.parse();
+        p.parse().expect("valid cif contents");
     }
 
     #[test]
@@ -763,7 +768,7 @@ test
 ;
 ",
         );
-        p.parse();
+        p.parse().expect("valid cif contents");
     }
     #[test]
     fn semicolon_in_multiline_string() {
@@ -776,6 +781,19 @@ Test test; test
 ;
 ",
         );
-        p.parse();
+        p.parse().expect("valid cif contents");
+    }
+
+    #[test]
+    fn parse_number_int_precision() {
+        let mut p = CifParser::new("123(12)");
+        p.parse_number().expect_err("integer with precision parens is illegal");
+    }
+
+
+    #[test]
+    fn parse_number_scientific_precision() {
+        let mut p = CifParser::new("1.23e12(12)");
+        p.parse_number().expect_err("scientific number notation with precision parens is illegal");
     }
 }
