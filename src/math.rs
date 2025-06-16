@@ -90,6 +90,14 @@ pub fn pseudo_voigt(dx: f32, eta: f32, fwhm: f32) -> f32 {
     eta * lorentz(dx, gamma) + (1.0 - eta) * gauss(dx, sigma)
 }
 
+pub fn sample_displacement_delta_two_theta_rad(
+    displacement_mu_m: f64,
+    goniometer_radius_mm: f64,
+    theta_rad: f64,
+) -> f64 {
+    - 2.0 * displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
+}
+
 pub mod acm757 {
     /// Evaluate a chebyshev series using the Clenshaw method with Reinsch modification,
     /// as analyzed in the paper by Oliver. This function is adapted from

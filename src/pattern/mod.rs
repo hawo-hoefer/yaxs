@@ -7,8 +7,7 @@ use crate::background::Background;
 use crate::discretize_cuda::discretize_peaks_cuda;
 use crate::io::PatternMeta;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, scherrer_broadening, scherrer_broadening_edxrd,
-    C_M_S, H_EV_S,
+    caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad, scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S
 };
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
@@ -230,6 +229,8 @@ impl Peak {
         w: f64,
         mean_ds_nm: f64,
         weight: f64,
+        sample_displacement_mu_m: f64,
+        goniometer_radius_mm: f64
     ) -> (f32, f32, f32) {
         // bragg condition
         // lambda = 2 d sin(theta)
@@ -241,7 +242,13 @@ impl Peak {
             + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 
-        let two_theta_hkl_deg = 2.0 * theta_hkl_rad.to_degrees() as f32;
+        let sd_delta_two_theta_rad = sample_displacement_delta_two_theta_rad(
+            sample_displacement_mu_m,
+            goniometer_radius_mm,
+            theta_hkl_rad,
+        );
+
+        let two_theta_hkl_deg = (2.0 * theta_hkl_rad + sd_delta_two_theta_rad).to_degrees() as f32;
         (two_theta_hkl_deg, peak_weight, fwhm as f32)
     }
 
