@@ -7,7 +7,7 @@ use crate::background::Background;
 use crate::parameter::Parameter;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{Peaks, VFGenerator};
+use crate::pattern::{Peak, Peaks, VFGenerator};
 use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
 use crate::structure::{Strain, Structure};
 
@@ -159,9 +159,19 @@ pub struct StructureDef {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
+pub struct ImpuritySpec {
+    d_hkl: Parameter<f64>,
+    intensity: Parameter<f64>,
+    probability: Option<f64>,
+    n_peaks: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
     pub mean_ds_nm: Parameter<f64>,
+    pub impurities: Option<Vec<ImpuritySpec>>,
 
     pub eta: Parameter<f64>,
     pub structure_permutations: usize,
@@ -187,6 +197,25 @@ pub struct JobCfg<'a> {
     pub simulation_parameters: &'a SimulationParameters,
 }
 
+fn generate_impurities(impurity_specs: &[ImpuritySpec], rng: &mut impl Rng) -> Peaks {
+    let mut impurity_peaks = Vec::new();
+    for spec in impurity_specs.iter() {
+        for _ in 0..spec.n_peaks.unwrap_or(1) {
+            if !spec.probability.map(|p| rng.random_bool(p)).unwrap_or(true) {
+                continue;
+            }
+            let d_hkl = spec.d_hkl.generate(rng);
+            let i_hkl = spec.intensity.generate(rng);
+            impurity_peaks.push(Peak {
+                d_hkl,
+                i_hkl,
+                hkls: Vec::new(),
+            })
+        }
+    }
+    impurity_peaks.into()
+}
+
 impl JobCfg<'_> {
     pub fn generate_adxrd_job<'a>(
         &self,
@@ -199,7 +228,6 @@ impl JobCfg<'_> {
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
             caglioti: Caglioti { u, v, w },
-            // sample_displacement_range_mu_m,
             background,
             emission_lines,
             n_steps: _,
@@ -214,6 +242,7 @@ impl JobCfg<'_> {
             mean_ds_nm,
             eta,
             structure_permutations,
+            impurities,
         } = &self.sample_params;
 
         let n_phases = all_simulated_peaks.len();
@@ -232,6 +261,11 @@ impl JobCfg<'_> {
         let w = w.generate(rng);
         let background = background.generate_bkg(rng);
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
+
+        let impurity_peaks = impurities
+            .as_ref()
+            .map(|impurities| generate_impurities(impurities, rng))
+            .unwrap_or(Box::new([]));
 
         DiscretizeAngleDisperse {
             all_simulated_peaks,
@@ -253,6 +287,7 @@ impl JobCfg<'_> {
                 sample_displacement_mu_m,
             },
             goniometer_radius_mm: *goniometer_radius_mm,
+            impurity_peaks,
         }
     }
 

@@ -301,7 +301,7 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
 pub fn render_jobs<T>(
     jobs: &[T],
     two_thetas: &[f32],
-    atol: f32,
+    #[allow(unused)] atol: f32,
     n_phases: usize,
 ) -> (Array2<f32>, Vec<PatternMeta>)
 where

@@ -48,6 +48,7 @@ pub struct DiscretizeAngleDisperse<'a> {
     pub all_strains: &'a Vec<Vec<Strain>>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Vec<usize>,
+    pub impurity_peaks: Peaks,
     pub emission_lines: &'a [EmissionLine],
     pub normalize: bool,
     pub meta: ADXRDMeta,
