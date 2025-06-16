@@ -4,7 +4,7 @@ use rand::distr::Uniform;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
 #[serde(untagged)]
 pub enum Parameter<T>
 where

@@ -66,7 +66,7 @@ pub struct AngleDisperse {
     pub two_theta_range: (f64, f64),
     pub goniometer_radius_mm: f64,
 
-    pub sample_displacement_mu_m: Parameter<f64>,
+    pub sample_displacement_mu_m: Option<Parameter<f64>>,
     pub noise: Noise,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
@@ -231,7 +231,7 @@ impl JobCfg<'_> {
         let v = v.generate(rng);
         let w = w.generate(rng);
         let background = background.generate_bkg(rng);
-        let sample_displacement_mu_m = sample_displacement_mu_m.generate(rng);
+        let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
         DiscretizeAngleDisperse {
             all_simulated_peaks,
