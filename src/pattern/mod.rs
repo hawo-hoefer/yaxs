@@ -18,6 +18,16 @@ use crate::cfg::VolumeFraction;
 pub mod adxrd;
 pub mod edxrd;
 
+pub struct RenderCommon<'a> {
+    // all simulated peaks for all phases in order [structure, structure permutations]
+    pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
+    pub all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
+    pub all_strains: &'a Vec<Vec<Strain>>,
+    // indices to select from simulated peaks, length is number of structures
+    pub indices: Vec<usize>,
+    pub impurity_peaks: Box<[ImpurityPeak]>,
+}
+
 pub struct VFGenerator<'a> {
     pub fraction_sum: f64,
     pub n_free: usize,
@@ -62,19 +72,23 @@ impl<'a> VFGenerator<'a> {
         // Then, the first few elements are sorted, and the a difference is taken
         // between adjacent elements to produce the random numbers summing to one.
         let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
-        concentration_buf.push(0.0);
-        concentration_buf
-            .extend((0..self.n_free - 1).map(|_| rng.random_range(0.0..=1.0 - self.fraction_sum)));
-        concentration_buf.push(1.0 - self.fraction_sum);
+        if self.n_free > 0 {
+            concentration_buf.push(0.0);
+            concentration_buf.extend(
+                (0..self.n_free - 1).map(|_| rng.random_range(0.0..=1.0 - self.fraction_sum)),
+            );
+            concentration_buf.push(1.0 - self.fraction_sum);
+
+            concentration_buf[1..self.n_free]
+                .sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
+
+            // compute the difference
+            for i in 0..concentration_buf.len() - 1 {
+                concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
+            }
+        }
         concentration_buf.resize(concentration_buf.capacity(), 0.0);
 
-        concentration_buf[1..self.n_free]
-            .sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
-
-        // compute the difference
-        for i in 0..concentration_buf.len() - 1 {
-            concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
-        }
 
         // place the fixed numbers at the correct positions
         if self.n_free < self.fractions.len() {
@@ -414,6 +428,20 @@ mod test {
         assert_eq!(generated[0], 0.2);
         assert_eq!(generated[1], 0.1);
         assert_eq!(generated[2], 0.7);
+        assert_eq!(generated.len(), n);
+        assert_eq!(generated.iter().sum::<f64>(), 1.0);
+    }
+
+    #[test]
+    fn vf_generation_no_degrees_of_freedom_two_phases() {
+        let vfs = vec![Some(VolumeFraction(0.6)), Some(VolumeFraction(0.4))];
+
+        let n = vfs.len();
+        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let generated = gen.generate(&mut rng);
+        assert_eq!(generated[0], 0.6);
+        assert_eq!(generated[1], 0.4);
         assert_eq!(generated.len(), n);
         assert_eq!(generated.iter().sum::<f64>(), 1.0);
     }
