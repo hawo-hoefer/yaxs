@@ -27,14 +27,16 @@ pub fn chop_integer(s: &str) -> Option<(i32, &str)> {
         return None;
     }
 
-    let num = std::str::from_utf8(&s.as_bytes()[..num_len]).unwrap();
-    let rest = std::str::from_utf8(&s.as_bytes()[num_len..]).unwrap();
+    let num =
+        std::str::from_utf8(&s.as_bytes()[..num_len]).expect("unrecoverable: non-utf8 char in cif");
+    let rest =
+        std::str::from_utf8(&s.as_bytes()[num_len..]).expect("unrecoverable: non-utf8 char in cif");
 
-    Some((num.parse().unwrap(), rest))
+    Some((num.parse().expect("we only collected ascii numbers"), rest))
 }
 
 /// parse coefficient in an expression like 1x + 2y -3/4z +1/2
-fn parse_coef(mut s: &str) -> (f64, &str) {
+fn parse_coef(mut s: &str) -> Result<(f64, &str), String> {
     let sign = match s.chars().next() {
         Some('-') => {
             s = s
@@ -51,33 +53,32 @@ fn parse_coef(mut s: &str) -> (f64, &str) {
             1.0
         }
         Some(_) => 1.0,
-        None => panic!("Cannot parse empty coef"),
+        None => return Err("Cannot parse empty coef".to_string()),
     };
 
-    // TODO: Error handling
     // find the delimiter character and put it in the rest
     let (num, mut rest) = chop_integer(s).unwrap_or((1, s));
     let num = num as f64;
 
     if rest.is_empty() {
-        return (num * sign, rest);
+        return Ok((num * sign, rest));
     }
 
     if rest.starts_with('/') {
         // parse a fraction
         rest = rest.split_once('/').expect("first char is '/'").1;
-        // TODO: if this unwrap panics, we have an error in the symop definition
-        // there must be a number following the '/'
-        let (den, r) = chop_integer(rest).unwrap();
+        let (den, r) = chop_integer(rest).ok_or_else(|| {
+            format!("Expected integer denominator of fraction while parsing symmetry operation coefficient. Got '{s}'")
+        })?;
         rest = r;
         let den = den as f64;
-        return (num / den * sign, rest);
+        return Ok((num / den * sign, rest));
     }
 
-    (num * sign, rest)
+    Ok((num * sign, rest))
 }
 
-fn parse_xyz(mut s: &str) -> [f64; 4] {
+fn parse_xyz(mut s: &str) -> Result<[f64; 4], String> {
     let mut output = [0.0, 0.0, 0.0, 0.0];
     loop {
         // sequence of (+|-)?(num)?(/num)?(x|y|z)?
@@ -90,7 +91,7 @@ fn parse_xyz(mut s: &str) -> [f64; 4] {
         if s.is_empty() {
             break;
         }
-        let (coef, rest) = parse_coef(s);
+        let (coef, rest) = parse_coef(s)?;
         s = rest;
         s = s.trim_start();
         match s.chars().next() {
@@ -108,11 +109,15 @@ fn parse_xyz(mut s: &str) -> [f64; 4] {
                 output[3] += coef;
                 break;
             }
-            Some(a) => panic!("There seems to be some error here. got {a}"),
+            Some(a) => {
+                return Err(format!(
+                    "Invalid direction. Expected x, y, or z, but got {a}"
+                ))
+            }
         }
     }
 
-    output
+    Ok(output)
 }
 
 impl FromStr for SymOp {
@@ -122,9 +127,9 @@ impl FromStr for SymOp {
         let Some((a, b, c)) = s.split(',').collect_tuple::<(&str, &str, &str)>() else {
             return Err(format!("Invalid number of components in symop: '{s}'"));
         };
-        let [w11, w21, w31, wx] = parse_xyz(a);
-        let [w12, w22, w32, wy] = parse_xyz(b);
-        let [w13, w23, w33, wz] = parse_xyz(c);
+        let [w11, w21, w31, wx] = parse_xyz(a)?;
+        let [w12, w22, w32, wy] = parse_xyz(b)?;
+        let [w13, w23, w33, wz] = parse_xyz(c)?;
         Ok(Self {
             #[rustfmt::skip]
             mat: Matrix4::new(
@@ -143,13 +148,13 @@ mod test {
 
     #[test]
     fn parse_identity() {
-        let op: SymOp = "x,y,z".parse().unwrap();
+        let op: SymOp = "x,y,z".parse().expect("valid symop");
         assert_eq!(op.mat, Matrix4::<f64>::identity())
     }
 
     #[test]
     fn parse_ok() {
-        let op: SymOp = "x+1/3,-y+x,-3z".parse().unwrap();
+        let op: SymOp = "x+1/3,-y+x,-3z".parse().expect("valid symop");
         #[rustfmt::skip]
         let exp = Matrix4::new(
             1.0,  1.0,  0.0, 1.0 / 3.0,
@@ -161,5 +166,11 @@ mod test {
         println!("{}", exp);
 
         assert_eq!(op.mat, exp);
+    }
+
+    #[test]
+    fn parse_coef_err() {
+        let coef = parse_coef("1/x").expect_err("invalid coef");
+        assert_eq!(coef, "Expected integer denominator of fraction while parsing symmetry operation coefficient. Got '1/x'")
     }
 }

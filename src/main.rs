@@ -113,14 +113,21 @@ fn main() {
 
         vf_constraints.push(*volume_fraction);
         structure_paths.push(path);
-        structures.push(Structure::from(&p.parse()));
+        structures.push(Structure::try_from(
+            &p.parse()
+        ).unwrap_or_else(|err| {
+            error!("Could not parse CIF '{path}': {err}");
+            std::process::exit(1);
+        }));
         strain_cfgs.push(strain);
         pref_o.push(po);
     }
 
-    let vf_generator = VFGenerator::try_new(&vf_constraints).map_err(|_| {
-        std::process::exit(1);
-    }).unwrap();
+    let vf_generator = VFGenerator::try_new(&vf_constraints)
+        .map_err(|_| {
+            std::process::exit(1);
+        })
+        .unwrap();
 
     let begin = Instant::now();
     let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {

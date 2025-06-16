@@ -59,7 +59,7 @@ pub struct CIFContents {
 }
 
 impl CIFContents {
-    pub fn get_symops(&self) -> Vec<SymOp> {
+    pub fn get_symops(&self) -> Result<Vec<SymOp>, String> {
         let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
             const SITE_KEYS: [[&'static str; 2]; 2] = [
@@ -79,19 +79,18 @@ impl CIFContents {
                 true
             }
         }) else {
-            panic!("No atom site label info in CIF")
+            return Err("No atom site label info in CIF".to_string());
         };
-        symops_table[symop_label]
-            .iter()
-            .map(|s| {
-                let Value::Text(s) = s else {
-                    // TODO: error handling
-                    panic!("Invalid symmetry operation. needs to be a string");
-                };
-                // TODO: error handling of symop invalid
-                s.parse::<SymOp>().unwrap()
-            })
-            .collect_vec()
+        let mut ret = Vec::with_capacity(symops_table[symop_label].len());
+        for s in symops_table[symop_label].iter() {
+            let Value::Text(s) = s else {
+                return Err("Invalid symmetry operation. needs to be a string".to_string());
+            };
+
+            ret.push(s.parse::<SymOp>()?)
+        }
+
+        Ok(ret)
     }
 
     pub fn get_lattice(&self) -> Lattice {
@@ -126,7 +125,7 @@ impl CIFContents {
         }
     }
 
-    pub fn get_sites(&self) -> Vec<Site> {
+    pub fn get_sites(&self) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
             const SITE_KEYS: [&'static str; 5] = [
                 "_atom_site_type_symbol",
@@ -140,7 +139,7 @@ impl CIFContents {
             panic!("No atom site label info in CIF")
         };
         let n = site_table["_atom_site_type_symbol"].len();
-        let symops = self.get_symops();
+        let symops = self.get_symops()?;
 
         let site_at_index = |i: usize| -> Site {
             let label = &site_table["_atom_site_type_symbol"][i];
@@ -213,15 +212,15 @@ impl CIFContents {
             }
             sites.push(site.normalized())
         }
-        sites
+        Ok(sites)
     }
 
-    pub fn get_sg_no_and_class(&self) -> (u8, SGClass) {
+    pub fn get_sg_no_and_class(&self) -> Result<(u8, SGClass), String> {
         let sg_no = self
             .kvs
             .get("_space_group_IT_number")
             .or_else(|| self.kvs.get("_symmetry_Int_Tables_number"))
-            .expect("symmetry group should be present in CIF");
+            .ok_or_else(|| "No symmetry group in cif. checked '_symmetry_Int_Tables_number' and '_space_group_IT_number'.".to_string())?;
         let sg_no = match *sg_no {
             Value::Int(sg_no) => {
                 if sg_no > 230 || sg_no < 1 {
@@ -237,7 +236,7 @@ impl CIFContents {
         };
 
         let sg_class = SGClass::try_from(sg_no).expect("we test this above");
-        (sg_no, sg_class)
+        Ok((sg_no, sg_class))
     }
 }
 
