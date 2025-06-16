@@ -141,11 +141,11 @@ impl CIFContents {
         let n = site_table["_atom_site_type_symbol"].len();
         let symops = self.get_symops()?;
 
-        let site_at_index = |i: usize| -> Site {
+        let site_at_index = |i: usize| -> Result<Site, String> {
             let label = &site_table["_atom_site_type_symbol"][i];
             let sp: Species = match label {
                 Value::Text(label) => label.parse().unwrap(),
-                _ => todo!("Invalid site label"),
+                _ => return Err("Invalid site label".to_string()),
             };
             let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
             // TODO: remove unwraps, proper error handling
@@ -154,11 +154,11 @@ impl CIFContents {
                 site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
-            Site {
+            Ok(Site {
                 species: sp,
                 coords,
                 occu,
-            }
+            })
         };
 
         fn site_exists_periodic(site: &Site, sites: &[Site]) -> bool {
@@ -177,9 +177,11 @@ impl CIFContents {
         // we parsed the symops, but still need to remove duplicate sites
         let mut sites = Vec::new();
         for base_site in (0..n).map(site_at_index) {
-            // if site_exists_periodic(&base_site, &sites) {
-            //     continue;
-            // }
+            let base_site = base_site?;
+
+            if site_exists_periodic(&base_site, &sites) {
+                continue;
+            }
             sites.push(base_site.normalized());
 
             for op in symops.iter() {
@@ -189,29 +191,13 @@ impl CIFContents {
                     occu: base_site.occu.clone(),
                 };
 
-                if site_exists_periodic(&base_site, &sites) {
+                if site_exists_periodic(&s, &sites) {
                     continue;
                 }
                 sites.push(s.normalized());
             }
         }
 
-        for site in (0..n)
-            .map(site_at_index)
-            .map(|base_site| {
-                symops.iter().map(move |s| Site {
-                    coords: s.apply(base_site.coords.clone()),
-                    species: base_site.species.clone(),
-                    occu: base_site.occu.clone(),
-                })
-            })
-            .flatten()
-        {
-            if site_exists_periodic(&site, &sites) {
-                continue;
-            }
-            sites.push(site.normalized())
-        }
         Ok(sites)
     }
 
