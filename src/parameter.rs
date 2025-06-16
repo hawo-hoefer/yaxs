@@ -113,7 +113,6 @@ coefs: [0.1, [1.2, 0.8], 0.8]
             V1([Parameter<f64>; 2]),
         }
 
-        let err = serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
-        panic!()
+        let _err = serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
     }
 }

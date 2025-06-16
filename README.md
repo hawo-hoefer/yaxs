@@ -54,9 +54,12 @@ Further information on the input file structure can be found [here](./inputfile.
 - [x] feature: fixed strains for each structure as input (that way, we can simulate specific strain conditions more easily)
 - [x] feature: weights for the volume fractions of each phase or make them fixed
     - volume fractions can be fixed optionally 
-- [ ] feature: Add support for impurity peaks
 - [x] feature: bake git commit hash into executable
+- [ ] feature: Add support for impurity peaks
 - [ ] EDXRD: add fluorescence peaks?
+- [ ] Implement support for noise
+    - Usually noise is added during augmentation anyway, so we may not need this
+    - therefore, low priority
 - [ ] peak intensities
     - what about the computation of structure factors?
     - keep using pymatgen's version for now -> i really should understand what is going on there
@@ -64,9 +67,6 @@ Further information on the input file structure can be found [here](./inputfile.
     - right now, the cpu backend is single threaded, which is really slow
     - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
     - therefore, this is low priority
-- [ ] Implement support for noise
-    - Usually noise is added during augmentation anyway, so we may not need this
-    - therefore, low priority
 - [ ] Debye-Waller correction
     - not present in cif
     - in `pymatgen`, they are passed separately

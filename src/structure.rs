@@ -145,15 +145,16 @@ pub struct Structure {
     pub sg_class: SGClass,
 }
 
-impl From<&CIFContents> for Structure {
-    fn from(value: &CIFContents) -> Self {
-        let (sg_no, sg_class) = value.get_sg_no_and_class();
-        Structure {
-            sites: value.get_sites(),
+impl TryFrom<&CIFContents> for Structure {
+    type Error = String;
+    fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
+        let (sg_no, sg_class) = value.get_sg_no_and_class()?;
+        Ok(Structure {
+            sites: value.get_sites()?,
             lat: value.get_lattice(),
             sg_no,
             sg_class,
-        }
+        })
     }
 }
 

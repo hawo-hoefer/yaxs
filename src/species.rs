@@ -76,10 +76,22 @@ impl Species {
     fn try_parse_ionization(val: &str) -> Option<(i16, &str)> {
         // check for single character ionization like Fe+ or Cu-
         match val.chars().next() {
-            Some('+') => return Some((1, std::str::from_utf8(&val.as_bytes()[1..]).unwrap())),
-            Some('-') => return Some((-1, std::str::from_utf8(&val.as_bytes()[1..]).unwrap())),
-            Some('*') => todo!("'*' - ionization specifier"),
-            Some('(') => todo!("ionization starting with '(' - ionization string: '{val}'"),
+            Some('+') => {
+                return Some((
+                    1,
+                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character"),
+                ))
+            }
+            Some('-') => {
+                return Some((
+                    -1,
+                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character"),
+                ))
+            }
+            Some('*') => unimplemented!("'*' - ionization specifier"),
+            Some('(') => {
+                unimplemented!("ionization starting with '(' - ionization string: '{val}'")
+            }
             Some(_) => (),
             None => return None,
         }
