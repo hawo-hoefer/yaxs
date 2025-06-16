@@ -222,17 +222,18 @@ impl CIFContents {
             .or_else(|| self.kvs.get("_symmetry_Int_Tables_number"))
             .ok_or_else(|| "No symmetry group in cif. checked '_symmetry_Int_Tables_number' and '_space_group_IT_number'.".to_string())?;
         let sg_no = match *sg_no {
-            Value::Int(sg_no) => {
-                if sg_no > 230 || sg_no < 1 {
-                    panic!(
-                        "space group number is out of range. Needs to be in [1, 230], got {sg_no}"
-                    )
-                }
-                sg_no as u8
+            // TODO: add test for invalid sg_no
+            Value::Int(sg_no) if sg_no > 230 || sg_no < 1 => {
+                return Err(format!(
+                    "space group number is out of range. Needs to be in [1, 230], got {sg_no}"
+                ))
             }
             Value::Inapplicable | Value::Unknown | Value::Float(_) | Value::Text(_) => {
-                panic!("space group number is of wrong type. Required Integer, got {sg_no:?}")
+                return Err(format!(
+                    "space group number is of wrong type. Required Integer, got {sg_no:?}"
+                ))
             }
+            Value::Int(sg_no) => sg_no as u8,
         };
 
         let sg_class = SGClass::try_from(sg_no).expect("we test this above");
@@ -258,7 +259,7 @@ impl<'a> CifParser<'a> {
             if self.c.starts_with(DATA_HEADER_START) {
                 unimplemented!("supporting CIFs with multiple data blocks")
             }
-            match self.parse_data_item() {
+            match self.parse_data_item()? {
                 DataItem::KV(k, v) => {
                     if kvs.contains_key(&k) {
                         return Err(format!("Duplicate Key '{k}' in CIF"));
@@ -340,24 +341,27 @@ impl<'a> CifParser<'a> {
         Ok(block_header)
     }
 
-    fn parse_tag(&mut self) -> &str {
+    fn parse_tag(&mut self) -> Result<&str, String> {
         let Some((tag, c0)) = self.c.split_once(|x: char| x.is_whitespace()) else {
-            panic!("Incomplete value")
+            return Err("Could not parse data item tag".to_string());
         };
         self.c = c0;
-        tag
+        Ok(tag)
     }
 
-    fn parse_data_item(&mut self) -> DataItem {
+    fn parse_data_item(&mut self) -> Result<DataItem, String> {
         if self.c.starts_with('_') {
             // we are reading a tag
-            let tag = self.parse_tag().to_string();
+            let tag = self.parse_tag()?.to_string();
             let val = self.parse_value();
-            return DataItem::KV(tag.to_string(), val);
+            return Ok(DataItem::KV(tag.to_string(), val));
         } else if self.c.starts_with(LOOP_HEADER_START) {
-            return DataItem::Table(self.parse_loop());
+            return Ok(DataItem::Table(self.parse_loop()?));
         }
-        panic!("WTF Where are we? Parser is at: {c}", c = self.c)
+        Err(format!(
+            "Invalid parser state. Parser is at: {c}",
+            c = self.c
+        ))
     }
 
     fn consume_once(&mut self, c: char) -> bool {
@@ -446,14 +450,14 @@ impl<'a> CifParser<'a> {
         Ok(Value::Float(v))
     }
 
-    fn parse_loop(&mut self) -> Table {
+    fn parse_loop(&mut self) -> Result<Table, String> {
         self.c = std::str::from_utf8(&self.c.as_bytes()[LOOP_HEADER_START.len()..]).unwrap();
         self.skip_whitespace();
         let mut kvs = Vec::new();
         while self.c.starts_with('_') {
             // while tokens start with '_', we are reading column names
 
-            kvs.push((self.parse_tag().to_string(), Vec::new()));
+            kvs.push((self.parse_tag()?.to_string(), Vec::new()));
             self.skip_whitespace();
         }
 
@@ -468,7 +472,7 @@ impl<'a> CifParser<'a> {
             self.skip_ws_comments();
         }
 
-        kvs.drain(..).collect()
+        Ok(kvs.drain(..).collect())
     }
 }
 
@@ -518,7 +522,7 @@ A 1 2.0 123.2(15)
 B 2.0(32) 1.0 test",
         );
         use Value::*;
-        let table = p.parse_loop();
+        let table = p.parse_loop().expect("valid loop definition");
         assert_eq!(
             table["_col_a"],
             [Text("A".to_string()), Text("B".to_string())]
@@ -538,7 +542,7 @@ test test
 test
 ;",
         );
-        let di = p.parse_data_item();
+        let di = p.parse_data_item().expect("valid data item definition");
         assert_eq!(
             di,
             DataItem::KV(
@@ -593,7 +597,7 @@ hell  -2";
         use Value::*;
 
         let mut p = CifParser::new(data);
-        let DataItem::Table(item) = p.parse_data_item() else {
+        let DataItem::Table(item) = p.parse_data_item().expect("valid data item") else {
             panic!()
         };
         assert_eq!(
@@ -601,7 +605,7 @@ hell  -2";
             [Text("Hf2+".to_string()), Text("He2-".to_string())]
         );
         assert_eq!(item["_ox"], [Int(2), Text("-2".to_string())]);
-        let DataItem::Table(item) = p.parse_data_item() else {
+        let DataItem::Table(item) = p.parse_data_item().expect("valid table header") else {
             panic!()
         };
         assert_eq!(
@@ -614,7 +618,7 @@ hell  -2";
     #[test]
     fn parse_float_ending_in_dot() {
         let mut p = CifParser::new("_test 1.");
-        let item = p.parse_data_item();
+        let item = p.parse_data_item().expect("valid kv pair");
         assert_eq!(item, DataItem::KV("_test".to_string(), Value::Float(1.0)))
     }
 
@@ -633,7 +637,7 @@ hell  -2";
         use Value::*;
 
         let mut p = CifParser::new(data);
-        let DataItem::Table(item) = p.parse_data_item() else {
+        let DataItem::Table(item) = p.parse_data_item().expect("valid table") else {
             panic!()
         };
         assert_eq!(
@@ -641,7 +645,7 @@ hell  -2";
             [Text("Hf2+".to_string()), Text("He2-".to_string())]
         );
         assert_eq!(item["_ox"], [Int(2), Float(2.0)]);
-        let DataItem::Table(item) = p.parse_data_item() else {
+        let DataItem::Table(item) = p.parse_data_item().expect("valid table header") else {
             panic!()
         };
         assert_eq!(
@@ -654,12 +658,15 @@ hell  -2";
     #[test]
     fn parse_unknown_inapplicable() {
         let mut p = CifParser::new("_inapplicable .\n _unknown ?\n");
-        let DataItem::KV(_, Value::Inapplicable) = p.parse_data_item() else {
+        let DataItem::KV(_, Value::Inapplicable) =
+            p.parse_data_item().expect("valid kv definition")
+        else {
             panic!()
         };
 
         p.skip_whitespace();
-        let DataItem::KV(_, Value::Unknown) = p.parse_data_item() else {
+        let DataItem::KV(_, Value::Unknown) = p.parse_data_item().expect("valid kv definition")
+        else {
             panic!()
         };
         assert_eq!(p.c, "\n");
@@ -703,7 +710,7 @@ He2- 2.
     #[test]
     fn parse_leading_new_line() {
         let mut p = CifParser::new("_test 1.");
-        let item = p.parse_data_item();
+        let item = p.parse_data_item().expect("valid kv definition");
         assert_eq!(item, DataItem::KV("_test".to_string(), Value::Float(1.0)))
     }
 
