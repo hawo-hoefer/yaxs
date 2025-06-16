@@ -245,12 +245,9 @@ impl<'a> CifParser<'a> {
         Self { c: data }
     }
 
-    pub fn parse(&mut self) -> CIFContents {
+    pub fn parse(&mut self) -> Result<CIFContents, String> {
         self.skip_ws_comments();
-        let bn = self
-            .parse_block_name()
-            .expect("need block name")
-            .to_string();
+        let bn = self.parse_block_name()?.to_string();
         let mut kvs = HashMap::new();
         let mut tables = Vec::new();
         while !self.c.is_empty() {
@@ -259,12 +256,12 @@ impl<'a> CifParser<'a> {
                 break;
             }
             if self.c.starts_with(DATA_HEADER_START) {
-                todo!("handle multiple data blocks")
+                unimplemented!("supporting CIFs with multiple data blocks")
             }
             match self.parse_data_item() {
                 DataItem::KV(k, v) => {
                     if kvs.contains_key(&k) {
-                        todo!("Duplicate Key '{k}' in CIF");
+                        return Err(format!("Duplicate Key '{k}' in CIF"));
                     };
                     let _ = kvs.insert(k, v);
                 }
@@ -273,11 +270,11 @@ impl<'a> CifParser<'a> {
                 }
             }
         }
-        CIFContents {
+        Ok(CIFContents {
             block_name: bn,
             kvs,
             tables,
-        }
+        })
     }
 
     fn skip_comments(&mut self) {
@@ -565,7 +562,7 @@ _text_field ;
 hello hello
 ;",
         );
-        let vals = p.parse();
+        let vals = p.parse().expect("valid cif contents");
         assert_eq!(vals.block_name, "dummy_block_name");
         let kvs = vals.kvs;
         assert_eq!(kvs["_integer_value"], Value::Int(12));
@@ -680,7 +677,7 @@ He2- 2.
 #arst
 ";
         let mut p = CifParser::new(data);
-        let CIFContents { kvs, tables, .. } = p.parse();
+        let CIFContents { kvs, tables, .. } = p.parse().expect("valid cif contents");
         let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
         assert_eq!(kvs, kvs_exp);
         assert_eq!(tables.len(), 1);
@@ -697,7 +694,7 @@ Hf2+ 2
 He2- 2.
 #arst";
         let mut p = CifParser::new(data);
-        let CIFContents { kvs, tables, .. } = p.parse();
+        let CIFContents { kvs, tables, .. } = p.parse().expect("valid cif contents");
         let kvs_exp = HashMap::from([("_data".to_string(), Value::Int(1234))]);
         assert_eq!(kvs, kvs_exp);
         assert_eq!(tables.len(), 1);
@@ -729,7 +726,7 @@ _cell_length_c 12
             block_name,
             kvs,
             tables,
-        } = p.parse();
+        } = p.parse().expect("valid cif contents");
         assert_eq!(block_name, "dummy_block_name");
         let mut table = HashMap::new();
         table.insert(

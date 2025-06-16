@@ -113,12 +113,16 @@ fn main() {
 
         vf_constraints.push(*volume_fraction);
         structure_paths.push(path);
-        structures.push(Structure::try_from(
-            &p.parse()
-        ).unwrap_or_else(|err| {
-            error!("Could not parse CIF '{path}': {err}");
-            std::process::exit(1);
-        }));
+        structures.push(
+            Structure::try_from(&p.parse().unwrap_or_else(|err| {
+                error!("Invalid CIF Syntax for '{path}': {err}");
+                std::process::exit(1)
+            }))
+            .unwrap_or_else(|err| {
+                error!("Invalid contents for CIF '{path}': {err}");
+                std::process::exit(1);
+            }),
+        );
         strain_cfgs.push(strain);
         pref_o.push(po);
     }
