@@ -62,6 +62,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - [ ] TODO: really check if this is a sensible assumption
 - [x] feature: Add support for impurity peaks
 - [ ] EDXRD: add fluorescence peaks?
+- [ ] EDXRD: deal with filters
 - [ ] Implement support for noise
     - Usually noise is added during augmentation anyway, so we may not need this
     - therefore, low priority
