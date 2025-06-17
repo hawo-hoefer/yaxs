@@ -1,5 +1,5 @@
 use super::{
-    render_peak, Discretizer, ImpurityPeak, PeakRenderParams, Peaks, RenderCommon, VFGenerator,
+    render_peak, Discretizer, PeakRenderParams, Peaks, RenderCommon, VFGenerator,
 };
 use crate::background::Background;
 use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};

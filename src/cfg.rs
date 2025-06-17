@@ -157,15 +157,112 @@ pub struct StructureDef {
     pub volume_fraction: Option<VolumeFraction>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Serialize, Debug, Clone)]
 pub struct ImpuritySpec {
     d_hkl_ams: Parameter<f64>,
     intensity: Parameter<f64>,
-    probability: Option<f64>,
-    n_peaks: Option<usize>,
     eta: Parameter<f64>,
     mean_ds_nm: Parameter<f64>,
+    probability: Option<f64>,
+    n_peaks: Option<usize>,
+}
+
+impl ImpuritySpec {
+    pub fn new(
+        d_hkl_ams: Parameter<f64>,
+        intensity: Parameter<f64>,
+        eta: Parameter<f64>,
+        mean_ds_nm: Parameter<f64>,
+        probability: Option<Probability>,
+        n_peaks: Option<usize>,
+    ) -> Self {
+        Self {
+            d_hkl_ams,
+            intensity,
+            eta,
+            mean_ds_nm,
+            probability: probability.map(|p| p.0),
+            n_peaks,
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Copy)]
+pub struct Probability(f64);
+
+impl Probability {
+    pub fn new(p: f64) -> Option<Self> {
+        if p < 0.0 || p > 1.0 {
+            return None;
+        }
+
+        Some(Self(p))
+    }
+}
+
+impl<'de> Deserialize<'de> for Probability {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ProbVisitor;
+        impl<'de> serde::de::Visitor<'de> for ProbVisitor {
+            type Value = Probability;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(formatter, "struct Probability")
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let p = Probability::new(v);
+                p.ok_or(serde::de::Error::invalid_value(
+                    serde::de::Unexpected::Float(v),
+                    &"value in the range [0, 1]",
+                ))
+            }
+        }
+
+        deserializer.deserialize_f64(ProbVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for ImpuritySpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct _ImpuritySpec {
+            d_hkl_ams: Parameter<f64>,
+            intensity: Parameter<f64>,
+            eta: Parameter<f64>,
+            mean_ds_nm: Parameter<f64>,
+            probability: Option<Probability>,
+            n_peaks: Option<usize>,
+        }
+
+        let _ImpuritySpec {
+            d_hkl_ams,
+            intensity,
+            eta,
+            mean_ds_nm,
+            probability,
+            n_peaks,
+        } = _ImpuritySpec::deserialize(deserializer)?;
+
+        Ok(ImpuritySpec::new(
+            d_hkl_ams,
+            intensity,
+            eta,
+            mean_ds_nm,
+            probability,
+            n_peaks,
+        ))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

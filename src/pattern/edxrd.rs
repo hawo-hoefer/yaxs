@@ -11,7 +11,7 @@ use crate::pattern::lorentz_factor;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
-use super::{Discretizer, ImpurityPeak, Peak, PeakRenderParams, Peaks, RenderCommon, VFGenerator};
+use super::{Discretizer, Peak, PeakRenderParams, Peaks, RenderCommon, VFGenerator};
 
 /// Wiggler Beamline Parameters
 ///

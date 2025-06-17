@@ -19,6 +19,7 @@ sample_parameters:
       intensity: 1e2
       eta: 0.5
       mean_ds_nm: 10
+      probability: 0.5
   structures:
     - path: ./cif/HfO2_polar_orthorombic_matproj.cif
       strain: !Full [1.0, 1.1, [0.8, 1.2], 0.8, 0.7, 1.0] # full strain matrix

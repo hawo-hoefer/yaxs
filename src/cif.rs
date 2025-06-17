@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::num::ParseFloatError;
 
 use itertools::Itertools;
 use nalgebra::{Matrix3, Vector3};
