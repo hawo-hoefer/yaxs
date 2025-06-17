@@ -98,18 +98,33 @@ They are shared for energy- and angle dispersive XRD simulation.
 sample_parameters:
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
+  impurities:                                           # (Optional) list of specifications of impurity peaks
+    - d_hkl_ams: [2.5, 3.5]                                 # impurity d-hkl in amstrong
+      intensity: 1e2                                        # integral over peak
+      eta: 0.5                                              # pseudo-voigt eta
+      mean_ds_nm: 10                                        # mean domain size for the peak to compute it's width
+      n_peaks: 2                                            # (Optional) number of peaks at the given position
+      probability:                                          # (Optional) probability of peak existance
   structure_permutations: 100                           # number of structure permutations to simulate
   structures:                                           # phases and their preferred orientation
                                                         # configuration using march-dollase model
     - path: phase-1.cif                                 # path to phase's cif, no preferred orientation here
     - path: phase-2-with-preferred-orientation.cif
-      preferred_orientation:                            # march-dollase parameters (optional)
+      preferred_orientation:                            # march parameters for preferred orientation (optional)
         hkl: [1, 1, 1]                                  # axis of preferred orientation
         r: 0.9                                          # march parameter
       strain: 0.01                                      # optional strain specification
       volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
     - path: phase-3.cif
 ```
+### Impurities
+The optional field `impurities` contains a list of impurity peaks. They may be used to specify extra peaks which occur in experimental samples but don't have a particular association with the phases of interest.
+- `d_hkl_ams` specifies the peak position using it's crystallographic plane distance in amstrong (range or value). 
+- `intensity` specifies the integral over the peak's pseudo-voigt function (range or value)
+- `eta` specifies the peak's pseudo-voigt mixing parameter eta (range or value)
+- `mean_ds_nm` specifies the domain size in nanometers used for computing the peak's fwhm (range or value)
+- `n_peaks` optionally specifies the number of peaks at the position indicated by `d_hkl_ams`. This only makes sense if some of the parameters are ranges, as the ranges will be sampled multiple times then.
+- `probability` optionally specifies the probability (in the range [0, 1]) that the described peak exists. If `n_peaks` is larger than 0, each peak's existance is decided independently of the other's.
 
 ### Structure Definition
 The `structures` field specifies a list of phases and their modifications. 
