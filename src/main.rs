@@ -97,6 +97,7 @@ fn main() {
         preferred_orientation: po,
         strain,
         volume_fraction,
+        mean_ds_nm: _,
     } in cfg.sample_parameters.structures.iter()
     {
         let mut reader = BufReader::new(

@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use rand::distr::Distribution;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -177,6 +176,7 @@ pub struct StructureDef {
     pub preferred_orientation: Option<MarchDollaseCfg>,
     pub strain: Option<StrainCfg>,
     pub volume_fraction: Option<VolumeFraction>,
+    pub mean_ds_nm: Parameter<f64>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -291,7 +291,6 @@ impl<'de> Deserialize<'de> for ImpuritySpec {
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
-    pub mean_ds_nm: Parameter<f64>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
     pub eta: Parameter<f64>,
@@ -349,7 +348,7 @@ impl JobCfg<'_> {
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         vf_generator: &VFGenerator<'a>,
         angle_disperse: &'a AngleDisperse,
-        mut rng: &mut impl Rng,
+        rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
             caglioti: Caglioti { u, v, w },
@@ -363,24 +362,19 @@ impl JobCfg<'_> {
         } = angle_disperse;
 
         let SampleParameters {
-            structures: _,
-            mean_ds_nm,
+            structures,
             eta,
             structure_permutations,
             impurities,
         } = &self.sample_params;
 
-        let n_phases = all_simulated_peaks.len();
-
         let eta = eta.generate(rng);
-        let ds_sampler = mean_ds_nm.sampler();
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
-        match ds_sampler {
-            Ok(sampler) => {
-                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
-            }
-            Err(v) => mean_ds_nm.resize(n_phases, v),
-        }
+        let mean_ds_nm = structures
+            .iter()
+            .map(|s| s.mean_ds_nm.generate(rng))
+            .collect_vec()
+            .into_boxed_slice();
+
         let u = u.generate(rng);
         let v = v.generate(rng);
         let w = w.generate(rng);
@@ -407,7 +401,7 @@ impl JobCfg<'_> {
             meta: ADXRDMeta {
                 vol_fractions: vf_generator.generate(rng),
                 eta,
-                mean_ds_nm: mean_ds_nm.into_boxed_slice(),
+                mean_ds_nm,
                 u,
                 v,
                 w,
@@ -425,27 +419,22 @@ impl JobCfg<'_> {
         all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
         energy_disperse: &'a EnergyDisperse,
         vf_generator: &VFGenerator<'a>,
-        mut rng: &mut impl Rng,
+        rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let SampleParameters {
-            mean_ds_nm,
             eta,
             structure_permutations,
-            structures: _,
+            structures,
             impurities,
         } = &self.sample_params;
 
-        let n_phases = all_simulated_peaks.len();
-
         let eta = eta.generate(rng);
-        let ds_sampler = mean_ds_nm.sampler();
-        let mut mean_ds_nm: Vec<f64> = Vec::with_capacity(n_phases);
-        match ds_sampler {
-            Ok(sampler) => {
-                mean_ds_nm.extend(sampler.sample_iter(&mut rng).take(n_phases));
-            }
-            Err(v) => mean_ds_nm.resize(n_phases, v),
-        }
+
+        let mean_ds_nm = structures
+            .iter()
+            .map(|s| s.mean_ds_nm.generate(rng))
+            .collect_vec()
+            .into_boxed_slice();
 
         let impurity_peaks = impurities
             .as_ref()
@@ -467,7 +456,7 @@ impl JobCfg<'_> {
             meta: EDXRDMeta {
                 vol_fractions: vf_generator.generate(rng),
                 eta,
-                mean_ds_nm: mean_ds_nm.into_boxed_slice(),
+                mean_ds_nm,
                 theta_rad: energy_disperse.theta_deg.to_radians(),
             },
         }

@@ -11,7 +11,6 @@ kind: !EnergyDisperse
       distance_from_device_m: 100
 
 sample_parameters:
-  mean_ds_nm: 100.0
   eta: 0.5
   structure_permutations: 100
   impurities:
@@ -23,18 +22,22 @@ sample_parameters:
   structures:
     - path: ./cif/HfO2_polar_orthorombic_matproj.cif
       strain: !Full [1.0, 1.1, [0.8, 1.2], 0.8, 0.7, 1.0] # full strain matrix
+      mean_ds_nm: 100.0
     - path: ./cif/HfO2_monoclinic_27313.cif
       strain: !Ortho # orthogonal strain
         [1.0, [0.8, 1.2], 1.0] 
+      mean_ds_nm: 100.0
     - path: ./cif/Ir_53813.cif
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.9
         strain: !Maximum 0.01
+      mean_ds_nm: 100.0
     - path: ./cif/Al2O3_10425.cif
       preferred_orientation:
         hkl: [0, 2, 4]
         r: 0.3
+      mean_ds_nm: 100.0
     # ./cif/SiO2_16331.cif
     # ./cif/Si_51688.cif
     # ./cif/Si_101017.cif
