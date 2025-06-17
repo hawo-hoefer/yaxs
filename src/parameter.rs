@@ -6,14 +6,33 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq)]
 #[serde(untagged)]
-pub enum Parameter<T>
-where
-    T: PartialOrd + std::fmt::Debug,
-{
+pub enum Parameter<T> {
     Fixed(T),
     Range(T, T),
     // Choice(Vec<T>),
     // ChoiceWithWeights(Vec<T>, Vec<f32>)
+}
+
+impl<T> Parameter<T> {
+    pub fn upper_bound(&self) -> T
+    where
+        T: Copy,
+    {
+        match self {
+            Parameter::Fixed(v) => *v,
+            Parameter::Range(_, v) => *v,
+        }
+    }
+
+    pub fn lower_bound(&self) -> T
+    where
+        T: Copy,
+    {
+        match self {
+            Parameter::Fixed(v) => *v,
+            Parameter::Range(v, _) => *v,
+        }
+    }
 }
 
 impl<'de, T> Deserialize<'de> for Parameter<T>
@@ -113,6 +132,7 @@ coefs: [0.1, [1.2, 0.8], 0.8]
             V1([Parameter<f64>; 2]),
         }
 
-        let _err = serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
+        let _err =
+            serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
     }
 }

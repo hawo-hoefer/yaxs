@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use rand::Rng;
+use serde::de::Visitor;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
@@ -50,11 +51,162 @@ pub struct Caglioti {
     pub w: Parameter<f64>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub enum Noise {
-    None,
-    Gaussian { sigma_min: f64, sigma_max: f64 },
-    // Uniform // TODO
+    Gaussian {
+        sigma: Parameter<f64>,
+        scale: Parameter<f64>,
+    },
+    Uniform {
+        min: Parameter<f64>,
+        max: Parameter<f64>,
+    },
+}
+
+impl<'de> Deserialize<'de> for Noise {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Sigma,
+            Scale,
+            Min,
+            Max,
+        }
+
+        struct NoiseVisitor;
+        impl<'de> Visitor<'de> for NoiseVisitor {
+            type Value = Noise;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct Noise")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                use serde::de;
+
+                let mut sigma: Option<Parameter<f64>> = None;
+                let mut scale: Option<Parameter<f64>> = None;
+                let mut min: Option<Parameter<f64>> = None;
+                let mut max: Option<Parameter<f64>> = None;
+
+                fn inv_field_msg(name: &'static str) -> String {
+                    format!("invalid field {} expected either 'scale' and 'sigma' for gaussian distribution, or 'min' and 'max' for uniform distribution", name)
+                }
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Sigma => {
+                            if sigma.is_some() {
+                                return Err(de::Error::duplicate_field("sigma"));
+                            }
+
+                            if min.is_some() || max.is_some() {
+                                return Err(de::Error::custom(inv_field_msg("sigma")));
+                            }
+
+                            let v: Parameter<f64> = map.next_value()?;
+                            match v {
+                                Parameter::Fixed(v) if v <= 0.0 => {
+                                    return Err(de::Error::invalid_value(
+                                        de::Unexpected::Float(v),
+                                        &"a value larger than 0.0",
+                                    ));
+                                }
+                                Parameter::Range(lo, _) if lo <= 0.0 => {
+                                    return Err(de::Error::invalid_value(
+                                        de::Unexpected::Float(lo),
+                                        &"lower bound of gaussian standard deviation range needs to be larger than 0.0",
+                                    ));
+                                }
+                                _ => (),
+                            }
+                            sigma = Some(v);
+                        }
+                        Field::Scale => {
+                            if scale.is_some() {
+                                return Err(de::Error::duplicate_field("Scale"));
+                            }
+
+                            if min.is_some() || max.is_some() {
+                                return Err(de::Error::custom(inv_field_msg("scale")));
+                            }
+
+                            scale = Some(map.next_value()?);
+                        }
+                        Field::Min => {
+                            if min.is_some() {
+                                return Err(de::Error::duplicate_field(""));
+                            }
+
+                            if scale.is_some() || sigma.is_some() {
+                                return Err(de::Error::custom(inv_field_msg("min")));
+                            }
+
+                            let maybe_min: Parameter<f64> = map.next_value()?;
+                            if let Some(max) = max {
+                                if max.lower_bound() < maybe_min.upper_bound() {
+                                    return Err(de::Error::invalid_value(
+                                        de::Unexpected::Float(maybe_min.upper_bound()),
+                                        &"a value smaller than max (or it's lower bound)",
+                                    ));
+                                }
+                            }
+
+                            min = Some(maybe_min);
+                        }
+                        Field::Max => {
+                            if max.is_some() {
+                                return Err(de::Error::duplicate_field(""));
+                            }
+
+                            if scale.is_some() || sigma.is_some() {
+                                return Err(de::Error::custom(inv_field_msg("max")));
+                            }
+
+                            let maybe_max: Parameter<f64> = map.next_value()?;
+                            if let Some(min) = min {
+                                if maybe_max.lower_bound() < min.upper_bound() {
+                                    return Err(de::Error::invalid_value(
+                                        de::Unexpected::Float(maybe_max.lower_bound()),
+                                        &"a value larger than min (or it's upper bound)",
+                                    ));
+                                }
+                            }
+                            max = Some(maybe_max);
+                        }
+                    }
+                }
+
+                if scale.is_some() || sigma.is_some() {
+                    let scale = scale.ok_or_else(|| de::Error::missing_field("scale"))?;
+                    let sigma = sigma.ok_or_else(|| de::Error::missing_field("sigma"))?;
+
+                    return Ok(Noise::Gaussian { sigma, scale });
+                }
+
+                if min.is_some() || max.is_some() {
+                    let min: Parameter<f64> = min.ok_or_else(|| de::Error::missing_field("min"))?;
+                    let max: Parameter<f64> = max.ok_or_else(|| de::Error::missing_field("max"))?;
+
+                    return Ok(Noise::Uniform { min, max });
+                }
+
+                return Err(de::Error::custom(
+                    "Could not parse noise from no information",
+                ));
+            }
+        }
+
+        const FIELDS: &[&str] = &["sigma", "scale", "min", "max"];
+        deserializer.deserialize_struct("Noise", FIELDS, NoiseVisitor)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -66,7 +218,7 @@ pub struct AngleDisperse {
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
-    pub noise: Noise,
+    pub noise: Option<Noise>,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
 }
@@ -462,3 +614,5 @@ impl JobCfg<'_> {
         }
     }
 }
+
+compile_error! {"add tests for deserialization of noise"}
