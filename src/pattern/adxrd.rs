@@ -1,4 +1,6 @@
-use super::{render_peak, Discretizer, PeakRenderParams, Peaks, VFGenerator};
+use super::{
+    render_peak, Discretizer, PeakRenderParams, Peaks, RenderCommon, VFGenerator,
+};
 use crate::background::Background;
 use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};
 use crate::io::PatternMeta;
@@ -42,12 +44,7 @@ impl EmissionLine {
 }
 
 pub struct DiscretizeAngleDisperse<'a> {
-    // all simulated peaks for all phases in order [structure, structure permutations]
-    pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
-    pub all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
-    pub all_strains: &'a Vec<Vec<Strain>>,
-    // indices to select from simulated peaks, length is number of structures
-    pub indices: Vec<usize>,
+    pub common: RenderCommon<'a>,
     pub emission_lines: &'a [EmissionLine],
     pub normalize: bool,
     pub meta: ADXRDMeta,
@@ -68,8 +65,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
         } = &self.meta;
 
         itertools::izip!(
-            self.all_simulated_peaks,
-            self.indices.clone(), // TODO: get rid of this clone
+            self.common.all_simulated_peaks,
+            self.common.indices.clone(), // TODO: get rid of this clone
             vol_fractions,
             mean_ds_nm
         )
@@ -98,14 +95,42 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             },
         )
         .flatten()
+        .chain(
+            self.common
+                .impurity_peaks
+                .iter()
+                .cartesian_product(self.emission_lines)
+                .map(move |(ip, emission_line)| {
+                    let wavelength_nm = emission_line.wavelength_ams / 10.0;
+                    let (two_theta_hkl_deg, peak_weight, fwhm) = ip.peak.get_adxrd_render_params(
+                        wavelength_nm,
+                        *u,
+                        *v,
+                        *w,
+                        ip.mean_ds_nm,
+                        1.0,
+                        0.0,
+                        self.goniometer_radius_mm,
+                    );
+                    PeakRenderParams {
+                        pos: two_theta_hkl_deg,
+                        intensity: peak_weight,
+                        fwhm,
+                        eta: ip.eta as f32,
+                    }
+                }),
+        )
     }
 
     fn n_peaks_tot(&self) -> usize {
-        self.all_simulated_peaks
+        (self
+            .common
+            .all_simulated_peaks
             .iter()
-            .zip(&self.indices)
+            .zip(&self.common.indices)
             .map(|(phase_peaks, idx)| phase_peaks[*idx].len())
             .sum::<usize>()
+            + self.common.impurity_peaks.len())
             * self.emission_lines.len()
     }
 
@@ -119,7 +144,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
 
     fn write_meta_data(&self, data: &mut PatternMeta, pat_id: usize) {
         use PatternMeta::*;
-        let n_phases = self.all_simulated_peaks.len();
+        let n_phases = self.common.all_simulated_peaks.len();
         match data {
             VolumeFractions(ref mut dst) => {
                 for i in 0..n_phases {
@@ -128,7 +153,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let strain = &self.all_strains[i][self.indices[i]];
+                    let strain = &self.common.all_strains[i][self.common.indices[i]];
 
                     for j in 0..6 {
                         dst[(pat_id, i, j)] = strain.0[j] as f32;
@@ -150,7 +175,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             }
             MarchParameter(dst) => {
                 for i in 0..n_phases {
-                    let po = &self.all_preferred_orientations[i][self.indices[i]];
+                    let po = &self.common.all_preferred_orientations[i][self.common.indices[i]];
                     dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
@@ -183,13 +208,13 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             background,
             sample_displacement_mu_m,
         } = &self.meta;
-        for (((phase_peaks, idx), vf), phase_mean_ds_nm) in self
-            .all_simulated_peaks
-            .iter()
-            .zip(&self.indices)
-            .zip(vol_fractions)
-            .zip(mean_ds_nm)
-        {
+
+        for (phase_peaks, idx, vf, phase_mean_ds_nm) in itertools::izip!(
+            self.common.all_simulated_peaks.iter(),
+            self.common.indices.iter(),
+            vol_fractions,
+            mean_ds_nm,
+        ) {
             let peaks = &phase_peaks[*idx];
             // * `pat`: target pattern
             // * `two_thetas`: two theta values of pattern's intensities in degrees
