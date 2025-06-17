@@ -60,7 +60,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - for EDXRD, we ignore it, since the distance between sample and detector is so large that 
         reasonable sample displacement values are not noticeable
     - [ ] TODO: really check if this is a sensible assumption
-- [ ] feature: Add support for impurity peaks
+- [x] feature: Add support for impurity peaks
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] Implement support for noise
     - Usually noise is added during augmentation anyway, so we may not need this
