@@ -1,27 +1,10 @@
 use nalgebra::Vector3;
-use rand::Rng;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
-use crate::parameter::Parameter;
 use crate::structure::Lattice;
 
 const HKL_NORM_TOL: f64 = 1e-3;
-
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
-pub struct MarchDollaseCfg {
-    pub hkl: Vector3<f64>,
-    pub r: Parameter<f64>,
-}
-
-impl MarchDollaseCfg {
-    pub fn generate(&self, rng: &mut impl Rng) -> MarchDollase {
-        MarchDollase {
-            hkl: self.hkl,
-            r: self.r.generate(rng),
-        }
-    }
-}
 
 #[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct MarchDollase {

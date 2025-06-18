@@ -11,7 +11,6 @@ pub mod structure;
 pub mod symop;
 pub mod io;
 pub mod preferred_orientation;
-pub mod parameter;
 
 #[cfg(not(feature = "cpu-only"))]
 pub mod discretize_cuda;

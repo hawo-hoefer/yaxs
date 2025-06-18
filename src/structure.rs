@@ -6,11 +6,12 @@ use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
+use crate::cfg::MarchDollaseCfg;
 use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::{MarchDollase, MarchDollaseCfg};
+use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
