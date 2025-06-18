@@ -8,11 +8,11 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::pattern::adxrd::generate_adxrd_jobs;
 use yaxs::pattern::edxrd::generate_edxrd_jobs;
-use yaxs::structure::{simulate_peaks_angle_disperse, simulate_peaks_energy_disperse, Structure};
+use yaxs::structure::Structure;
 
 use log::{error, info};
 
-use yaxs::cfg::{Config, JobCfg, SimulationKind, StructureDef};
+use yaxs::cfg::{Config, SimulationKind, SimulationParameters, StructureDef, ToDiscretize};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,
@@ -40,8 +40,8 @@ struct Cli {
 
 fn main() {
     colog::init();
-    let args = Cli::parse();
 
+    let args = Cli::parse();
     let f = match std::fs::File::open(&args.cfg) {
         Ok(f) => f,
         Err(e) => {
@@ -135,44 +135,15 @@ fn main() {
         .unwrap();
 
     let begin = Instant::now();
-    let (all_simulated_peaks, all_strains, all_preferred_orientations) = match &cfg.kind {
-        SimulationKind::AngleDisperse(angle_disperse) => {
-            let min_line = &angle_disperse
-                .emission_lines
-                .iter()
-                .min_by(|a, b| {
-                    a.wavelength_ams
-                        .partial_cmp(&b.wavelength_ams)
-                        .expect("no NaNs in wavelengths")
-                })
-                .expect("at least one emission line");
 
-            let (two_theta_range, wavelength_ams) =
-                (angle_disperse.two_theta_range, min_line.wavelength_ams);
-
-            info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
-            simulate_peaks_angle_disperse(
-                &cfg.sample_parameters,
-                &structures,
-                &pref_o,
-                &strain_cfgs,
-                &structure_paths,
-                two_theta_range,
-                wavelength_ams,
-                &mut rng,
-            )
-        }
-        SimulationKind::EnergyDisperse(energy_disperse) => simulate_peaks_energy_disperse(
-            &cfg.sample_parameters,
-            &structures,
-            &pref_o,
-            &strain_cfgs,
-            &structure_paths,
-            energy_disperse.energy_range_kev,
-            energy_disperse.theta_deg,
-            &mut rng,
-        ),
-    };
+    let to_discretize = cfg.kind.simulate_peaks(
+        structures.into(),
+        pref_o.into(),
+        strain_cfgs.into(),
+        structure_paths.into(),
+        cfg.sample_parameters.clone(),
+        &mut rng,
+    );
 
     let elapsed = begin.elapsed().as_secs_f64();
 
@@ -180,44 +151,38 @@ fn main() {
 
     match &cfg.kind {
         SimulationKind::AngleDisperse(angle_disperse) => {
-            let (jobs, xs, job_cfg) = generate_adxrd_jobs(
+            let (jobs, xs) = generate_adxrd_jobs(
                 &angle_disperse,
-                &cfg.sample_parameters,
+                &to_discretize,
                 &cfg.simulation_parameters,
-                &structures,
-                &all_simulated_peaks,
-                &all_strains,
-                &all_preferred_orientations,
                 &vf_generator,
                 &mut rng,
             );
             render_and_write_jobs(
-                job_cfg,
+                &to_discretize,
                 args,
                 &jobs,
                 &xs,
                 timestamp_started,
+                &cfg.simulation_parameters,
                 cfg.kind.clone(),
             )
         }
         SimulationKind::EnergyDisperse(energy_disperse) => {
-            let (jobs, xs, job_cfg) = generate_edxrd_jobs(
+            let (jobs, xs) = generate_edxrd_jobs(
                 &energy_disperse,
-                &cfg.sample_parameters,
+                &to_discretize,
                 &cfg.simulation_parameters,
-                &structures,
-                &all_simulated_peaks,
-                &all_strains,
-                &all_preferred_orientations,
                 &vf_generator,
                 &mut rng,
             );
             render_and_write_jobs(
-                job_cfg,
+                &to_discretize,
                 args,
                 &jobs,
                 &xs,
                 timestamp_started,
+                &cfg.simulation_parameters,
                 cfg.kind.clone(),
             )
         }
@@ -225,11 +190,12 @@ fn main() {
 }
 
 fn render_and_write_jobs<T>(
-    cfg: JobCfg,
+    cfg: &ToDiscretize,
     args: Cli,
     jobs: &[T],
     xs: &[f32],
     timestamp_started: chrono::DateTime<Utc>,
+    simulation_parameters: &SimulationParameters,
     kind: SimulationKind,
 ) where
     T: Discretizer,
@@ -239,16 +205,16 @@ fn render_and_write_jobs<T>(
         render_write_chunked(
             &jobs,
             &xs,
-            cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures.len(),
+            simulation_parameters.abstol,
+            cfg.sample_parameters.structures.len(),
             &args.io,
         )
     } else {
         let (intensities, pattern_metadata) = render_jobs(
             &jobs,
             &xs,
-            cfg.simulation_parameters.abstol,
-            cfg.sample_params.structures.len(),
+            simulation_parameters.abstol,
+            cfg.sample_parameters.structures.len(),
         );
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
@@ -276,15 +242,15 @@ fn render_and_write_jobs<T>(
         target_names: &output_names.metadata_slot_names,
         extra: io::Extra {
             encoding: cfg
-                .sample_params
+                .sample_parameters
                 .structures
                 .iter()
                 .map(|StructureDef { path, .. }| path.to_string())
                 .collect_vec(),
-            max_phases: cfg.sample_params.structures.len(),
+            max_phases: cfg.sample_parameters.structures.len(),
             cfg: kind.clone(),
             preferred_orientation_hkl: cfg
-                .sample_params
+                .sample_parameters
                 .structures
                 .iter()
                 .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))

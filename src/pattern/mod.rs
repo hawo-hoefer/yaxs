@@ -23,11 +23,11 @@ pub mod edxrd;
 
 pub struct RenderCommon<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
-    pub all_simulated_peaks: &'a Vec<Vec<Peaks>>,
-    pub all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
-    pub all_strains: &'a Vec<Vec<Strain>>,
+    pub all_simulated_peaks: &'a Box<[Box<[Peaks]>]>,
+    pub all_preferred_orientations: &'a Box<[Box<[Option<MarchDollase>]>]>,
+    pub all_strains: &'a Box<[Box<[Strain]>]>,
     // indices to select from simulated peaks, length is number of structures
-    pub indices: Vec<usize>,
+    pub indices: Box<[usize]>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
 }
 

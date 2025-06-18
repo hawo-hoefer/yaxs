@@ -1,11 +1,7 @@
-use super::{
-    render_peak, Discretizer, PeakRenderParams, Peaks, RenderCommon, VFGenerator,
-};
+use super::{render_peak, Discretizer, PeakRenderParams, RenderCommon, VFGenerator};
 use crate::background::Background;
-use crate::cfg::{AngleDisperse, JobCfg, SampleParameters, SimulationParameters};
+use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
-use crate::preferred_orientation::MarchDollase;
-use crate::structure::{Strain, Structure};
 use itertools::Itertools;
 use rand::Rng;
 
@@ -265,20 +261,11 @@ impl<'a> DiscretizeAngleDisperse<'a> {
 
 pub fn generate_adxrd_jobs<'a>(
     angle_disperse: &'a AngleDisperse,
-    sample_params: &'a SampleParameters,
+    job_cfg: &'a ToDiscretize,
     simulation_parameters: &'a SimulationParameters,
-    structures: &'a [Structure],
-    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
-    all_strains: &'a Vec<Vec<Strain>>,
-    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
     vf_generator: &VFGenerator<'a>,
     rng: &mut impl Rng,
-) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>, JobCfg<'a>) {
-    let job_cfg = JobCfg {
-        structures,
-        sample_params,
-        simulation_parameters,
-    };
+) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>) {
     // Prepare rendering / generation (two_thetas buffer, concentrations)
     let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
     two_thetas.resize(two_thetas.capacity(), 0.0f32);
@@ -288,17 +275,15 @@ pub fn generate_adxrd_jobs<'a>(
     }
 
     // create rendering jobs
-    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
-    for _ in 0..job_cfg.simulation_parameters.n_patterns {
-        let job = job_cfg.generate_adxrd_job(
-            all_simulated_peaks,
-            all_strains,
-            all_preferred_orientations,
+    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
+    for _ in 0..simulation_parameters.n_patterns {
+        jobs.push(job_cfg.generate_adxrd_job(
             vf_generator,
             &angle_disperse,
+            &simulation_parameters,
             rng,
-        );
-        jobs.push(job);
+        ));
     }
-    (jobs, two_thetas, job_cfg)
+
+    (jobs, two_thetas)
 }

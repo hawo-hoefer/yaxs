@@ -4,14 +4,12 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDisperse, JobCfg, SampleParameters, SimulationParameters};
+use crate::cfg::{EnergyDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::pattern::lorentz_factor;
-use crate::preferred_orientation::MarchDollase;
-use crate::structure::{Strain, Structure};
 
-use super::{Discretizer, Peak, PeakRenderParams, Peaks, RenderCommon, VFGenerator};
+use super::{Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator};
 
 /// Wiggler Beamline Parameters
 ///
@@ -320,41 +318,26 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
 
 pub fn generate_edxrd_jobs<'a>(
     energy_disperse: &'a EnergyDisperse,
-    sample_params: &'a SampleParameters,
+    job_cfg: &'a ToDiscretize,
     simulation_parameters: &'a SimulationParameters,
-    structures: &'a [Structure],
-    all_simulated_peaks: &'a Vec<Vec<Peaks>>,
-    all_strains: &'a Vec<Vec<Strain>>,
-    all_preferred_orientations: &'a Vec<Vec<Option<MarchDollase>>>,
     vf_generator: &VFGenerator<'a>,
     rng: &mut impl Rng,
-) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>, JobCfg<'a>) {
+) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>) {
     let (e0, e1) = energy_disperse.energy_range_kev;
     let energies = (0..energy_disperse.n_steps)
         .map(|x| x as f32 / (energy_disperse.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
         .collect_vec();
-    let mut intensities = Vec::new();
-    intensities.resize(energy_disperse.n_steps, 0.0f32);
-
-    let job_cfg = JobCfg {
-        structures,
-        sample_params,
-        simulation_parameters,
-    };
 
     // create rendering jobs
-    let mut jobs = Vec::with_capacity(job_cfg.simulation_parameters.n_patterns);
-    for _ in 0..job_cfg.simulation_parameters.n_patterns {
-        let job = job_cfg.generate_edxrd_job(
-            all_simulated_peaks,
-            all_strains,
-            all_preferred_orientations,
+    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
+    for _ in 0..simulation_parameters.n_patterns {
+        jobs.push(job_cfg.generate_edxrd_job(
             &energy_disperse,
             vf_generator,
+            simulation_parameters,
             rng,
-        );
-        jobs.push(job);
+        ));
     }
 
-    (jobs, energies, job_cfg)
+    (jobs, energies)
 }
