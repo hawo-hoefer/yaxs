@@ -58,6 +58,9 @@ sample_parameters:
 
 
 simulation_parameters:
+  noise:
+    min: 0
+    max: 100
   normalize: false
   seed: 1234
   n_patterns: 100

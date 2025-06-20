@@ -223,7 +223,11 @@ impl ToDiscretize {
                 all_preferred_orientations: &self.all_preferred_orientations,
                 impurity_peaks,
                 indices,
-                noise: simulation_parameters.noise.clone(),
+                random_seed: rng.random(),
+                noise: simulation_parameters
+                    .noise
+                    .as_ref()
+                    .map(|x| x.generate(rng)),
             },
             emission_lines: &emission_lines,
             goniometer_radius_mm: *goniometer_radius_mm,
@@ -257,7 +261,11 @@ impl ToDiscretize {
                 all_preferred_orientations: &self.all_preferred_orientations,
                 indices,
                 impurity_peaks,
-                noise: simulation_parameters.noise.clone(),
+                noise: simulation_parameters
+                    .noise
+                    .as_ref()
+                    .map(|x| x.generate(rng)),
+                random_seed: rng.random(),
             },
             beamline: &energy_disperse.beamline,
             normalize: simulation_parameters.normalize,

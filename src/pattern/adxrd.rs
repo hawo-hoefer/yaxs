@@ -2,8 +2,9 @@ use super::{render_peak, Discretizer, PeakRenderParams, RenderCommon, VFGenerato
 use crate::background::Background;
 use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
+use crate::noise::Noise;
 use itertools::Itertools;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ADXRDMeta {
@@ -189,6 +190,42 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
         ]
+    }
+
+    fn seed(&self) -> u64 {
+        self.common.random_seed
+    }
+
+    fn noise(&self) -> &Option<Noise> {
+        &self.common.noise
+    }
+
+    fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
+        for PeakRenderParams {
+            pos,
+            intensity,
+            fwhm,
+            eta,
+        } in self.peak_info_iterator()
+        {
+            render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
+        }
+
+        self.bkg().render(intensities, positions);
+        if let Some(noise) = self.noise() {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(self.seed());
+            noise.apply(intensities, &mut rng);
+        }
+
+        if self.normalize() {
+            // TODO: check for NaNs and normalization
+            let f = *intensities.first().unwrap();
+            let vmin = intensities.iter().fold(f, |a, b| f32::min(a, *b));
+            let vmax = intensities.iter().fold(f, |a, b| f32::max(a, *b));
+            intensities.iter_mut().for_each(|x| {
+                *x = (*x - vmin) / (vmax - vmin);
+            });
+        }
     }
 }
 

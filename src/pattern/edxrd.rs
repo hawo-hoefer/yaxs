@@ -7,6 +7,7 @@ use crate::background::Background;
 use crate::cfg::{EnergyDisperse, NoiseSpec, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
+use crate::noise::Noise;
 use crate::pattern::lorentz_factor;
 
 use super::{Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator};
@@ -263,7 +264,7 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
         &Background::None
     }
 
-    fn noise(&self) -> &Option<NoiseSpec> {
+    fn noise(&self) -> &Option<Noise> {
         &self.common.noise
     }
 
@@ -317,6 +318,10 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
         ]
+    }
+
+    fn seed(&self) -> u64 {
+        self.common.random_seed
     }
 }
 
