@@ -16,7 +16,7 @@ use crate::structure::Strain;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::VolumeFraction;
+use crate::cfg::{NoiseSpec, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
@@ -29,6 +29,7 @@ pub struct RenderCommon<'a> {
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
+    pub noise: Option<NoiseSpec>,
 }
 
 pub struct VFGenerator<'a> {
@@ -148,6 +149,9 @@ pub trait Discretizer {
     fn n_peaks_tot(&self) -> usize;
     fn bkg(&self) -> &Background;
     fn normalize(&self) -> bool;
+    fn noise(&self) -> &Option<NoiseSpec> {
+        &None
+    }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
     fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta>;

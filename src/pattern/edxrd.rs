@@ -4,7 +4,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDisperse, SimulationParameters, ToDiscretize};
+use crate::cfg::{EnergyDisperse, NoiseSpec, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::pattern::lorentz_factor;
@@ -261,6 +261,10 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
 
     fn bkg(&self) -> &Background {
         &Background::None
+    }
+
+    fn noise(&self) -> &Option<NoiseSpec> {
+        &self.common.noise
     }
 
     fn normalize(&self) -> bool {
