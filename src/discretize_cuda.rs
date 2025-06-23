@@ -1,5 +1,3 @@
-use std::ptr;
-
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
