@@ -27,7 +27,8 @@ use yaxs::pattern::{render_jobs, Discretizer, VFGenerator};
         "YaXS simulates XRD patterns from CIF
 CPU-only build: This may be much slower than GPU with support."
     } else {
-        "GPU-accelerated build: CUDA-based peak rendering."
+        "YaXS simulates XRD patterns from CIF
+GPU-accelerated build: CUDA-based peak rendering."
     }
 )]
 struct Cli {
