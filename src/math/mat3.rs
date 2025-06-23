@@ -136,6 +136,21 @@ impl<T> Mat3<T> {
         Some(self.adjugate() / det)
     }
 
+    /// iterate the matrixes rows
+    ///
+    /// ```
+    /// use yaxs::math::{Vec3, Mat3};
+    ///
+    /// let mat = Mat3::new(
+    ///     0, 1, 2,
+    ///     3, 4, 5,
+    ///     6, 7, 8,
+    /// );
+    /// let mut ri = mat.row_iter();
+    /// assert_eq!(ri.next(), Some(Vec3::new(0, 1, 2)));
+    /// assert_eq!(ri.next(), Some(Vec3::new(3, 4, 5)));
+    /// assert_eq!(ri.next(), Some(Vec3::new(6, 7, 8)));
+    /// ```
     pub fn row_iter(&self) -> Mat3Rows<T> {
         Mat3Rows { mat: self, n: 0 }
     }
@@ -175,7 +190,7 @@ impl<T> std::ops::Index<(usize, usize)> for Mat3<T> {
         assert!(row < 3);
         assert!(col < 3);
 
-        &self.v[row + col * 3]
+        &self.v[row * 3 + col]
     }
 }
 
@@ -184,7 +199,7 @@ impl<T> std::ops::IndexMut<(usize, usize)> for Mat3<T> {
         assert!(row < 3);
         assert!(col < 3);
 
-        &mut self.v[row + col * 3]
+        &mut self.v[row * 3 + col]
     }
 }
 

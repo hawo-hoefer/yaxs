@@ -89,7 +89,7 @@ impl<T> std::ops::Index<(usize, usize)> for Mat4<T> {
         assert!(row < 4);
         assert!(col < 4);
 
-        &self.v[row + col * 4]
+        &self.v[row * 4 + col]
     }
 }
 
@@ -98,7 +98,7 @@ impl<T> std::ops::IndexMut<(usize, usize)> for Mat4<T> {
         assert!(row < 4);
         assert!(col < 4);
 
-        &mut self.v[row + col * 4]
+        &mut self.v[row * 4 + col]
     }
 }
 
