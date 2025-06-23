@@ -95,7 +95,7 @@ pub fn sample_displacement_delta_two_theta_rad(
     goniometer_radius_mm: f64,
     theta_rad: f64,
 ) -> f64 {
-    - 2.0 * displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
+    -2.0 * displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
 }
 
 pub mod acm757 {

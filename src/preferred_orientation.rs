@@ -1,4 +1,4 @@
-use nalgebra::Vector3;
+use crate::math::Vec3;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ const HKL_NORM_TOL: f64 = 1e-3;
 #[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct MarchDollase {
     // miller index h
-    pub hkl: Vector3<f64>,
+    pub hkl: Vec3<f64>,
     // march parameter
     pub r: f64,
 }
@@ -23,7 +23,7 @@ fn march(alpha: f64, r: f64) -> f64 {
 }
 
 impl MarchDollase {
-    pub fn new(hkl: Vector3<f64>, r: f64) -> Result<Self, String> {
+    pub fn new(hkl: Vec3<f64>, r: f64) -> Result<Self, String> {
         Ok(Self { hkl, r })
     }
 
@@ -33,7 +33,7 @@ impl MarchDollase {
     ///
     /// * `hkl`: hkl vector for scaling
     /// * `lat`: lattice to scale for
-    pub fn weight(&self, hkl: &Vector3<f64>, lat: &Lattice) -> f64 {
+    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice) -> f64 {
         if self.r == 1.0 {
             // short circuit if no preferred orientation is given via the r parameter
             return 1.0;
@@ -43,7 +43,7 @@ impl MarchDollase {
         let direction_real = lat.mat * self.hkl;
 
         let num = hkl_real.dot(&direction_real);
-        let denom = direction_real.norm() * hkl_real.norm();
+        let denom = direction_real.magnitude() * hkl_real.magnitude();
 
         let alpha_rad = if ((num / denom).abs() - 1.0).abs() < HKL_NORM_TOL {
             0.0

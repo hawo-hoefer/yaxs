@@ -1,13 +1,13 @@
-use nalgebra::Vector3;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::Parameter;
+use crate::math::Vec3;
 use crate::preferred_orientation::MarchDollase;
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub struct MarchDollaseCfg {
-    pub hkl: Vector3<f64>,
+    pub hkl: Vec3<f64>,
     pub r: Parameter<f64>,
 }
 
