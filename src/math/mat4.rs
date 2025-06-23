@@ -36,26 +36,48 @@ impl<T> Mat4<T> {
         }
     }
 
+    #[rustfmt::skip]
+    pub fn identity() -> Mat4<T>
+    where
+        T: Zero + One,
+    {
+        Mat4::new(
+            T::one(), T::zero(), T::zero(), T::zero(),
+            T::zero(), T::one(), T::zero(), T::zero(),
+            T::zero(), T::zero(), T::one(), T::zero(),
+            T::zero(), T::zero(), T::zero(), T::one(),
+        )
+    }
 
+    pub fn set_homog_translation(&mut self, x_new: T, y_new: T, z_new: T) {
         #[rustfmt::skip]
-    pub fn identity() -> Mat4<T> 
-            where T: Zero + One
-        {
-            Mat4::new(
-                T::one(),  T::zero(), T::zero(), T::zero(),
-                T::zero(), T::one(),  T::zero(), T::zero(),
-                T::zero(), T::zero(), T::one(),  T::zero(),
-                T::zero(), T::zero(), T::zero(), T::one(),
-            )
-        }
+        let [
+            _, _, _, x,
+            _, _, _, y,
+            _, _, _, z,
+            _, _, _, _
+        ] = &mut self.v;
+
+        *x = x_new;
+        *y = y_new;
+        *z = z_new;
+    }
+
     pub fn homog_mul(&self, rhs: Vec3<T>) -> Vec3<T>
     where
         T: Mul<T, Output = T> + Add<T, Output = T> + Copy,
     {
+        #[rustfmt::skip]
+        let [
+            a, b, c, x,
+            d, e, f, y,
+            g, h, i, z,
+            _, _, _, _
+        ] = self.v;
         Vec3::new(
-            self[(0, 0)] * rhs.x + self[(0, 1)] * rhs.y + self[(0, 2)] * rhs.z + rhs.x,
-            self[(1, 0)] * rhs.x + self[(1, 1)] * rhs.y + self[(1, 2)] * rhs.z + rhs.y,
-            self[(2, 0)] * rhs.x + self[(2, 1)] * rhs.y + self[(2, 2)] * rhs.z + rhs.z,
+            a * rhs.x + b * rhs.y + c * rhs.z + x,
+            d * rhs.x + e * rhs.y + f * rhs.z + y,
+            g * rhs.x + h * rhs.y + i * rhs.z + z,
         )
     }
 }
@@ -77,5 +99,31 @@ impl<T> std::ops::IndexMut<(usize, usize)> for Mat4<T> {
         assert!(col < 4);
 
         &mut self.v[row + col * 4]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn homog_mul_only_translation() {
+        let mut m = Mat4::<isize>::identity();
+        m.set_homog_translation(1, 2, 3);
+        let v = m.homog_mul(Vec3::new(1, 1, 1));
+        assert_eq!(v, Vec3::new(2, 3, 4));
+    }
+
+    #[test]
+    fn homog_mul_rot90_z() {
+        #[rustfmt::skip]
+        let m = Mat4::new(
+            0, -1, 0, 0,
+            1,  0, 0, 0,
+            0,  0, 1, 0,
+            0,  0, 0, 1,
+        );
+        let v = m.homog_mul(Vec3::new(1, 2, 3));
+        assert_eq!(v, Vec3::new(-2, 1, 3));
     }
 }
