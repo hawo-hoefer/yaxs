@@ -201,6 +201,27 @@ where
     }
 }
 
+impl<T> std::ops::Mul<Vec3<T>> for Mat3<T>
+where
+    T: Add<T, Output = T> + Mul<T, Output = T> + Copy,
+{
+    type Output = Vec3<T>;
+
+    fn mul(self, rhs: Vec3<T>) -> Self::Output {
+        let [a, b, c, d, e, f, g, h, i] = self.v;
+        // +-----+   +-+
+        // |a,b,c|   |x|
+        // |d,e,f| * |y|
+        // |g,h,i|   |z|
+        // +-----+   +-+
+        return Vec3::new(
+            a * rhs.x + b * rhs.y + c * rhs.z,
+            d * rhs.x + e * rhs.y + f * rhs.z,
+            g * rhs.x + h * rhs.y + i * rhs.z,
+        );
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -238,5 +259,26 @@ mod test {
             println!("{}, {}", a, b);
             assert!((a - b).abs() < 1e-12f64);
         }
+    }
+
+    #[test]
+    fn vec_mat_mul_ident() {
+        let v = Vec3::new(1, 2, 3);
+        let res = Mat3::identity() * v;
+        assert_eq!(v, res);
+    }
+
+    #[test]
+    fn vec_mat_mul() {
+        let v = Vec3::new(1, 2, 3);
+        #[rustfmt::skip]
+        let res = Mat3::new(
+            1, 2, 1,
+            2, 3, 1,
+            4, 2, 2,
+        ) * v;
+
+        let expected = Vec3::new(8, 11, 14);
+        assert_eq!(expected, res);
     }
 }

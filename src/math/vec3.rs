@@ -235,26 +235,6 @@ where
     }
 }
 
-impl<T> std::ops::Mul<Vec3<T>> for Mat3<T>
-where
-    T: Add<T, Output = T> + Mul<T, Output = T> + Copy,
-{
-    type Output = Vec3<T>;
-
-    fn mul(self, rhs: Vec3<T>) -> Self::Output {
-        // +-----+   +-+
-        // |a,b,c|   |x|
-        // |d,e,f| * |y|
-        // |g,h,i|   |z|
-        // +-----+   +-+
-        return Vec3::new(
-            self[(0, 0)] * rhs.x + self[(0, 1)] * rhs.y + self[(0, 2)] * rhs.z,
-            self[(1, 0)] * rhs.x + self[(1, 1)] * rhs.y + self[(1, 2)] * rhs.z,
-            self[(2, 0)] * rhs.x + self[(2, 1)] * rhs.y + self[(2, 2)] * rhs.z,
-        );
-    }
-}
-
 impl<'de, T> Deserialize<'de> for Vec3<T>
 where
     T: Deserialize<'de>,
