@@ -1,3 +1,5 @@
+use std::ptr;
+
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
@@ -211,7 +213,7 @@ where
             }
         }
 
-        {
+        if noise_kind != ffi::NoiseKind::NoiseNone {
             let seed: [u64; 4] =
                 unsafe { core::mem::transmute(crate::noise::get_xoshiro256_seed(job.seed())) };
             rng_state.extend_from_slice(&seed);
@@ -259,6 +261,13 @@ where
                 },
             },
         };
+
+        let rng_state_ptr = if noise_kind != ffi::NoiseKind::NoiseNone {
+            rng_state.as_ptr()
+        } else {
+            core::ptr::null()
+        };
+
         let noise = ffi::Noise {
             v: noise_val,
             kind: noise_kind,
@@ -280,7 +289,7 @@ where
             patterns.len(),
             two_thetas.len(),
             noise,
-            rng_state.as_ptr(),
+            rng_state_ptr,
             match &bkg_soa {
                 BkgSOA::None => ffi::BkgKind::BkgNone,
                 BkgSOA::Polynomial { .. } => ffi::BkgKind::Polynomial,
