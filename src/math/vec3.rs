@@ -1,9 +1,5 @@
-use std::iter::Map;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-use super::Mat3;
-use itertools::Itertools;
-use num_traits::{One, Zero};
 use ordered_float::Float;
 use serde::{Deserialize, Serialize};
 
