@@ -148,24 +148,23 @@ impl<T> Mat3<T> {
         Vec3::new(self[(i, 0)], self[(i, 1)], self[(i, 2)])
     }
 
+    #[rustfmt::skip]
     fn adjugate(&self) -> Mat3<T>
     where
         T: Mul<T, Output = T> + Add<T, Output = T> + Sub<T, Output = T> + Neg<Output = T> + Copy,
     {
         let Mat3 {
-            v: [a1, a2, a3, b1, b2, b3, c1, c2, c3],
+            v: [
+            a1, a2, a3, 
+            b1, b2, b3,
+            c1, c2, c3
+        ],
         } = *self;
 
         Mat3::new(
-            b2 * c3 - c2 * b3,
-            -(b1 * c3 - c1 * b3),
-            b1 * c2 - c1 * b2,
-            -(a2 * c3 - c2 * a3),
-            a1 * c3 - c1 * a3,
-            -(a1 * c2 - c1 * a2),
-            a2 * b3 - b2 * a3,
-            -(a1 * b3 + b1 * a3),
-            a1 * b2 - b1 * a2,
+              b2 * c3 - c2 * b3 , -(a2 * c3 - c2 * a3),   a2 * b3 - b2 * a3,
+            -(b1 * c3 - c1 * b3),   a1 * c3 - c1 * a3 , -(a1 * b3 - b1 * a3),
+              b1 * c2 - c1 * b2 , -(a1 * c2 - c1 * a2),   a1 * b2 - b1 * a2,
         )
     }
 }
@@ -202,5 +201,26 @@ where
         }
 
         self
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use  super::*;
+
+    #[test]
+    fn adjugate() {
+        #[rustfmt::skip]
+        let m = Mat3::new(
+            -3.0,  2.0, -5.0, 
+            -1.0,  0.0, -2.0,
+             3.0, -4.0,  1.0
+        );
+        let expected = Mat3::new(
+            -8.0, 18.0, -4.0,
+            -5.0, 12.0, -1.0,
+             4.0, -6.0,  2.0
+        );
+        assert_eq!(m.adjugate(),expected)
     }
 }
