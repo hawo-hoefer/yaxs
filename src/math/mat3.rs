@@ -79,7 +79,6 @@ impl<T> Mat3<T> {
         }
     }
 
-    #[rustfmt::skip]
     pub fn transpose(&self) -> Self
     where
         T: Copy,
@@ -91,11 +90,7 @@ impl<T> Mat3<T> {
             g, h, i
         ] = self.v;
 
-        Mat3::new(
-            a, d, g,
-            b, e, h,
-            c, f, i,
-        )
+        Mat3::new(a, d, g, b, e, h, c, f, i)
     }
 
     #[rustfmt::skip]
