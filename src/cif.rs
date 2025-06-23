@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
-use nalgebra::{Matrix3, Vector3};
 
 use crate::site::Site;
 use crate::species::Species;
@@ -112,15 +112,15 @@ impl CIFContents {
         let val = alpha.cos() * beta.cos() - gamma.cos() / (alpha.sin() * beta.sin());
         let val = val.clamp(-1.0, 1.0);
         let gamma_star = val.acos();
-        let va = Vector3::new(a * beta.sin(), 0.0, a * beta.cos());
-        let vb = Vector3::new(
+        let va = Vec3::new(a * beta.sin(), 0.0, a * beta.cos());
+        let vb = Vec3::new(
             -b * alpha.sin() * gamma_star.cos(),
             b * alpha.sin() * gamma_star.sin(),
             b * alpha.cos(),
         );
-        let vc = Vector3::new(0.0, 0.0, c);
+        let vc = Vec3::new(0.0, 0.0, c);
         Lattice {
-            mat: Matrix3::from_columns(&[va, vb, vc]),
+            mat: Mat3::from_columns(&[va, vb, vc]),
         }
     }
 
@@ -148,7 +148,7 @@ impl CIFContents {
             };
             let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
             // TODO: remove unwraps, proper error handling
-            let coords = Vector3::new(
+            let coords = Vec3::new(
                 site_table["_atom_site_fract_x"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
@@ -167,7 +167,7 @@ impl CIFContents {
                 .map(|ps| {
                     let dist = site.coords - ps.coords;
                     dist.map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
-                        .iter()
+                        .into_iter()
                         .all(|x| *x)
                 })
                 .any(|x| x)
@@ -786,13 +786,14 @@ Test test; test
     #[test]
     fn parse_number_int_precision() {
         let mut p = CifParser::new("123(12)");
-        p.parse_number().expect_err("integer with precision parens is illegal");
+        p.parse_number()
+            .expect_err("integer with precision parens is illegal");
     }
-
 
     #[test]
     fn parse_number_scientific_precision() {
         let mut p = CifParser::new("1.23e12(12)");
-        p.parse_number().expect_err("scientific number notation with precision parens is illegal");
+        p.parse_number()
+            .expect_err("scientific number notation with precision parens is illegal");
     }
 }

@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use log::error;
+use num_complex::Complex;
 use std::collections::HashMap;
 
-use nalgebra::{Complex, ComplexField, Matrix3, Vector3};
 use ordered_float::NotNan;
 use rand::Rng;
 
@@ -10,6 +10,7 @@ use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
+use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
@@ -19,7 +20,7 @@ const SCALED_INTENSITY_TOL: f64 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lattice {
-    pub mat: Matrix3<f64>,
+    pub mat: Mat3<f64>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -55,7 +56,7 @@ impl Strain {
         None
     }
 
-    pub fn from_mat3(mat: &Matrix3<f64>) -> Self {
+    pub fn from_mat3(mat: &Mat3<f64>) -> Self {
         Self([
             mat[(0, 0)],
             mat[(1, 0)],
@@ -70,8 +71,8 @@ impl Strain {
         Self([1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
     }
 
-    pub fn to_mat3(&self) -> Matrix3<f64> {
-        let mut ret = Matrix3::zeros();
+    pub fn to_mat3(&self) -> Mat3<f64> {
+        let mut ret = Mat3::zeros();
         ret[(0, 0)] = self.0[0];
 
         ret[(1, 0)] = self.0[1];
@@ -113,18 +114,18 @@ impl Lattice {
             .abs()
     }
 
-    fn abc(&self) -> Vector3<f64> {
+    fn abc(&self) -> Vec3<f64> {
         let mut values = [0.0; 3];
         for (i, v) in self
             .mat
             .row_iter()
             .into_iter()
-            .map(|x| x.iter().map(|a| a.powi(2)).sum::<f64>().sqrt())
+            .map(|x| x.into_iter().map(|a| a.powi(2)).sum::<f64>().sqrt())
             .enumerate()
         {
             values[i] = v;
         }
-        Vector3::from([values[0], values[1], values[2]])
+        Vec3::new(values[0], values[1], values[2])
     }
 }
 
@@ -197,11 +198,11 @@ impl Structure {
         let tensile_range = 1.0 - max_strain..=1.0 + max_strain;
         let shear_range = -max_strain..=max_strain;
 
-        let strain_tensor: Matrix3<f64> = match self.sg_class {
-            SGClass::Cubic => Matrix3::identity() * rng.random_range(tensile_range),
+        let strain_tensor: Mat3<f64> = match self.sg_class {
+            SGClass::Cubic => Mat3::identity() * rng.random_range(tensile_range),
             SGClass::Orthorombic => {
                 // all directions independent for orthorombic
-                let mut m = Matrix3::zeros();
+                let mut m = Mat3::zeros();
                 m[(0, 0)] = rng.random_range(tensile_range.clone());
                 m[(1, 1)] = rng.random_range(tensile_range.clone());
                 m[(2, 2)] = rng.random_range(tensile_range.clone());
@@ -209,7 +210,7 @@ impl Structure {
             }
             SGClass::Monoclinic => {
                 // one plane can be sheared
-                let mut m = Matrix3::zeros();
+                let mut m = Mat3::zeros();
                 m[(0, 0)] = rng.random_range(tensile_range.clone());
                 m[(1, 1)] = rng.random_range(tensile_range.clone());
                 m[(2, 2)] = rng.random_range(tensile_range.clone());
@@ -221,7 +222,7 @@ impl Structure {
             }
             SGClass::Triclinic => {
                 // symmetric tensor with all values free
-                let mut m = Matrix3::zeros();
+                let mut m = Mat3::zeros();
                 m[(0, 0)] = rng.random_range(tensile_range.clone());
                 m[(1, 1)] = rng.random_range(tensile_range.clone());
                 m[(2, 2)] = rng.random_range(tensile_range.clone());
@@ -238,7 +239,7 @@ impl Structure {
                 m
             }
             SGClass::LowSymHexagonalOrTetragonal => {
-                let mut m = Matrix3::zeros();
+                let mut m = Mat3::zeros();
 
                 m[(0, 0)] = rng.random_range(tensile_range.clone());
                 m[(1, 1)] = rng.random_range(tensile_range.clone());
@@ -252,7 +253,7 @@ impl Structure {
             }
             SGClass::HighSymHexagonalOrTetragonal => {
                 // X and Y stretched the same, z differently
-                let mut m = Matrix3::zeros();
+                let mut m = Mat3::zeros();
 
                 m[(0, 0)] = rng.random_range(tensile_range.clone());
                 m[(1, 1)] = m[(0, 0)];
@@ -294,9 +295,9 @@ impl Structure {
         const RADIUS_TOL: f64 = 1e-8;
         let r_cells = max_r + 1e-8;
         let r_max =
-            ((r_cells + 0.15) * recp_len / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
+            (recp_len * (r_cells + 0.15) / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
 
-        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vector3<i16>>)>::new();
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         let global_min = -max_r - RADIUS_TOL;
         let global_max = max_r + RADIUS_TOL;
@@ -306,8 +307,8 @@ impl Structure {
         for (hkl, g_hkl) in (n_min[0]..n_max[0])
             .cartesian_product(n_min[1]..n_max[1])
             .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(|((a, b), c)| -> Option<(Vector3<f64>, f64)> {
-                let hkl = Vector3::<f64>::new(a as f64, b as f64, c as f64);
+            .filter_map(|((a, b), c)| -> Option<(Vec3<f64>, f64)> {
+                let hkl = Vec3::new(a as f64, b as f64, c as f64);
                 let pos = recip_lat.mat * hkl;
                 let g_hkl = pos.magnitude();
 
@@ -320,7 +321,7 @@ impl Structure {
                 // the COD-database
                 if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
                     && pos
-                        .iter()
+                        .into_iter()
                         .map(|&x| (x > global_min) && (x < global_max))
                         .all(|x| x)
                 {
@@ -366,7 +367,7 @@ impl Structure {
                 }
             }
             // # Intensity for hkl is modulus square of structure factor
-            let mut i_hkl = (f_hkl * f_hkl.conjugate()).real();
+            let mut i_hkl = (f_hkl * f_hkl.conj()).re;
             if let Some(po) = po {
                 let w = po.weight(&hkl, &self.lat);
                 i_hkl *= w;
@@ -377,7 +378,7 @@ impl Structure {
                 .entry(d_spacing)
                 .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
             *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
-            hkls_map.push(hkl.map(|x| x as i16))
+            hkls_map.push(hkl.map(|x| *x as i16))
         }
 
         let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {

@@ -1,11 +1,11 @@
 use cfg_if::cfg_if;
 use log::{error, warn};
-use nalgebra::Vector3;
 use ndarray::Array2;
 use rand::Rng;
 
 use crate::background::Background;
 use crate::io::PatternMeta;
+use crate::math::linalg::Vec3;
 use crate::math::{
     caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
@@ -198,7 +198,7 @@ pub trait Discretizer {
 pub struct Peak {
     pub d_hkl: f64,
     pub i_hkl: f64,
-    pub hkls: Vec<Vector3<i16>>,
+    pub hkls: Vec<Vec3<i16>>,
 }
 pub type Peaks = Box<[Peak]>;
 

@@ -1,18 +1,17 @@
 use std::str::FromStr;
 
 use itertools::Itertools;
-use nalgebra::{Matrix4, Vector3};
+
+use crate::math::linalg::{Mat4, Vec3};
 
 pub struct SymOp {
-    mat: Matrix4<f64>,
+    mat: Mat4<f64>,
 }
 
 impl SymOp {
-    pub fn apply(&self, pos: Vector3<f64>) -> Vector3<f64> {
-        let mut pos = pos.to_homogeneous();
-        pos.w = 1.0;
-        let pos = self.mat * pos;
-        Vector3::new(pos.x, pos.y, pos.z)
+    pub fn apply(&self, pos: Vec3<f64>) -> Vec3<f64> {
+        let pos = self.mat.homog_mul(pos);
+        Vec3::new(pos.x, pos.y, pos.z)
     }
 }
 
@@ -132,7 +131,7 @@ impl FromStr for SymOp {
         let [w13, w23, w33, wz] = parse_xyz(c)?;
         Ok(Self {
             #[rustfmt::skip]
-            mat: Matrix4::new(
+            mat: Mat4::new(
                 w11, w12, w13,  wx,
                 w21, w22, w23,  wy,
                 w31, w32, w33,  wz,
@@ -149,22 +148,19 @@ mod test {
     #[test]
     fn parse_identity() {
         let op: SymOp = "x,y,z".parse().expect("valid symop");
-        assert_eq!(op.mat, Matrix4::<f64>::identity())
+        assert_eq!(op.mat, Mat4::<f64>::identity())
     }
 
     #[test]
     fn parse_ok() {
         let op: SymOp = "x+1/3,-y+x,-3z".parse().expect("valid symop");
         #[rustfmt::skip]
-        let exp = Matrix4::new(
+        let exp = Mat4::new(
             1.0,  1.0,  0.0, 1.0 / 3.0,
             0.0, -1.0,  0.0,       0.0,
             0.0,  0.0, -3.0,       0.0,
             0.0,  0.0,  0.0,       1.0,
         );
-        println!("{}", op.mat);
-        println!("{}", exp);
-
         assert_eq!(op.mat, exp);
     }
 

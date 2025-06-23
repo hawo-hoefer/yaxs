@@ -7,12 +7,12 @@ use std::sync::Arc;
 use chrono::Utc;
 use clap::Args;
 use log::{error, info};
-use nalgebra::Vector3;
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
+use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::Discretizer;
 
@@ -76,7 +76,7 @@ pub struct Extra {
     pub cfg: SimulationKind,
     pub max_phases: usize,
     pub encoding: Vec<String>,
-    pub preferred_orientation_hkl: Vec<Option<Vector3<f64>>>,
+    pub preferred_orientation_hkl: Vec<Option<Vec3<f64>>>,
 }
 
 #[derive(Serialize)]
