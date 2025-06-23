@@ -407,4 +407,27 @@ mod test {
         let t = mat.transpose();
         assert_eq!(t, expected);
     }
+
+
+    #[test]
+    fn index() {
+        #[rustfmt::skip]
+        let m = Mat3::new(
+            1, 2, 3,
+            4, 5, 6,
+            7, 8, 9,
+        );
+
+        assert_eq!(m[(0, 0)], 1);
+        assert_eq!(m[(0, 1)], 2);
+        assert_eq!(m[(0, 2)], 3);
+
+        assert_eq!(m[(1, 0)], 4);
+        assert_eq!(m[(1, 1)], 5);
+        assert_eq!(m[(1, 2)], 6);
+
+        assert_eq!(m[(2, 0)], 7);
+        assert_eq!(m[(2, 1)], 8);
+        assert_eq!(m[(2, 2)], 9);
+    }
 }

@@ -126,4 +126,35 @@ mod test {
         let v = m.homog_mul(Vec3::new(1, 2, 3));
         assert_eq!(v, Vec3::new(-2, 1, 3));
     }
+
+    #[test]
+    fn indexing() {
+        #[rustfmt::skip]
+        let m = Mat4::new(
+            1,  2,  3,  4,
+            5,  6,  7,  8,
+            9,  10, 11, 12,
+            13, 14, 15, 16
+        );
+
+        assert_eq!(m[(0, 0)], 1);
+        assert_eq!(m[(0, 1)], 2);
+        assert_eq!(m[(0, 2)], 3);
+        assert_eq!(m[(0, 3)], 4);
+
+        assert_eq!(m[(1, 0)], 5);
+        assert_eq!(m[(1, 1)], 6);
+        assert_eq!(m[(1, 2)], 7);
+        assert_eq!(m[(1, 3)], 8);
+
+        assert_eq!(m[(2, 0)], 9);
+        assert_eq!(m[(2, 1)], 10);
+        assert_eq!(m[(2, 2)], 11);
+        assert_eq!(m[(2, 3)], 12);
+
+        assert_eq!(m[(3, 0)], 13);
+        assert_eq!(m[(3, 1)], 14);
+        assert_eq!(m[(3, 2)], 15);
+        assert_eq!(m[(3, 3)], 16);
+    }
 }
