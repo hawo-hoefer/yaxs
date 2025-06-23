@@ -61,18 +61,18 @@ impl CIFContents {
     pub fn get_symops(&self) -> Result<Vec<SymOp>, String> {
         let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [[&'static str; 2]; 2] = [
-                ["_space_group_symop_id", "_space_group_symop_operation_xyz"],
-                ["_symmetry_equiv_pos_site_id", "_symmetry_equiv_pos_as_xyz"],
+            const SITE_KEYS: [&'static str; 2] = [
+                "_space_group_symop_operation_xyz",
+                "_symmetry_equiv_pos_as_xyz",
             ];
-            let symop_operation_xyz = SITE_KEYS[0].iter().map(|&k| t.contains_key(k)).all(|x| x);
+            let symop_operation_xyz = t.contains_key(SITE_KEYS[0]);
             if !symop_operation_xyz {
-                let equiv_pos_site_id = SITE_KEYS[1].iter().map(|&k| t.contains_key(k)).all(|x| x);
+                let equiv_pos_as_xyz = t.contains_key(SITE_KEYS[1]);
 
-                if equiv_pos_site_id {
+                if equiv_pos_as_xyz {
                     symop_label = "_symmetry_equiv_pos_as_xyz";
                 }
-                equiv_pos_site_id
+                equiv_pos_as_xyz
             } else {
                 symop_label = "_space_group_symop_operation_xyz";
                 true
@@ -80,6 +80,7 @@ impl CIFContents {
         }) else {
             return Err("No atom site label info in CIF".to_string());
         };
+
         let mut ret = Vec::with_capacity(symops_table[symop_label].len());
         for s in symops_table[symop_label].iter() {
             let Value::Text(s) = s else {
