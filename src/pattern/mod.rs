@@ -172,7 +172,6 @@ pub trait Discretizer {
 
         self.bkg().render(intensities, positions);
         if let Some(noise) = self.noise() {
-            eprintln!("noise: {:?}", noise);
             noise.apply(intensities, self.seed());
         }
 

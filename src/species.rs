@@ -43,7 +43,6 @@ impl FromStr for Species {
             let (el, v) = Species::try_parse_single_element(val)?;
             let (ionization, v) = Species::try_parse_ionization(v).unwrap_or_else(|| (0, v));
             val = v;
-            eprintln!("hello, {}", val);
             species.push(Atom { el, ionization })
         }
         Ok(Self(species))
