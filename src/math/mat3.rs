@@ -71,7 +71,7 @@ impl<T> Mat3<T> {
     {
         Self {
             #[rustfmt::skip]
-                v: [ 
+                v: [
                     T::zero(), T::zero(), T::zero(),
                     T::zero(), T::zero(), T::zero(),
                     T::zero(), T::zero(), T::zero(),
@@ -80,7 +80,7 @@ impl<T> Mat3<T> {
     }
 
     #[rustfmt::skip]
-    pub fn transpose(&self) -> Self 
+    pub fn transpose(&self) -> Self
     where
         T: Copy,
     {
@@ -107,13 +107,13 @@ impl<T> Mat3<T> {
     pub fn det(&self) -> T
     where T: Mul<T, Output = T> + Add<T, Output = T> + Sub<T, Output = T> + Copy
     {
-        self[(0, 0)] * self[(1, 1)] * self[(2, 2)] 
-        + self[(0, 1)] * self[(1, 2)] * self[(2, 0)]
-        + self[(0, 2)] * self[(1, 0)] * self[(2, 1)]
+        let [
+            a, b, c,
+            d, e, f,
+            g, h, i,
+        ] = self.v;
 
-        - self[(0, 2)] * self[(1, 1)] * self[(2, 0)]
-        - self[(0, 1)] * self[(1, 0)] * self[(2, 2)]
-        - self[(0, 0)] * self[(1, 2)] * self[(2, 1)]
+        a * e * i + b * f * g + c * d * h - c * e * g - b * d * i - a * f * h
     }
 
     pub fn try_inverse(&self) -> Option<Mat3<T>>
@@ -135,10 +135,7 @@ impl<T> Mat3<T> {
     }
 
     pub fn row_iter(&self) -> Mat3Rows<T> {
-        Mat3Rows {
-            mat: self,
-            n: 0,
-        }
+        Mat3Rows { mat: self, n: 0 }
     }
 
     pub fn row(&self, i: usize) -> Vec3<T>
@@ -155,7 +152,7 @@ impl<T> Mat3<T> {
     {
         let Mat3 {
             v: [
-            a1, a2, a3, 
+            a1, a2, a3,
             b1, b2, b3,
             c1, c2, c3
         ],
@@ -206,21 +203,40 @@ where
 
 #[cfg(test)]
 mod test {
-    use  super::*;
+    use super::*;
 
     #[test]
     fn adjugate() {
         #[rustfmt::skip]
         let m = Mat3::new(
-            -3.0,  2.0, -5.0, 
+            -3.0,  2.0, -5.0,
             -1.0,  0.0, -2.0,
              3.0, -4.0,  1.0
         );
-        let expected = Mat3::new(
-            -8.0, 18.0, -4.0,
-            -5.0, 12.0, -1.0,
-             4.0, -6.0,  2.0
+        let expected = Mat3::new(-8.0, 18.0, -4.0, -5.0, 12.0, -1.0, 4.0, -6.0, 2.0);
+        assert_eq!(m.adjugate(), expected)
+    }
+
+    #[test]
+    fn inverse_identity() {
+        let m = Mat3::<f64>::identity();
+        let inv = m.try_inverse().expect("identity has inverse");
+        assert_eq!(inv, m)
+    }
+
+    #[test]
+    fn double_inverse() {
+        #[rustfmt::skip]
+        let m = Mat3::<f64>::new(
+            -3.0,  2.0, -5.0,
+            -1.0,  0.0, -2.0,
+             3.0, -4.0,  1.0
         );
-        assert_eq!(m.adjugate(),expected)
+        let inv = m.try_inverse().expect("matrix has inverse");
+        let hopefully_m = inv.try_inverse().expect("matrix has inverse");
+        for (a, b) in m.v.iter().zip(hopefully_m.v) {
+            println!("{}, {}", a, b);
+            assert!((a - b).abs() < 1e-12f64);
+        }
     }
 }
