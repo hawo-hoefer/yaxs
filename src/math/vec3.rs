@@ -186,4 +186,23 @@ mod test {
         let dot = v.dot(&v);
         assert_eq!(dot, 1 + 4 + 9);
     }
+
+    #[test]
+    fn cross_orthogonal() {
+        let v0 = Vec3::new(1, 0, 0);
+        let v1 = Vec3::new(0, 1, 0);
+        let exp = Vec3::new(0, 0, 1);
+
+        assert_eq!(v0.cross(&v1), exp);
+    }
+
+    #[test]
+    fn cross_orthogonal_result() {
+        let v0 = Vec3::new(1.0, 2.0, 3.0);
+        let v1 = Vec3::new(1.0, 2.2, 2.3);
+        let c = v0.cross(&v1);
+
+        assert!(c.dot(&v0).abs() < 1e-15);
+        assert!(c.dot(&v1).abs() < 1e-15);
+    }
 }
