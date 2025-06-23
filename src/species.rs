@@ -43,6 +43,7 @@ impl FromStr for Species {
             let (el, v) = Species::try_parse_single_element(val)?;
             let (ionization, v) = Species::try_parse_ionization(v).unwrap_or_else(|| (0, v));
             val = v;
+            eprintln!("hello, {}", val);
             species.push(Atom { el, ionization })
         }
         Ok(Self(species))
@@ -77,16 +78,56 @@ impl Species {
         // check for single character ionization like Fe+ or Cu-
         match val.chars().next() {
             Some('+') => {
-                return Some((
-                    1,
-                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character"),
-                ))
+                // chop the plus
+                let mut rest =
+                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character");
+
+                if rest.len() == 0 {
+                    // output is finished, stop
+                    return Some((1, rest));
+                }
+
+                let Some((ion, _)) = rest.split_once(|x: char| !x.is_ascii_digit()) else {
+                    // only numbers left
+                    let ion: i16 = rest.parse().expect("at least one number");
+                    rest = "";
+                    return Some((ion, rest));
+                };
+
+                if ion.len() == 0 {
+                    // no numbers left
+                    return Some((1, rest));
+                }
+
+                let num: i16 = ion.parse().expect("");
+                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..]).unwrap();
+                return Some((num, rest));
             }
             Some('-') => {
-                return Some((
-                    -1,
-                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character"),
-                ))
+                // chop the minus
+                let mut rest =
+                    std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character");
+
+                if rest.len() == 0 {
+                    // output is finished, stop
+                    return Some((1, rest));
+                }
+
+                let Some((ion, _)) = rest.split_once(|x: char| !x.is_ascii_digit()) else {
+                    // only numbers left
+                    let ion: i16 = rest.parse().expect("at least one number");
+                    rest = "";
+                    return Some((-ion, rest));
+                };
+
+                if ion.len() == 0 {
+                    // no numbers left
+                    return Some((-1, rest));
+                }
+
+                let num: i16 = ion.parse().expect("");
+                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..]).unwrap();
+                return Some((-num, rest));
             }
             Some('*') => unimplemented!("'*' - ionization specifier"),
             Some('(') => {
@@ -207,6 +248,16 @@ mod test {
                 }
             ]
         )
+    }
+
+    #[test]
+    fn parse_na_plus1() {
+        let _: Species = "Na+1".parse().unwrap();
+    }
+
+    #[test]
+    fn parse_na_minus1() {
+        let _: Species = "Na-1".parse().unwrap();
     }
 }
 
