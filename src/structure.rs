@@ -264,7 +264,7 @@ impl Structure {
         };
 
         let mut r = self.clone();
-        r.lat.mat = r.lat.mat * strain_tensor;
+        r.lat.mat = &r.lat.mat * &strain_tensor;
 
         (r, Strain::from_mat3(&strain_tensor))
     }
@@ -272,7 +272,7 @@ impl Structure {
     pub fn apply_strain(&self, strain: &Strain) -> Structure {
         let mut ret = self.clone();
 
-        ret.lat.mat = ret.lat.mat * strain.to_mat3();
+        ret.lat.mat = &ret.lat.mat * &strain.to_mat3();
 
         ret
     }

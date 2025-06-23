@@ -167,74 +167,6 @@ where
         Vec3::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
     }
 }
-
-impl<T> std::ops::Mul<&Vec3<T>> for Mat3<T>
-where
-    T: Add<T, Output = T> + Mul<T, Output = T> + Copy,
-{
-    type Output = Vec3<T>;
-
-    fn mul(self, rhs: &Vec3<T>) -> Self::Output {
-        // +-----+   +-+
-        // |a,b,c|   |x|
-        // |d,e,f| * |y|
-        // |g,h,i|   |z|
-        // +-----+   +-+
-        return Vec3::new(
-            self[(0, 0)] * rhs.x + self[(0, 1)] * rhs.y + self[(0, 2)] * rhs.z,
-            self[(1, 0)] * rhs.x + self[(1, 1)] * rhs.y + self[(1, 2)] * rhs.z,
-            self[(2, 0)] * rhs.x + self[(2, 1)] * rhs.y + self[(2, 2)] * rhs.z,
-        );
-    }
-}
-
-impl<T> std::ops::Mul<T> for Mat3<T>
-where
-    T: Mul<T, Output = T> + Copy,
-{
-    type Output = Mat3<T>;
-
-    fn mul(self, rhs: T) -> Self::Output {
-        Mat3::new(
-            self[(0, 0)] * rhs,
-            self[(0, 1)] * rhs,
-            self[(0, 2)] * rhs,
-            self[(1, 0)] * rhs,
-            self[(1, 1)] * rhs,
-            self[(1, 2)] * rhs,
-            self[(2, 0)] * rhs,
-            self[(2, 1)] * rhs,
-            self[(2, 2)] * rhs,
-        )
-    }
-}
-
-impl<T> std::ops::Mul for Mat3<T>
-where
-    T: Mul<T, Output = T> + Add<T, Output = T> + Copy,
-{
-    type Output = Mat3<T>;
-
-    fn mul(self, rhs: Mat3<T>) -> Self::Output {
-        // +-----+   +-----+
-        // |a,b,c|   |a,b,c|
-        // |d,e,f| * |d,e,f|
-        // |g,h,i|   |g,h,i|
-        // +-----+   +-----+
-        Mat3::new(
-            self[(0, 0)] * rhs[(0, 0)] + self[(0, 1)] * rhs[(1, 0)] + self[(0, 2)] * rhs[(2, 0)],
-            self[(0, 0)] * rhs[(0, 1)] + self[(0, 1)] * rhs[(1, 1)] + self[(0, 2)] * rhs[(2, 1)],
-            self[(0, 0)] * rhs[(0, 2)] + self[(0, 1)] * rhs[(1, 2)] + self[(0, 2)] * rhs[(2, 2)],
-            self[(1, 0)] * rhs[(0, 0)] + self[(1, 1)] * rhs[(1, 0)] + self[(1, 2)] * rhs[(2, 0)],
-            self[(1, 0)] * rhs[(0, 1)] + self[(1, 1)] * rhs[(1, 1)] + self[(1, 2)] * rhs[(2, 1)],
-            self[(1, 0)] * rhs[(0, 2)] + self[(1, 1)] * rhs[(1, 2)] + self[(1, 2)] * rhs[(2, 2)],
-            self[(2, 0)] * rhs[(0, 0)] + self[(2, 1)] * rhs[(1, 0)] + self[(2, 2)] * rhs[(2, 0)],
-            self[(2, 0)] * rhs[(0, 1)] + self[(2, 1)] * rhs[(1, 1)] + self[(2, 2)] * rhs[(2, 1)],
-            self[(2, 0)] * rhs[(0, 2)] + self[(2, 1)] * rhs[(1, 2)] + self[(2, 2)] * rhs[(2, 2)],
-        )
-    }
-}
-
 impl<'de, T> Deserialize<'de> for Vec3<T>
 where
     T: Deserialize<'de>,
@@ -245,5 +177,17 @@ where
     {
         let (a, b, c) = <(T, T, T)>::deserialize(deserializer)?;
         Ok(Vec3::new(a, b, c))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn dot() {
+        let v = Vec3::new(1, 2, 3);
+        let dot = v.dot(&v);
+        assert_eq!(dot, 1 + 4 + 9);
     }
 }

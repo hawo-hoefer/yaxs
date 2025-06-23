@@ -84,10 +84,17 @@ impl<T> Mat3<T> {
     where
         T: Copy,
     {
+        #[rustfmt::skip]
+        let [
+            a, b, c,
+            d, e, f,
+            g, h, i
+        ] = self.v;
+
         Mat3::new(
-            self[(0, 0)], self[(1, 0)], self[(2, 0)],
-            self[(0, 1)], self[(1, 1)], self[(2, 1)],
-            self[(0, 2)], self[(1, 2)], self[(2, 2)],
+            a, d, g,
+            b, e, h,
+            c, f, i,
         )
     }
 
@@ -222,6 +229,70 @@ where
     }
 }
 
+impl<T> std::ops::Mul<&Vec3<T>> for Mat3<T>
+where
+    T: Add<T, Output = T> + Mul<T, Output = T> + Copy,
+{
+    type Output = Vec3<T>;
+
+    fn mul(self, rhs: &Vec3<T>) -> Self::Output {
+        // +-----+   +-+
+        // |a,b,c|   |x|
+        // |d,e,f| * |y|
+        // |g,h,i|   |z|
+        // +-----+   +-+
+        return Vec3::new(
+            self[(0, 0)] * rhs.x + self[(0, 1)] * rhs.y + self[(0, 2)] * rhs.z,
+            self[(1, 0)] * rhs.x + self[(1, 1)] * rhs.y + self[(1, 2)] * rhs.z,
+            self[(2, 0)] * rhs.x + self[(2, 1)] * rhs.y + self[(2, 2)] * rhs.z,
+        );
+    }
+}
+
+impl<T> std::ops::Mul<T> for Mat3<T>
+where
+    T: Mul<T, Output = T> + Copy,
+{
+    type Output = Mat3<T>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        let mut ret = self.clone();
+        for v in ret.v.iter_mut() {
+            *v = *v * rhs;
+        }
+        ret
+    }
+}
+
+impl<'a, T> std::ops::Mul for &'a Mat3<T>
+where
+    &'a T: Mul<&'a T, Output = T> + Add<&'a T, Output = T> + Copy,
+    T: Mul<T, Output = T> + Add<T, Output = T> + Copy,
+{
+    type Output = Mat3<T>;
+
+    fn mul(self, rhs: &'a Mat3<T>) -> Self::Output {
+        let [a1, b1, c1, d1, e1, f1, g1, h1, i1] = &self.v;
+        let [a2, b2, c2, d2, e2, f2, g2, h2, i2] = &rhs.v;
+        // +-----+   +-----+
+        // |a,b,c|   |a,b,c|
+        // |d,e,f| * |d,e,f|
+        // |g,h,i|   |g,h,i|
+        // +-----+   +-----+
+        Mat3::new(
+            a1 * a2 + b1 * d2 + c1 * g2,
+            a1 * b2 + b1 * e2 + c1 * h2,
+            a1 * c2 + b1 * f2 + c1 * i2,
+            d1 * a2 + e1 * d2 + f1 * g2,
+            d1 * b2 + e1 * e2 + f1 * h2,
+            d1 * c2 + e1 * f2 + f1 * i2,
+            g1 * a2 + h1 * d2 + i1 * g2,
+            g1 * b2 + h1 * e2 + i1 * h2,
+            g1 * c2 + h1 * f2 + i1 * i2,
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -280,5 +351,50 @@ mod test {
 
         let expected = Vec3::new(8, 11, 14);
         assert_eq!(expected, res);
+    }
+
+    #[test]
+    fn mat_mat_mul() {
+        #[rustfmt::skip]
+        let m1 = Mat3::new(
+            1, 2, 3,
+            4, 5, 6,
+            7, 8, 9,
+        );
+        #[rustfmt::skip]
+        let m2 = Mat3::new(
+            5, 4, 6,
+            8, 7, 9,
+            2, 1, 3,
+        );
+
+        #[rustfmt::skip]
+        let expected = Mat3::new(
+             27, 21,  33,
+             72, 57,  87,
+            117, 93, 141,
+        );
+        let res = &m1 * &m2;
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn transpose() {
+        #[rustfmt::skip]
+        let mat = Mat3::new(
+            1, 2, 3,
+            4, 5, 6,
+            7, 8, 9,
+        );
+
+        #[rustfmt::skip]
+        let expected = Mat3::new(
+            1, 4, 7,
+            2, 5, 8,
+            3, 6, 9,
+        );
+
+        let t = mat.transpose();
+        assert_eq!(t, expected);
     }
 }
