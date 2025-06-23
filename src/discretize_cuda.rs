@@ -1,6 +1,3 @@
-use rand::{Rng, SeedableRng};
-use rand_xoshiro::{SplitMix64, Xoshiro256PlusPlus};
-
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};

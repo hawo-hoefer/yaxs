@@ -4,7 +4,7 @@ use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::noise::Noise;
 use itertools::Itertools;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ADXRDMeta {

@@ -2,7 +2,7 @@ use cfg_if::cfg_if;
 use log::{error, warn};
 use nalgebra::Vector3;
 use ndarray::Array2;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 
 use crate::background::Background;
 use crate::io::PatternMeta;
@@ -17,7 +17,7 @@ use crate::structure::Strain;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::{NoiseSpec, VolumeFraction};
+use crate::cfg::VolumeFraction;
 
 pub mod adxrd;
 pub mod edxrd;
