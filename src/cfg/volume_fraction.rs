@@ -42,4 +42,3 @@ impl<'de> Deserialize<'de> for VolumeFraction {
         deserializer.deserialize_f64(VFVisitor)
     }
 }
-

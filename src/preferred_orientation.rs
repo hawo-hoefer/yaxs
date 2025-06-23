@@ -1,4 +1,4 @@
-use crate::math::linalg::Vec3;
+use crate::math::Vec3;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 

@@ -10,7 +10,7 @@ use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
-use crate::math::linalg::{Mat3, Vec3};
+use crate::math::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;

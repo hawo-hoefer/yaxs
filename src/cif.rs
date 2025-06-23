@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::math::linalg::{Mat3, Vec3};
+use crate::math::{Mat3, Vec3};
 use itertools::Itertools;
 
 use crate::site::Site;

@@ -2,7 +2,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::Parameter;
-use crate::math::linalg::Vec3;
+use crate::math::Vec3;
 use crate::preferred_orientation::MarchDollase;
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]

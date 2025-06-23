@@ -1,4 +1,4 @@
-use crate::math::linalg::Vec3;
+use crate::math::Vec3;
 
 use crate::species::Species;
 
@@ -11,19 +11,18 @@ pub struct Site {
 
 impl Site {
     pub fn normalized(&self) -> Site {
-        todo!()
-        // let coords = self.coords.iter().map(|mut x| {
-        //     x = x - x.round();
-        //     if x < 0.0 {
-        //         // map negative positions to positive end of unit cell
-        //         x = 1.0 + x
-        //     }
-        //     return x;
-        // });
-        // Self {
-        //     coords,
-        //     species: self.species.clone(),
-        //     occu: self.occu,
-        // }
+        let coords = self.coords.map(|x| {
+            let mut x = x - x.round();
+            if x < 0.0 {
+                // map negative positions to positive end of unit cell
+                x = 1.0 + x
+            }
+            x
+        });
+        Self {
+            coords,
+            species: self.species.clone(),
+            occu: self.occu,
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use itertools::Itertools;
 
-use crate::math::linalg::{Mat4, Vec3};
+use crate::math::{Mat4, Vec3};
 
 pub struct SymOp {
     mat: Mat4<f64>,

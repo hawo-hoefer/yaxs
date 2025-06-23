@@ -12,7 +12,7 @@ use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
-use crate::math::linalg::Vec3;
+use crate::math::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::Discretizer;
 
