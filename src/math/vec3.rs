@@ -44,10 +44,36 @@ impl<T> Vec3<T> {
         Self { x, y, z }
     }
 
+    
+    /// apply a function to the elements of a vector
+    ///
+    /// * `p`: function to apply
+    ///
+    /// ```
+    /// use yaxs::math::Vec3;
+    ///
+    /// let v = Vec3::new(1, 2, -3);
+    /// let mapped = v.map(|&x| x > 0);
+    ///
+    /// assert_eq!(mapped.x, true);
+    /// assert_eq!(mapped.y, true);
+    /// assert_eq!(mapped.z, false);
+    /// ```
     pub fn map<V>(&self, p: impl Fn(&T) -> V) -> Vec3<V> {
         Vec3::new(p(&self.x), p(&self.y), p(&self.z))
     }
 
+    /// compute the dot product
+    ///
+    /// * `rhs`: other vector
+    ///
+    /// ```
+    /// use yaxs::math::Vec3;
+    ///
+    /// let v0 = Vec3::new(1, 2, 3);
+    /// let v1 = Vec3::new(2, 3, 4);
+    /// assert_eq!(v0.dot(&v1), 20);
+    /// ```
     pub fn dot(&self, rhs: &Self) -> T
     where
         T: Mul<T, Output = T> + Add<T, Output = T> + Copy,
@@ -66,6 +92,14 @@ impl<T> Vec3<T> {
         }
     }
 
+    /// compute the magnitude of a vector
+    ///
+    /// ```
+    /// use yaxs::math::Vec3;
+    ///
+    /// let v = Vec3::new(1.0, 2.0, 3.0);
+    /// assert_eq!(v.magnitude(), 14.0f64.sqrt())
+    /// ```
     pub fn magnitude(&self) -> T
     where
         T: Float,
