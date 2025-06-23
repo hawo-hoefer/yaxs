@@ -10,10 +10,10 @@ mod volume_fraction;
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::info;
-use noise::Noise;
 use parameter::Parameter;
 use probability::Probability;
 
+pub use noise::NoiseSpec;
 pub use preferred_orientation::MarchDollaseCfg;
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
@@ -113,7 +113,6 @@ pub struct AngleDisperse {
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
-    pub noise: Option<Noise>,
     pub caglioti: Caglioti,
     pub background: BackgroundSpec,
 }
@@ -138,6 +137,7 @@ pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
+    pub noise: Option<NoiseSpec>,
 
     pub abstol: f32,
 }
@@ -206,7 +206,6 @@ impl ToDiscretize {
             two_theta_range: _,
             goniometer_radius_mm,
             sample_displacement_mu_m,
-            noise: _,
         } = angle_disperse;
 
         let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
@@ -224,6 +223,11 @@ impl ToDiscretize {
                 all_preferred_orientations: &self.all_preferred_orientations,
                 impurity_peaks,
                 indices,
+                random_seed: rng.random(),
+                noise: simulation_parameters
+                    .noise
+                    .as_ref()
+                    .map(|x| x.generate(rng)),
             },
             emission_lines: &emission_lines,
             goniometer_radius_mm: *goniometer_radius_mm,
@@ -257,6 +261,11 @@ impl ToDiscretize {
                 all_preferred_orientations: &self.all_preferred_orientations,
                 indices,
                 impurity_peaks,
+                noise: simulation_parameters
+                    .noise
+                    .as_ref()
+                    .map(|x| x.generate(rng)),
+                random_seed: rng.random(),
             },
             beamline: &energy_disperse.beamline,
             normalize: simulation_parameters.normalize,

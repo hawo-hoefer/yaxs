@@ -83,7 +83,10 @@ fn main() {
         })
         .expect("we deal with the error inside");
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
+    // let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
+        cfg.simulation_parameters.seed.unwrap_or(0),
+    );
     let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
     let mut structures = Vec::new();

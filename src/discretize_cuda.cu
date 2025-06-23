@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdint>
 #include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
@@ -31,10 +32,28 @@ typedef struct {
 } CUDAPattern;
 
 typedef enum {
-  None,
+  BkgNone,
   Exponential,
   Polynomial,
 } BkgKind;
+
+typedef enum {
+  NoiseNone,
+  Gaussian,
+  Uniform,
+} NoiseKind;
+
+typedef struct {
+  union {
+    double *none;
+    double *gaussian;
+    struct {
+      double *min;
+      double *max;
+    } uniform;
+  } v;
+  NoiseKind kind;
+} Noise;
 
 #define TAU 3.1415926535897932384626433832795028841972f * 2.0f
 #define PI 3.1415926535897932384626433832795028841972f
@@ -45,6 +64,51 @@ typedef enum {
     fflush(stderr);                                                            \
     return false;                                                              \
   }
+
+typedef struct {
+  uint64_t s[4];
+} Xoshiro256PlusPlus;
+
+__device__ uint64_t rotl(const uint64_t x, int k) {
+  return (x << k) | (x >> (64 - k));
+}
+
+/* Generate the next random float in the range [0, 1] using the Xoshiro256++
+ * rng  as implemented by David Blackman and Sebastiano Vigna
+ * from https://prng.di.unimi.it/xoshiro256plusplus.c
+ *
+ * The implementation here is adapted for use on the GPU
+ */
+__device__ double xoshiro256_plus_plus_next_double01(Xoshiro256PlusPlus *rng) {
+  const uint64_t result = rotl(rng->s[0] + rng->s[3], 23) + rng->s[0];
+  const uint64_t t = rng->s[1] << 17;
+
+  rng->s[2] ^= rng->s[0];
+  rng->s[3] ^= rng->s[1];
+  rng->s[1] ^= rng->s[2];
+  rng->s[0] ^= rng->s[3];
+
+  rng->s[2] ^= t;
+
+  rng->s[3] = rotl(rng->s[3], 45);
+
+  // limit to [0, 1] by division using UINT64_MAX
+  return (double)result / (double)UINT64_MAX;
+}
+
+/* generate a random float distributed according to the standard normal
+ * distribution
+ *
+ * this function uses the xoshiro256++ algorithm to generate two uniform values
+ * which are then used in the box-muller transform to generate a values
+ * distributed according to the standard normal distribution.
+ */
+__device__ double
+xoshiro256_plus_plus_box_muller_gaussian(Xoshiro256PlusPlus *rng) {
+  const float u1 = xoshiro256_plus_plus_next_double01(rng);
+  const float u2 = xoshiro256_plus_plus_next_double01(rng);
+  return sqrt(-2.0 * log(u1)) * cos(TAU * u2);
+}
 
 __device__ float gauss(float dx, float sigma) {
   return expf(-0.5f * powf(dx / sigma, 2.0f)) / sqrtf(TAU * powf(sigma, 2.0f));
@@ -115,6 +179,128 @@ __global__ void render_poly_bkg(float *intensities, float *two_thetas,
   intensities[tid] += di * scales[pattern_idx];
 }
 
+typedef struct {
+  double *min;
+  double *max;
+} UniformBounds;
+
+__global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
+                                     Xoshiro256PlusPlus *rng_state,
+                                     size_t pat_len, size_t n_patterns) {
+  size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+  if (tid > n_patterns)
+    return;
+  const double lo = bounds.min[tid];
+  const double hi = bounds.max[tid];
+
+  Xoshiro256PlusPlus *rng = &rng_state[tid];
+
+  for (size_t i = tid * pat_len; i < (tid + 1) * pat_len; ++i) {
+    float noise =
+        (float)(xoshiro256_plus_plus_next_double01(rng) * (hi - lo) + lo);
+    if (tid == 0) { printf("%.2f\n", noise); }
+    intensities_d[i] += noise;
+  }
+}
+
+__global__ void render_gaussian_noise(float *intensities_d, double *sigmas,
+                                      Xoshiro256PlusPlus *rng_state,
+                                      size_t pat_len, size_t n_patterns) {
+  size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+  if (tid > n_patterns)
+    return;
+  const double sigma = sigmas[tid];
+  Xoshiro256PlusPlus *rng = &rng_state[tid];
+
+  for (size_t i = tid * pat_len; i < (tid + 1) * pat_len; ++i) {
+    intensities_d[i] += xoshiro256_plus_plus_box_muller_gaussian(rng) * sigma;
+  }
+}
+
+bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
+                  size_t pat_len, size_t n_patterns) {
+  if (noise.kind == NoiseNone) {
+    assert(rng_state == NULL);
+    assert(noise.v.none == NULL);
+    return true;
+  }
+  assert(rng_state);
+  // assert that the data is not a nullpointer
+  // (noise.v is a union, so checking one variant checks all)
+  assert(noise.v.gaussian);
+
+  int block_size = 0;
+  int min_grid_size = 0;
+  int array_count = n_patterns;
+
+  uint64_t *rng_state_d;
+  double *noise_data_d;
+  cudaError_t ret =
+      cudaMalloc(&rng_state_d, sizeof(Xoshiro256PlusPlus) * n_patterns);
+  log_cuda_err(ret, "allocating random state for noise generation");
+
+  ret = cudaMemcpy(rng_state_d, rng_state,
+                   sizeof(Xoshiro256PlusPlus) * n_patterns,
+                   cudaMemcpyHostToDevice);
+  log_cuda_err(ret, "copying rng state to gpu during noise generation");
+
+  switch (noise.kind) {
+  case NoiseNone:
+    assert(false && "unreachable, we early return");
+  case Gaussian: {
+    // for gaussian noise, we only have standard deviations
+    ret = cudaMalloc(&noise_data_d, sizeof(double) * n_patterns);
+    log_cuda_err(ret, "allocating device memory for gaussian noise sigmas");
+
+    ret = cudaMemcpy(noise_data_d, noise.v.gaussian,
+                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
+    log_cuda_err(ret, "copying gaussian noise standard deviations to device");
+
+    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+                                       (void *)render_gaussian_noise, 0,
+                                       array_count);
+    int grid_size = (array_count + block_size - 1) / block_size;
+
+    render_gaussian_noise<<<grid_size, block_size>>>(
+        intensities_d, noise_data_d, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
+        n_patterns);
+  } break;
+  case Uniform: {
+    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+                                       (void *)render_uniform_noise, 0,
+                                       array_count);
+    int grid_size = (array_count + block_size - 1) / block_size;
+
+    printf("------> Rendering uniform noise\n");
+    ret = cudaMalloc(&noise_data_d, 2 * sizeof(double) * n_patterns);
+    log_cuda_err(
+        ret, "allocating device memory for uniform noise distribution limits");
+
+    ret = cudaMemcpy(noise_data_d, noise.v.uniform.min,
+                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
+
+    ret = cudaMemcpy(&noise_data_d[n_patterns], noise.v.uniform.max,
+                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
+    log_cuda_err(ret, "copying uniform maxima deviations to device");
+
+    // bounds are stored the following way: all minima, then all maxima.
+    UniformBounds bounds = {
+        .min = &noise_data_d[0],
+        .max = &noise_data_d[n_patterns],
+    };
+    render_uniform_noise<<<grid_size, block_size>>>(
+        intensities_d, bounds, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
+        n_patterns);
+  } break;
+  default:
+    assert(false && "unreachable: corrupted noise_kind");
+  }
+
+  cudaFree(noise_data_d);
+  cudaFree(rng_state_d);
+  return true;
+}
+
 bool render_backgrounds(float *intensities_d, float *two_thetas_d,
                         BkgKind background_kind, float *bkg_data,
                         size_t bkg_degree_if_poly,
@@ -122,7 +308,7 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
                         size_t pat_len, int grid_size, int block_size) {
   cudaError_t ret;
   switch (background_kind) {
-  case None:
+  case BkgNone:
     // all good, do nothing
     break;
 
@@ -253,19 +439,11 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
   return true;
 }
 
-#define check_error(val)                                                       \
-  do {                                                                         \
-    if (!val) {                                                                \
-      return_value = val;                                                      \
-      goto defer;                                                              \
-    }                                                                          \
-  } while (0)
-
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                  float *intensities, float *two_thetas,
-                                 size_t n_patterns, size_t pat_len,
-                                 BkgKind background_kind, float *bkg_data,
-                                 size_t bkg_degree_if_poly,
+                                 size_t n_patterns, size_t pat_len, Noise noise,
+                                 uint64_t *rng_state, BkgKind background_kind,
+                                 float *bkg_data, size_t bkg_degree_if_poly,
                                  float *bkg_scales_if_not_none,
                                  bool normalize) {
   float *intensities_d, *two_thetas_d;
@@ -319,14 +497,20 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   ret = cudaPeekAtLastError();
   log_cuda_err(ret, "launching discretization kernel");
 
-  bool bkg_ok =
-      render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data,
-                         bkg_degree_if_poly, bkg_scales_if_not_none, n_patterns,
-                         pat_len, grid_size, block_size);
-  check_error(bkg_ok);
+  if (!render_noise(intensities_d, noise, rng_state, pat_len, n_patterns)) {
+    return false;
+  }
+
+  if (!render_backgrounds(intensities_d, two_thetas_d, background_kind,
+                          bkg_data, bkg_degree_if_poly, bkg_scales_if_not_none,
+                          n_patterns, pat_len, grid_size, block_size)) {
+    return false;
+  }
+
   if (normalize) {
-    bool normalize_ok = normalize_patterns(intensities_d, n_patterns, pat_len);
-    check_error(normalize_ok);
+    if (!normalize_patterns(intensities_d, n_patterns, pat_len)) {
+      return false;
+    }
   }
 
   ret = cudaDeviceSynchronize();
@@ -338,7 +522,6 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   log_cuda_err(ret, "copying intensities from "
                     "device to host");
 
-defer:
   cudaFree(peaks_d);
   cudaFree(patterns_d);
   cudaFree(two_thetas_d);

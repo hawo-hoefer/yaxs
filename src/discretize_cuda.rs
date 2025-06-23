@@ -1,19 +1,24 @@
+use rand::{Rng, SeedableRng};
+use rand_xoshiro::{SplitMix64, Xoshiro256PlusPlus};
+
 use crate::background::Background;
+use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
 
-pub fn discretize_peaks_cuda<T>(jobs: &[T], two_thetas: &[f32]) -> Vec<f32>
-where
-    T: Discretizer,
-{
+use self::ffi::Uniform;
+
+mod ffi {
     #[link(name = "discretize_cuda")]
     extern "C" {
-        fn render_peaks_and_background(
+        pub fn render_peaks_and_background(
             soa: PeakSOA<f32>,
             pat_info: *const CUDAPattern,
             intensities: *mut f32,
             two_thetas: *const f32,
             n_patterns: usize,
             pat_len: usize,
+            noise: Noise,
+            rng_state: *const u64,
             background_kind: BkgKind,
             bkg_data: *const f32,
             bkg_degree_if_poly: usize,
@@ -25,43 +30,94 @@ where
     // FFI structs for interaction with cuda
 
     #[repr(C)]
-    enum BkgKind {
+    #[derive(Eq, PartialEq)]
+    pub enum NoiseKind {
+        NoiseNone,
+        Gaussian,
+        Uniform,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Uniform {
+        pub min: *const f64,
+        pub max: *const f64,
+    }
+
+    pub enum BkgSOA {
         None,
+        Polynomial { degree: usize, all_coef: Vec<f32> },
+        Exponential(Vec<f32>),
+    }
+
+    #[repr(C)]
+    pub union NoiseVal {
+        pub none: *const f64,
+        pub gaussian: *const f64,
+        pub uniform: Uniform,
+    }
+
+    #[repr(C)]
+    pub struct Noise {
+        pub v: NoiseVal,
+        pub kind: NoiseKind,
+    }
+
+    #[repr(C)]
+    pub enum BkgKind {
+        BkgNone,
         Exponential,
         Polynomial,
     }
 
     #[repr(C)]
-    struct PeakSOA<T> {
-        intensity: *const T,
-        pos: *const T,
-        fwhm: *const T,
-        eta: *const T,
-        n_peaks_tot: usize,
+    pub struct PeakSOA<T> {
+        pub intensity: *const T,
+        pub pos: *const T,
+        pub fwhm: *const T,
+        pub eta: *const T,
+        pub n_peaks_tot: usize,
     }
 
     #[repr(C)]
-    struct CUDAPattern {
-        start_idx: usize,
-        n_peaks: usize,
+    pub struct CUDAPattern {
+        pub start_idx: usize,
+        pub n_peaks: usize,
     }
+}
+
+pub fn discretize_peaks_cuda<T>(jobs: &[T], two_thetas: &[f32]) -> Vec<f32>
+where
+    T: Discretizer,
+{
+    use self::ffi::BkgSOA;
 
     let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();
 
-    let mut patterns = Vec::<CUDAPattern>::with_capacity(jobs.len());
+    let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(jobs.len());
 
     let mut ffi_peak_intensity = Vec::with_capacity(n_peaks_tot);
     let mut ffi_peak_pos = Vec::with_capacity(n_peaks_tot);
     let mut ffi_peak_info_fwhm = Vec::with_capacity(n_peaks_tot);
     let mut ffi_peak_info_eta = Vec::with_capacity(n_peaks_tot);
 
+    let mut rng_state = Vec::<u64>::with_capacity(jobs.len() * 4);
+
     let mut start_idx = 0;
 
-    enum BkgSOA {
-        None,
-        Polynomial { degree: usize, all_coef: Vec<f32> },
-        Exponential(Vec<f32>),
-    }
+    let (noise_kind, mut noise_data) = match jobs.first().expect("at least one job").noise() {
+        Some(Noise::Uniform { .. }) => {
+            let mut data = Vec::<f64>::with_capacity(2 * jobs.len());
+            data.resize(2 * jobs.len(), 0.0);
+            (ffi::NoiseKind::Uniform, data)
+        }
+        Some(Noise::Gaussian { .. }) => {
+            let mut data = Vec::<f64>::with_capacity(jobs.len());
+            data.resize(jobs.len(), 0.0);
+            (ffi::NoiseKind::Gaussian, data)
+        }
+        None => (ffi::NoiseKind::NoiseNone, Vec::new()),
+    };
 
     let mut bkg_scales = Vec::new();
     let (mut bkg_soa, normalize) = {
@@ -87,7 +143,7 @@ where
     };
 
     // build SOA for peak and background rendering
-    for job in jobs.iter() {
+    for (i, job) in jobs.iter().enumerate() {
         use crate::background::Background;
         match (job.bkg(), &mut bkg_soa) {
             (Background::None, BkgSOA::None) => (),
@@ -109,6 +165,7 @@ where
                 unimplemented!("rendering of varying backgrounds CUDA backend.")
             }
         }
+
         if job.normalize() && normalize || (!job.normalize() && !normalize) {
             // all good; do nothing
             //
@@ -121,6 +178,46 @@ where
             unimplemented!(
                 "Rendering with varying normalization in CUDA backend is not implemented."
             )
+        }
+
+        match job.noise() {
+            Some(Noise::Gaussian { sigma }) if noise_kind == ffi::NoiseKind::Gaussian => {
+                // all good
+                //
+                // in
+                noise_data[i] = *sigma;
+            }
+            Some(Noise::Uniform { min, max }) if noise_kind == ffi::NoiseKind::Uniform => {
+                // all good, append uniform noise parameters to SOA
+                // c-style polymorphism going on here (noise_kind and noise_data are basically a
+                // tagged union)
+                //
+                // in case of uniform noise, noise_data is an array of length 2 * jobs.len()
+                // the first half contains each pattern's minimum noise amplitude
+                // the second half contains each pattern's maximum noise amplitude
+                // 0                        jobs.len()               2 * jobs.len()
+                // |                        |                        |
+                // v                        v                        v
+                // +------------------------+------------------------+
+                // | minima                 | maxima                 |
+                // +------------------------+------------------------+
+                noise_data[i] = *min;
+                noise_data[i + jobs.len()] = *max;
+            }
+            None if noise_kind == ffi::NoiseKind::NoiseNone => {
+                // do nothing - no noise
+            }
+            _ => {
+                unimplemented!(
+                    "Rendering with varying noise kind in CUDA backend is not implemented."
+                )
+            }
+        }
+
+        {
+            let seed: [u64; 4] =
+                unsafe { core::mem::transmute(crate::noise::get_xoshiro256_seed(job.seed())) };
+            rng_state.extend_from_slice(&seed);
         }
 
         let mut n_peaks = 0;
@@ -139,7 +236,7 @@ where
             n_peaks += 1;
         }
 
-        patterns.push(CUDAPattern { start_idx, n_peaks });
+        patterns.push(ffi::CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;
     }
 
@@ -151,7 +248,26 @@ where
         // discretize_peaks, we are only dealing with initialized memory
         intensities.set_len(intensities.capacity());
 
-        let soa = PeakSOA {
+        let noise_val = match noise_kind {
+            ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
+                none: core::ptr::null(),
+            },
+            ffi::NoiseKind::Gaussian => ffi::NoiseVal {
+                gaussian: noise_data.as_ptr(),
+            },
+            ffi::NoiseKind::Uniform => ffi::NoiseVal {
+                uniform: Uniform {
+                    min: noise_data.as_ptr(),
+                    max: noise_data[patterns.len()..].as_ptr(),
+                },
+            },
+        };
+        let noise = ffi::Noise {
+            v: noise_val,
+            kind: noise_kind,
+        };
+
+        let soa = ffi::PeakSOA {
             intensity: ffi_peak_intensity.as_ptr(),
             pos: ffi_peak_pos.as_ptr(),
             fwhm: ffi_peak_info_fwhm.as_ptr(),
@@ -159,17 +275,19 @@ where
             n_peaks_tot,
         };
 
-        let ret = render_peaks_and_background(
+        let ret = ffi::render_peaks_and_background(
             soa,
             patterns.as_ptr(),
             intensities.as_mut_ptr(),
             two_thetas.as_ptr(),
             patterns.len(),
             two_thetas.len(),
+            noise,
+            rng_state.as_ptr(),
             match &bkg_soa {
-                BkgSOA::None => BkgKind::None,
-                BkgSOA::Polynomial { .. } => BkgKind::Polynomial,
-                BkgSOA::Exponential(_) => BkgKind::Exponential,
+                BkgSOA::None => ffi::BkgKind::BkgNone,
+                BkgSOA::Polynomial { .. } => ffi::BkgKind::Polynomial,
+                BkgSOA::Exponential(_) => ffi::BkgKind::Exponential,
             },
             match &bkg_soa {
                 BkgSOA::None => 0 as *const f32,

@@ -2,7 +2,7 @@ use cfg_if::cfg_if;
 use log::{error, warn};
 use nalgebra::Vector3;
 use ndarray::Array2;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 use crate::background::Background;
 use crate::io::PatternMeta;
@@ -10,13 +10,14 @@ use crate::math::{
     caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
+use crate::noise::Noise;
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::Strain;
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::VolumeFraction;
+use crate::cfg::{NoiseSpec, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
@@ -29,6 +30,8 @@ pub struct RenderCommon<'a> {
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
+    pub random_seed: u64,
+    pub noise: Option<Noise>,
 }
 
 pub struct VFGenerator<'a> {
@@ -147,7 +150,11 @@ pub trait Discretizer {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams>;
     fn n_peaks_tot(&self) -> usize;
     fn bkg(&self) -> &Background;
+    fn seed(&self) -> u64;
     fn normalize(&self) -> bool;
+    fn noise(&self) -> &Option<Noise> {
+        &None
+    }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
     fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta>;
@@ -164,6 +171,10 @@ pub trait Discretizer {
         }
 
         self.bkg().render(intensities, positions);
+        if let Some(noise) = self.noise() {
+            eprintln!("noise: {:?}", noise);
+            noise.apply(intensities, self.seed());
+        }
 
         if self.normalize() {
             // TODO: check for NaNs and normalization
