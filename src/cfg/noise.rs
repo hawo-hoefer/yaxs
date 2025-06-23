@@ -236,8 +236,7 @@ mod test {
 
     #[test]
     fn deserialize_noise_gaussian_ranges() {
-        let noise: NoiseSpec =
-            serde_yaml::from_str("sigma: [1.0, 2.0]\n").expect("valid noise");
+        let noise: NoiseSpec = serde_yaml::from_str("sigma: [1.0, 2.0]\n").expect("valid noise");
         assert!(matches!(
             noise,
             NoiseSpec::Gaussian {

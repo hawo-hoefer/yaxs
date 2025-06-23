@@ -173,8 +173,7 @@ pub trait Discretizer {
         self.bkg().render(intensities, positions);
         if let Some(noise) = self.noise() {
             eprintln!("noise: {:?}", noise);
-            let mut rng = rand::rngs::StdRng::seed_from_u64(self.seed());
-            noise.apply(intensities, &mut rng);
+            noise.apply(intensities, self.seed());
         }
 
         if self.normalize() {
