@@ -408,7 +408,6 @@ mod test {
         assert_eq!(t, expected);
     }
 
-
     #[test]
     fn index() {
         #[rustfmt::skip]

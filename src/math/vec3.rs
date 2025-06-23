@@ -197,6 +197,7 @@ where
         Vec3::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
     }
 }
+
 impl<'de, T> Deserialize<'de> for Vec3<T>
 where
     T: Deserialize<'de>,
