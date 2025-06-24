@@ -78,5 +78,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - in `pymatgen`, they are passed separately
     - figure out if I want to do that somehow
     - low priority
+- [ ] parallel front end / peak position simulation
+- [ ] parallel gpu job generation
 - [x] CI
     - [ ] use caching in CI to improve speed
