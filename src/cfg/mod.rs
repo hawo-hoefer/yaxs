@@ -49,9 +49,9 @@ impl SimulationKind {
     pub fn simulate_peaks(
         &self,
         structures: Box<[Structure]>,
-        pref_o: Box<[&Option<MarchDollaseCfg>]>,
-        strain_cfgs: Box<[&Option<StrainCfg>]>,
-        structure_paths: Box<[&String]>,
+        pref_o: Box<[Option<MarchDollaseCfg>]>,
+        strain_cfgs: Box<[Option<StrainCfg>]>,
+        structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
         rng: &mut impl Rng,
     ) -> ToDiscretize {

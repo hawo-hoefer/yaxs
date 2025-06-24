@@ -116,7 +116,7 @@ fn main() {
         let mut p = CifParser::new(&cif);
 
         vf_constraints.push(*volume_fraction);
-        structure_paths.push(path);
+        structure_paths.push(path.clone());
         structures.push(
             Structure::try_from(&p.parse().unwrap_or_else(|err| {
                 error!("Invalid CIF Syntax for '{path}': {err}");
@@ -127,8 +127,8 @@ fn main() {
                 std::process::exit(1);
             }),
         );
-        strain_cfgs.push(strain);
-        pref_o.push(po);
+        strain_cfgs.push(strain.clone());
+        pref_o.push(po.clone());
     }
 
     let vf_generator = VFGenerator::try_new(vf_constraints)
