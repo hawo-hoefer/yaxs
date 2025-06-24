@@ -1,17 +1,18 @@
 use itertools::Itertools;
 use log::error;
 use num_complex::Complex;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::HashMap;
 
 use ordered_float::NotNan;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::{Mat3, Vec3};
-use crate::pattern::Peak;
+use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
 
@@ -478,43 +479,93 @@ pub fn simulate_peaks(
     structure_files: Box<[&String]>,
     rng: &mut impl Rng,
 ) -> ToDiscretize {
-    let mut all_simulated_peaks = Vec::with_capacity(structures.len());
-    let mut all_strains = Vec::with_capacity(structures.len());
-    let mut all_preferred_orientations = Vec::with_capacity(structures.len());
+    struct PeakSim<'a> {
+        structure: &'a Structure,
+        struct_file: &'a String,
+        po_cfg: &'a Option<MarchDollaseCfg>,
+        strain_cfg: &'a Option<StrainCfg>,
+        seed: u64,
+        min_r: f64,
+        max_r: f64,
+    }
 
-    for (s, po_cfg, strain_cfg, file) in itertools::izip!(
+    struct PeakSimResult {
+        strain: Strain,
+        po: Option<MarchDollase>,
+        peaks: Peaks,
+    }
+
+    impl<'a> PeakSim<'a> {
+        fn run(&self) -> PeakSimResult {
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(self.seed);
+            let Some((perm_s, strain)) =
+                apply_strain_cfg(self.strain_cfg, self.structure, &mut rng)
+            else {
+                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.struct_file);
+                error!("Exiting...");
+                std::process::exit(1);
+            };
+            let po = self.po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
+            let peaks = perm_s
+                .get_d_spacings_intensities(self.min_r, self.max_r, po.as_ref())
+                .into_boxed_slice();
+
+            PeakSimResult { strain, po, peaks }
+        }
+    }
+
+    use rayon::prelude::*;
+    let jobs = itertools::izip!(
         structures.iter(),
         structure_po_configs.iter(),
         structure_strain_configs.iter(),
         structure_files,
-    ) {
-        let mut permuted_phase_peaks = Vec::with_capacity(sample_parameters.structure_permutations);
+    )
+    .cartesian_product(0..sample_parameters.structure_permutations)
+    .map(|((s, po_cfg, strain_cfg, file), _)| PeakSim {
+        structure: s,
+        struct_file: file,
+        po_cfg,
+        strain_cfg,
+        seed: rng.random(),
+        min_r,
+        max_r,
+    })
+    .collect_vec();
+
+    let mut job_results = Vec::new();
+    jobs.into_par_iter()
+        .map(|job| job.run())
+        .collect_into_vec(&mut job_results);
+
+    let n_structures = structures.len();
+    let mut all_preferred_orientations = Vec::with_capacity(n_structures);
+    let mut all_strains = Vec::with_capacity(n_structures);
+    let mut all_simulated_peaks = Vec::with_capacity(n_structures);
+
+    for structure_res in job_results
+        .drain(..)
+        .chunks(sample_parameters.structure_permutations)
+        .into_iter()
+    {
         let mut strains = Vec::with_capacity(sample_parameters.structure_permutations);
         let mut pos = Vec::with_capacity(sample_parameters.structure_permutations);
-        for _ in 0..sample_parameters.structure_permutations {
-            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, s, rng) else {
-                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.");
-                error!("Exiting...");
-                std::process::exit(1);
-            };
-            let po = po_cfg.as_ref().map(|cfg| cfg.generate(rng));
-            let peaks = perm_s
-                .get_d_spacings_intensities(min_r, max_r, po.as_ref())
-                .into_boxed_slice();
-            pos.push(po);
-            permuted_phase_peaks.push(peaks);
+        let mut sim_peaks = Vec::with_capacity(sample_parameters.structure_permutations);
+        for PeakSimResult { strain, po, peaks } in structure_res {
             strains.push(strain);
+            pos.push(po);
+            sim_peaks.push(peaks);
         }
-        all_simulated_peaks.push(permuted_phase_peaks.into());
-        all_strains.push(strains.into());
-        all_preferred_orientations.push(pos.into())
+        all_strains.push(strains.into_boxed_slice());
+        all_preferred_orientations.push(pos.into_boxed_slice());
+        all_simulated_peaks.push(sim_peaks.into_boxed_slice());
     }
 
     ToDiscretize {
         structures,
         sample_parameters,
-        all_simulated_peaks: all_simulated_peaks.into(),
-        all_strains: all_strains.into(),
-        all_preferred_orientations: all_preferred_orientations.into(),
+        all_simulated_peaks: all_simulated_peaks.into_boxed_slice(),
+        all_strains: all_strains.into_boxed_slice(),
+        all_preferred_orientations: all_preferred_orientations.into_boxed_slice(),
     }
 }
