@@ -44,15 +44,15 @@ impl EmissionLine {
     }
 }
 
-pub struct DiscretizeAngleDisperse<'a> {
-    pub common: RenderCommon<'a>,
+pub struct DiscretizeAngleDisperse {
+    pub common: RenderCommon,
     pub emission_lines: Box<[EmissionLine]>,
     pub normalize: bool,
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
 }
 
-impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
+impl Discretizer for DiscretizeAngleDisperse {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let ADXRDMeta {
             vol_fractions,
@@ -66,8 +66,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
         } = &self.meta;
 
         itertools::izip!(
-            self.common.all_simulated_peaks,
-            self.common.indices.clone(), // TODO: get rid of this clone
+            self.common.all_simulated_peaks.into_iter(),
+            self.common.indices.iter(), // TODO: get rid of this clone
             vol_fractions,
             mean_ds_nm
         )
@@ -75,7 +75,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
         .map(
             move |((phase_peaks, idx, vf, phase_mean_ds_nm), emission_line)| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                phase_peaks[idx].iter().map(move |peak| {
+                phase_peaks[*idx].iter().map(move |peak| {
                     let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
                         wavelength_nm,
                         *u,
@@ -232,7 +232,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
     }
 }
 
-impl<'a> DiscretizeAngleDisperse<'a> {
+impl DiscretizeAngleDisperse {
     pub fn discretize_into(&self, pat: &mut [f32], two_thetas: &[f32], abstol: f32) {
         let ADXRDMeta {
             vol_fractions,
@@ -277,7 +277,7 @@ impl<'a> DiscretizeAngleDisperse<'a> {
                         two_theta_hkl_deg,
                         peak_weight,
                         fwhm,
-                        *eta as f32,
+                        (*eta) as f32,
                         abstol,
                         two_thetas,
                         pat,
@@ -299,9 +299,9 @@ impl<'a> DiscretizeAngleDisperse<'a> {
     }
 }
 
-pub struct JobGen<'a, T> {
+pub struct JobGen<T> {
     cfg: AngleDisperse,
-    discretize_info: &'a ToDiscretize,
+    discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
     two_thetas: Vec<f32>,
@@ -309,10 +309,10 @@ pub struct JobGen<'a, T> {
     rng: T,
 }
 
-impl<'a, T> JobGen<'a, T> {
+impl<T> JobGen<T> {
     pub fn new(
         cfg: AngleDisperse,
-        discretize_info: &'a ToDiscretize,
+        discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
         rng: T,
@@ -336,7 +336,7 @@ impl<'a, T> JobGen<'a, T> {
     }
 }
 
-impl<'a, T> DiscretizeJobGenerator for JobGen<'a, T>
+impl<T> DiscretizeJobGenerator for JobGen<T>
 where
     T: Rng,
 {
@@ -369,7 +369,7 @@ where
         self.sim_params.n_patterns - self.n
     }
 
-    type Item = DiscretizeAngleDisperse<'a>;
+    type Item = DiscretizeAngleDisperse;
 
     fn abstol(&self) -> f32 {
         self.sim_params.abstol

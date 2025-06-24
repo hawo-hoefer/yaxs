@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::ops::DerefMut;
+use std::sync::Arc;
 
 use itertools::Itertools;
 use rand::{Rng, SeedableRng};
@@ -197,14 +198,14 @@ pub struct EDXRDMeta {
     pub theta_rad: f64,
 }
 
-pub struct DiscretizeEnergyDispersive<'a> {
-    pub common: RenderCommon<'a>,
+pub struct DiscretizeEnergyDispersive {
+    pub common: RenderCommon,
     pub beamline: Beamline,
     pub normalize: bool,
     pub meta: EDXRDMeta,
 }
 
-impl<'a> Discretizer for DiscretizeEnergyDispersive<'a> {
+impl Discretizer for DiscretizeEnergyDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let f_lorentz = lorentz_factor(self.meta.theta_rad);
 
@@ -216,7 +217,7 @@ impl<'a> Discretizer for DiscretizeEnergyDispersive<'a> {
         } = &self.meta;
 
         itertools::izip!(
-            self.common.all_simulated_peaks,
+            self.common.all_simulated_peaks.into_iter(),
             self.common.indices.clone(), // TODO: get rid of this clone
             vol_fractions,
             mean_ds_nm
@@ -331,9 +332,9 @@ impl<'a> Discretizer for DiscretizeEnergyDispersive<'a> {
     }
 }
 
-pub struct JobGen<'a, T> {
+pub struct JobGen<T> {
     cfg: EnergyDisperse,
-    discretize_info: &'a ToDiscretize,
+    discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
     energies: Vec<f32>,
@@ -341,10 +342,10 @@ pub struct JobGen<'a, T> {
     rng: T,
 }
 
-impl<'a, T> JobGen<'a, T> {
+impl<T> JobGen<T> {
     pub fn new(
         cfg: EnergyDisperse,
-        discretize_info: &'a ToDiscretize,
+        discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
         rng: T,
@@ -369,11 +370,11 @@ impl<'a, T> JobGen<'a, T> {
     }
 }
 
-impl<'a, T> DiscretizeJobGenerator for JobGen<'a, T>
+impl<T> DiscretizeJobGenerator for JobGen<T>
 where
     T: Rng,
 {
-    type Item = DiscretizeEnergyDispersive<'a>;
+    type Item = DiscretizeEnergyDispersive;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.n >= self.sim_params.n_patterns {

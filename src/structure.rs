@@ -3,6 +3,7 @@ use log::error;
 use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
@@ -562,10 +563,10 @@ pub fn simulate_peaks(
     }
 
     ToDiscretize {
-        structures,
-        sample_parameters,
-        all_simulated_peaks: all_simulated_peaks.into_boxed_slice(),
-        all_strains: all_strains.into_boxed_slice(),
-        all_preferred_orientations: all_preferred_orientations.into_boxed_slice(),
+        structures: structures.into(),
+        sample_parameters: sample_parameters.into(),
+        all_simulated_peaks: all_simulated_peaks.into_boxed_slice().into(),
+        all_strains: all_strains.into_boxed_slice().into(),
+        all_preferred_orientations: all_preferred_orientations.into_boxed_slice().into(),
     }
 }

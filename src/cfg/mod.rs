@@ -7,6 +7,8 @@ mod probability;
 mod structure;
 mod volume_fraction;
 
+use std::sync::Arc;
+
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::info;
@@ -182,12 +184,12 @@ impl SampleParameters {
 }
 
 pub struct ToDiscretize {
-    pub structures: Box<[Structure]>,
+    pub structures: Arc<[Structure]>,
     pub sample_parameters: SampleParameters,
     // pub simulation_parameters: SimulationParameters,
-    pub all_simulated_peaks: Box<[Box<[Peaks]>]>,
-    pub all_strains: Box<[Box<[Strain]>]>,
-    pub all_preferred_orientations: Box<[Box<[Option<MarchDollase>]>]>,
+    pub all_simulated_peaks: Arc<[Box<[Peaks]>]>,
+    pub all_strains: Arc<[Box<[Strain]>]>,
+    pub all_preferred_orientations: Arc<[Box<[Option<MarchDollase>]>]>,
 }
 
 impl ToDiscretize {
@@ -197,7 +199,7 @@ impl ToDiscretize {
         angle_disperse: &AngleDisperse,
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
-    ) -> DiscretizeAngleDisperse<'a> {
+    ) -> DiscretizeAngleDisperse {
         let AngleDisperse {
             caglioti: Caglioti { u, v, w },
             background,
@@ -218,9 +220,9 @@ impl ToDiscretize {
 
         DiscretizeAngleDisperse {
             common: RenderCommon {
-                all_simulated_peaks: &self.all_simulated_peaks,
-                all_strains: &self.all_strains,
-                all_preferred_orientations: &self.all_preferred_orientations,
+                all_simulated_peaks: Arc::clone(&self.all_simulated_peaks),
+                all_strains: Arc::clone(&self.all_strains),
+                all_preferred_orientations: Arc::clone(&self.all_preferred_orientations),
                 impurity_peaks,
                 indices,
                 random_seed: rng.random(),
@@ -251,14 +253,14 @@ impl ToDiscretize {
         energy_disperse: &EnergyDisperse,
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
-    ) -> DiscretizeEnergyDispersive<'a> {
+    ) -> DiscretizeEnergyDispersive {
         let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
 
         DiscretizeEnergyDispersive {
             common: RenderCommon {
-                all_simulated_peaks: &self.all_simulated_peaks,
-                all_strains: &self.all_strains,
-                all_preferred_orientations: &self.all_preferred_orientations,
+                all_simulated_peaks: Arc::clone(&self.all_simulated_peaks),
+                all_strains: Arc::clone(&self.all_strains),
+                all_preferred_orientations: Arc::clone(&self.all_preferred_orientations),
                 indices,
                 impurity_peaks,
                 noise: simulation_parameters

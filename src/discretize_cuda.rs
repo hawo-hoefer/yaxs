@@ -1,3 +1,6 @@
+use itertools::Itertools;
+use rayon::prelude::*;
+
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
@@ -85,7 +88,7 @@ mod ffi {
 
 pub fn discretize_peaks_cuda<'a, T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
 where
-    T: Discretizer,
+    T: Discretizer + Send,
 {
     use self::ffi::BkgSOA;
 
@@ -216,15 +219,22 @@ where
                 unsafe { core::mem::transmute(crate::noise::get_xoshiro256_seed(job.seed())) };
             rng_state.extend_from_slice(&seed);
         }
+    }
 
+    let mut peak_info = Vec::<Vec<PeakRenderParams>>::new();
+    jobs.into_par_iter()
+        .map(|job| job.peak_info_iterator().collect_vec())
+        .collect_into_vec(&mut peak_info);
+
+    let mut start_idx = 0;
+    for job_peaks in peak_info {
         let mut n_peaks = 0;
         for PeakRenderParams {
             pos,
             intensity,
             fwhm,
             eta,
-            ..
-        } in job.peak_info_iterator()
+        } in job_peaks
         {
             ffi_peak_info_fwhm.push(fwhm as f32);
             ffi_peak_info_eta.push(eta as f32);
@@ -232,7 +242,6 @@ where
             ffi_peak_intensity.push(intensity);
             n_peaks += 1;
         }
-
         patterns.push(ffi::CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;
     }

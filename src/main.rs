@@ -174,11 +174,11 @@ fn main() {
 
     match cfg.kind.clone() {
         SimulationKind::AngleDisperse(angle_disperse) => {
-            let gen = adxrd::JobGen::new(angle_disperse, &to_discretize, params, vf_generator, rng);
+            let gen = adxrd::JobGen::new(angle_disperse, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
         SimulationKind::EnergyDisperse(energ_disperse) => {
-            let gen = edxrd::JobGen::new(energ_disperse, &to_discretize, params, vf_generator, rng);
+            let gen = edxrd::JobGen::new(energ_disperse, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }
@@ -190,7 +190,7 @@ fn render_and_write_jobs<T, G>(
     timestamp_started: chrono::DateTime<Utc>,
     extra: io::Extra,
 ) where
-    T: Discretizer,
+    T: Discretizer + Send,
     G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();

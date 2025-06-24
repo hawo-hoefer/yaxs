@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cfg_if::cfg_if;
 use log::{error, warn};
 use ndarray::Array2;
@@ -32,11 +34,11 @@ pub trait DiscretizeJobGenerator {
     fn abstol(&self) -> f32;
 }
 
-pub struct RenderCommon<'a> {
+pub struct RenderCommon {
     // all simulated peaks for all phases in order [structure, structure permutations]
-    pub all_simulated_peaks: &'a Box<[Box<[Peaks]>]>,
-    pub all_preferred_orientations: &'a Box<[Box<[Option<MarchDollase>]>]>,
-    pub all_strains: &'a Box<[Box<[Strain]>]>,
+    pub all_simulated_peaks: Arc<[Box<[Peaks]>]>,
+    pub all_preferred_orientations: Arc<[Box<[Option<MarchDollase>]>]>,
+    pub all_strains: Arc<[Box<[Strain]>]>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
@@ -348,7 +350,7 @@ pub fn render_jobs<'a, T>(
     n_phases: usize,
 ) -> (Array2<f32>, Vec<PatternMeta>)
 where
-    T: Discretizer,
+    T: Discretizer + Send,
 {
     let n = jobs.len();
     let mut metadata = T::init_meta_data(jobs.len(), n_phases);
