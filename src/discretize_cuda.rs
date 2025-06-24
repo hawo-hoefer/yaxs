@@ -83,7 +83,7 @@ mod ffi {
     }
 }
 
-pub fn discretize_peaks_cuda<T>(jobs: &[T], two_thetas: &[f32]) -> Vec<f32>
+pub fn discretize_peaks_cuda<'a, T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
 where
     T: Discretizer,
 {

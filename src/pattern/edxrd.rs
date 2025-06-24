@@ -1,5 +1,9 @@
+use std::marker::PhantomData;
+use std::ops::DerefMut;
+
 use itertools::Itertools;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +14,9 @@ use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
 use crate::pattern::lorentz_factor;
 
-use super::{Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator};
+use super::{
+    DiscretizeJobGenerator, Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator,
+};
 
 /// Wiggler Beamline Parameters
 ///
@@ -193,12 +199,12 @@ pub struct EDXRDMeta {
 
 pub struct DiscretizeEnergyDispersive<'a> {
     pub common: RenderCommon<'a>,
-    pub beamline: &'a Beamline,
+    pub beamline: Beamline,
     pub normalize: bool,
     pub meta: EDXRDMeta,
 }
 
-impl Discretizer for DiscretizeEnergyDispersive<'_> {
+impl<'a> Discretizer for DiscretizeEnergyDispersive<'a> {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let f_lorentz = lorentz_factor(self.meta.theta_rad);
 
@@ -325,28 +331,80 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
     }
 }
 
-pub fn generate_edxrd_jobs<'a>(
-    energy_disperse: &'a EnergyDisperse,
-    job_cfg: &'a ToDiscretize,
-    simulation_parameters: &'a SimulationParameters,
-    vf_generator: &VFGenerator<'a>,
-    rng: &mut impl Rng,
-) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>) {
-    let (e0, e1) = energy_disperse.energy_range_kev;
-    let energies = (0..energy_disperse.n_steps)
-        .map(|x| x as f32 / (energy_disperse.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
-        .collect_vec();
+pub struct JobGen<'a, T> {
+    cfg: EnergyDisperse,
+    discretize_info: &'a ToDiscretize,
+    sim_params: SimulationParameters,
+    vf_generator: VFGenerator,
+    energies: Vec<f32>,
+    n: usize,
+    rng: T,
+}
 
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
-    for _ in 0..simulation_parameters.n_patterns {
-        jobs.push(job_cfg.generate_edxrd_job(
-            &energy_disperse,
+impl<'a, T> JobGen<'a, T> {
+    pub fn new(
+        cfg: EnergyDisperse,
+        discretize_info: &'a ToDiscretize,
+        sim_params: SimulationParameters,
+        vf_generator: VFGenerator,
+        rng: T,
+    ) -> Self
+    where
+        T: Rng,
+    {
+        let (e0, e1) = cfg.energy_range_kev;
+        let energies = (0..cfg.n_steps)
+            .map(|x| x as f32 / (cfg.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
+            .collect_vec();
+
+        Self {
             vf_generator,
-            simulation_parameters,
+            cfg,
+            discretize_info,
+            sim_params,
             rng,
-        ));
+            energies,
+            n: 0,
+        }
+    }
+}
+
+impl<'a, T> DiscretizeJobGenerator for JobGen<'a, T>
+where
+    T: Rng,
+{
+    type Item = DiscretizeEnergyDispersive<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n >= self.sim_params.n_patterns {
+            return None;
+        }
+
+        let job = self.discretize_info.generate_edxrd_job(
+            &self.vf_generator,
+            &self.cfg,
+            &self.sim_params,
+            &mut self.rng,
+        );
+
+        self.n += 1;
+
+        Some(job)
     }
 
-    (jobs, energies)
+    fn remaining(&self) -> usize {
+        self.sim_params.n_patterns - self.n
+    }
+
+    fn xs(&self) -> &[f32] {
+        &self.energies
+    }
+
+    fn n_phases(&self) -> usize {
+        self.discretize_info.structures.len()
+    }
+
+    fn abstol(&self) -> f32 {
+        self.sim_params.abstol
+    }
 }

@@ -1,4 +1,8 @@
-use super::{render_peak, Discretizer, PeakRenderParams, RenderCommon, VFGenerator};
+use std::ops::DerefMut;
+
+use super::{
+    render_peak, DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator,
+};
 use crate::background::Background;
 use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -42,7 +46,7 @@ impl EmissionLine {
 
 pub struct DiscretizeAngleDisperse<'a> {
     pub common: RenderCommon<'a>,
-    pub emission_lines: &'a [EmissionLine],
+    pub emission_lines: Box<[EmissionLine]>,
     pub normalize: bool,
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
@@ -67,7 +71,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             vol_fractions,
             mean_ds_nm
         )
-        .cartesian_product(self.emission_lines)
+        .cartesian_product(&self.emission_lines)
         .map(
             move |((phase_peaks, idx, vf, phase_mean_ds_nm), emission_line)| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
@@ -96,7 +100,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             self.common
                 .impurity_peaks
                 .iter()
-                .cartesian_product(self.emission_lines)
+                .cartesian_product(&self.emission_lines)
                 .map(move |(ip, emission_line)| {
                     let wavelength_nm = emission_line.wavelength_ams / 10.0;
                     let (two_theta_hkl_deg, peak_weight, fwhm) = ip.peak.get_adxrd_render_params(
@@ -256,7 +260,7 @@ impl<'a> DiscretizeAngleDisperse<'a> {
             // * `v`: caglioti parameter v
             // * `w`: caglioti parameter w
             // $$\Delta 2\theta = 2 \Delta_\text{R} / R \cos\theta$$
-            for emission_line in self.emission_lines {
+            for emission_line in &self.emission_lines {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 for peak in peaks.iter() {
                     let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
@@ -295,31 +299,79 @@ impl<'a> DiscretizeAngleDisperse<'a> {
     }
 }
 
-pub fn generate_adxrd_jobs<'a>(
-    angle_disperse: &'a AngleDisperse,
-    job_cfg: &'a ToDiscretize,
-    simulation_parameters: &'a SimulationParameters,
-    vf_generator: &VFGenerator<'a>,
-    rng: &mut impl Rng,
-) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>) {
-    // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
-    two_thetas.resize(two_thetas.capacity(), 0.0f32);
-    for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = angle_disperse.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
-    }
+pub struct JobGen<'a, T> {
+    cfg: AngleDisperse,
+    discretize_info: &'a ToDiscretize,
+    sim_params: SimulationParameters,
+    vf_generator: VFGenerator,
+    two_thetas: Vec<f32>,
+    n: usize,
+    rng: T,
+}
 
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
-    for _ in 0..simulation_parameters.n_patterns {
-        jobs.push(job_cfg.generate_adxrd_job(
+impl<'a, T> JobGen<'a, T> {
+    pub fn new(
+        cfg: AngleDisperse,
+        discretize_info: &'a ToDiscretize,
+        sim_params: SimulationParameters,
+        vf_generator: VFGenerator,
+        rng: T,
+    ) -> Self {
+        let mut two_thetas = Vec::with_capacity(cfg.n_steps);
+        two_thetas.resize(two_thetas.capacity(), 0.0f32);
+        for (i, t) in two_thetas.iter_mut().enumerate() {
+            let r = cfg.two_theta_range;
+            *t = (r.0 + (r.1 - r.0) * (i as f64 / (cfg.n_steps as f64 - 1.0))) as f32;
+        }
+
+        Self {
+            cfg,
+            discretize_info,
+            sim_params,
             vf_generator,
-            &angle_disperse,
-            &simulation_parameters,
+            two_thetas,
+            n: 0,
             rng,
-        ));
+        }
+    }
+}
+
+impl<'a, T> DiscretizeJobGenerator for JobGen<'a, T>
+where
+    T: Rng,
+{
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n >= self.sim_params.n_patterns {
+            return None;
+        }
+
+        let job = self.discretize_info.generate_adxrd_job(
+            &self.vf_generator,
+            &self.cfg,
+            &self.sim_params,
+            &mut self.rng,
+        );
+
+        self.n += 1;
+
+        Some(job)
     }
 
-    (jobs, two_thetas)
+    fn xs(&self) -> &[f32] {
+        &self.two_thetas
+    }
+
+    fn n_phases(&self) -> usize {
+        self.discretize_info.structures.len()
+    }
+
+    fn remaining(&self) -> usize {
+        self.sim_params.n_patterns - self.n
+    }
+
+    type Item = DiscretizeAngleDisperse<'a>;
+
+    fn abstol(&self) -> f32 {
+        self.sim_params.abstol
+    }
 }

@@ -17,10 +17,20 @@ use crate::structure::Strain;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::VolumeFraction;
+use crate::cfg::{SimulationKind, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
+
+pub trait DiscretizeJobGenerator {
+    type Item;
+
+    fn next(&mut self) -> Option<Self::Item>;
+    fn remaining(&self) -> usize;
+    fn xs(&self) -> &[f32];
+    fn n_phases(&self) -> usize;
+    fn abstol(&self) -> f32;
+}
 
 pub struct RenderCommon<'a> {
     // all simulated peaks for all phases in order [structure, structure permutations]
@@ -34,14 +44,14 @@ pub struct RenderCommon<'a> {
     pub noise: Option<Noise>,
 }
 
-pub struct VFGenerator<'a> {
+pub struct VFGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
-    pub fractions: &'a Vec<Option<VolumeFraction>>,
+    pub fractions: Vec<Option<VolumeFraction>>,
 }
 
-impl<'a> VFGenerator<'a> {
-    pub fn try_new(fractions: &'a Vec<Option<VolumeFraction>>) -> Result<Self, ()> {
+impl VFGenerator {
+    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Result<Self, ()> {
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
 
@@ -331,8 +341,8 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
-pub fn render_jobs<T>(
-    jobs: &[T],
+pub fn render_jobs<'a, T>(
+    jobs: Vec<T>,
     two_thetas: &[f32],
     #[allow(unused)] atol: f32,
     n_phases: usize,
@@ -341,6 +351,13 @@ where
     T: Discretizer,
 {
     let n = jobs.len();
+    let mut metadata = T::init_meta_data(jobs.len(), n_phases);
+    for (i, job) in jobs.iter().enumerate() {
+        for m in metadata.iter_mut() {
+            job.write_meta_data(m, i)
+        }
+    }
+
     // actual rendering of the patterns
     cfg_if! {
         if #[cfg(feature = "cpu-only")] {
@@ -356,14 +373,6 @@ where
         }
     };
 
-    let mut metadata = T::init_meta_data(jobs.len(), n_phases);
-
-    for (i, job) in jobs.iter().enumerate() {
-        for m in metadata.iter_mut() {
-            job.write_meta_data(m, i)
-        }
-    }
-
     (intensities, metadata)
 }
 
@@ -378,7 +387,7 @@ mod test {
     fn vf_generation_basic() {
         let n = 5;
         let vfs = (0..n).map(|_| None).collect_vec();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated.len(), n);
@@ -389,7 +398,7 @@ mod test {
     fn vf_generation_single_fixed() {
         let vfs = vec![None, None, Some(VolumeFraction(0.3))];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[2], 0.3);
@@ -406,7 +415,7 @@ mod test {
             Some(VolumeFraction(0.3)),
         ];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -426,7 +435,7 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -441,7 +450,7 @@ mod test {
         let vfs = vec![Some(VolumeFraction(0.2)), Some(VolumeFraction(0.1)), None];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -456,7 +465,7 @@ mod test {
         let vfs = vec![Some(VolumeFraction(0.6)), Some(VolumeFraction(0.4))];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(&vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.6);

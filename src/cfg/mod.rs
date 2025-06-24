@@ -193,9 +193,9 @@ pub struct ToDiscretize {
 impl ToDiscretize {
     pub fn generate_adxrd_job<'a>(
         &'a self,
-        vf_generator: &VFGenerator<'a>,
-        angle_disperse: &'a AngleDisperse,
-        simulation_parameters: &'a SimulationParameters,
+        vf_generator: &VFGenerator,
+        angle_disperse: &AngleDisperse,
+        simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
     ) -> DiscretizeAngleDisperse<'a> {
         let AngleDisperse {
@@ -229,7 +229,7 @@ impl ToDiscretize {
                     .as_ref()
                     .map(|x| x.generate(rng)),
             },
-            emission_lines: &emission_lines,
+            emission_lines: emission_lines.clone().into(),
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
             meta: ADXRDMeta {
@@ -247,9 +247,9 @@ impl ToDiscretize {
 
     pub fn generate_edxrd_job<'a>(
         &'a self,
-        energy_disperse: &'a EnergyDisperse,
-        vf_generator: &VFGenerator<'a>,
-        simulation_parameters: &'a SimulationParameters,
+        vf_generator: &VFGenerator,
+        energy_disperse: &EnergyDisperse,
+        simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive<'a> {
         let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
@@ -267,7 +267,7 @@ impl ToDiscretize {
                     .map(|x| x.generate(rng)),
                 random_seed: rng.random(),
             },
-            beamline: &energy_disperse.beamline,
+            beamline: energy_disperse.beamline.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions: vf_generator.generate(rng),
