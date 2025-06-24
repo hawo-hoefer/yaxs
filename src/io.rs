@@ -165,7 +165,7 @@ pub fn render_chunk_and_queue_write_in_thread<'a, D, T>(
 ) -> Result<(), ()>
 where
     T: AsRef<Path> + Send + Sync,
-    D: Discretizer + Send,
+    D: Discretizer + Send + Sync + 'static,
 {
     let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs);
     send.send(Arc::new(WriteJob::Write {
@@ -230,7 +230,7 @@ pub fn render_write_chunked<'a, T>(
     io_opts: &crate::io::Opts,
 ) -> OutputNames
 where
-    T: Discretizer + Send,
+    T: Discretizer + Send + Sync + 'static,
 {
     let abstol = gen.abstol();
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();

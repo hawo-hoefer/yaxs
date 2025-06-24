@@ -190,7 +190,7 @@ fn render_and_write_jobs<T, G>(
     timestamp_started: chrono::DateTime<Utc>,
     extra: io::Extra,
 ) where
-    T: Discretizer + Send,
+    T: Discretizer + Send + Sync + 'static,
     G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();

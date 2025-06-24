@@ -350,7 +350,7 @@ pub fn render_jobs<'a, T>(
     n_phases: usize,
 ) -> (Array2<f32>, Vec<PatternMeta>)
 where
-    T: Discretizer + Send,
+    T: Discretizer + Send + Sync + 'static,
 {
     let n = jobs.len();
     let mut metadata = T::init_meta_data(jobs.len(), n_phases);

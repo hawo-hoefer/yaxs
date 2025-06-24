@@ -1,5 +1,8 @@
-use itertools::Itertools;
-use rayon::prelude::*;
+use std::cell::UnsafeCell;
+use std::mem::MaybeUninit;
+use std::sync::Arc;
+
+use log::{debug, error};
 
 use crate::background::Background;
 use crate::noise::Noise;
@@ -86,20 +89,83 @@ mod ffi {
     }
 }
 
+struct RenderCtx {
+    inner: UnsafeCell<Inner>,
+}
+
+struct Inner {
+    fwhm: Vec<f32>,
+    eta: Vec<f32>,
+    pos: Vec<f32>,
+    intens: Vec<f32>,
+}
+
+impl RenderCtx {
+    pub fn new(peak_cap: usize) -> Self {
+        let mut intens = Vec::with_capacity(peak_cap);
+        let mut pos = Vec::with_capacity(peak_cap);
+        let mut eta = Vec::with_capacity(peak_cap);
+        let mut fwhm = Vec::with_capacity(peak_cap);
+
+        intens.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
+        pos.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
+        eta.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
+        fwhm.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
+
+        Self {
+            inner: UnsafeCell::new(Inner {
+                fwhm,
+                eta,
+                pos,
+                intens,
+            }),
+        }
+    }
+
+    pub unsafe fn set_at(&self, idx: usize, p: PeakRenderParams) {
+        let Inner {
+            fwhm,
+            eta,
+            pos,
+            intens,
+        } = unsafe { &mut *(self.inner.get() as *mut Inner) };
+
+        fwhm[idx] = p.fwhm as f32;
+        eta[idx] = p.eta as f32;
+        pos[idx] = p.pos;
+        intens[idx] = p.intensity;
+    }
+
+    pub fn to_soa(&mut self) -> ffi::PeakSOA<f32> {
+        let Inner {
+            fwhm,
+            eta,
+            pos,
+            intens,
+        } = self.inner.get_mut();
+
+        ffi::PeakSOA {
+            intensity: intens.as_ptr(),
+            pos: pos.as_ptr(),
+            fwhm: fwhm.as_ptr(),
+            eta: eta.as_ptr(),
+            n_peaks_tot: fwhm.len(),
+        }
+    }
+}
+
+unsafe impl Sync for RenderCtx {}
+
 pub fn discretize_peaks_cuda<'a, T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
 where
-    T: Discretizer + Send,
+    T: Discretizer + Send + Sync + 'static,
 {
     use self::ffi::BkgSOA;
 
     let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();
 
     let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(jobs.len());
-
-    let mut ffi_peak_intensity = Vec::with_capacity(n_peaks_tot);
-    let mut ffi_peak_pos = Vec::with_capacity(n_peaks_tot);
-    let mut ffi_peak_info_fwhm = Vec::with_capacity(n_peaks_tot);
-    let mut ffi_peak_info_eta = Vec::with_capacity(n_peaks_tot);
+    let mut ctx = Arc::new(RenderCtx::new(n_peaks_tot));
 
     let mut rng_state = Vec::<u64>::with_capacity(jobs.len() * 4);
 
@@ -219,31 +285,82 @@ where
         }
     }
 
-    let mut peak_info = Vec::<Vec<PeakRenderParams>>::new();
-    jobs.into_par_iter()
-        .map(|job| job.peak_info_iterator().collect_vec())
-        .collect_into_vec(&mut peak_info);
-
     let mut start_idx = 0;
-    for job_peaks in peak_info {
-        let mut n_peaks = 0;
-        for PeakRenderParams {
-            pos,
-            intensity,
-            fwhm,
-            eta,
-        } in job_peaks
-        {
-            ffi_peak_info_fwhm.push(fwhm as f32);
-            ffi_peak_info_eta.push(eta as f32);
-            ffi_peak_pos.push(pos);
-            ffi_peak_intensity.push(intensity);
-            n_peaks += 1;
-        }
+    for job in jobs.iter() {
+        let n_peaks = job.n_peaks_tot();
         patterns.push(ffi::CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;
     }
 
+    enum InfoJob {
+        Job(usize),
+        Stop,
+    }
+    let (tx, rx) = crossbeam_channel::unbounded();
+
+    let patterns = Arc::new(patterns);
+
+    let jobs = Arc::new(jobs);
+
+    let n_threads = 12;
+    let mut handles = Vec::new();
+    for i in 0..n_threads {
+        let rx = rx.clone();
+        let patterns = Arc::clone(&patterns);
+        let ctx = Arc::clone(&ctx);
+        let jobs = Arc::clone(&jobs);
+        let handle = std::thread::spawn(move || {
+            loop {
+                let idx: usize = match rx.recv() {
+                    Ok(InfoJob::Job(idx)) => idx,
+                    Ok(InfoJob::Stop) | Err(_) => break,
+                };
+
+                for (i, p) in jobs[idx].peak_info_iterator().enumerate() {
+                    let pat = &patterns[idx];
+                    assert!(i < pat.n_peaks, "error in peak number computation");
+                    let peak_idx = pat.start_idx + i;
+
+                    unsafe { ctx.set_at(peak_idx, p) };
+                }
+            }
+            debug!("peak info generation thread {i} exiting");
+        });
+        handles.push(handle);
+    }
+
+    for idx in 0..jobs.len() {
+        let _ = tx
+            .send(InfoJob::Job(idx))
+            .map_err(|err| {
+                error!("Could not create peak info gathering job {idx}: '{err}'. Exiting...");
+                std::process::exit(1);
+            })
+            .expect("error is handled inside");
+    }
+
+    for idx in 0..n_threads {
+        let _ = tx
+            .send(InfoJob::Stop)
+            .map_err(|err| {
+                error!("Could send stop signal to peak info gathering thread {idx}: '{err}'. Exiting...");
+                std::process::exit(1);
+            })
+            .expect("error is handled inside");
+    }
+
+    for (i, handle) in handles.drain(..).enumerate() {
+        handle
+            .join()
+            .map_err(|err| {
+                error!("could not join peak info generation thread {i}: '{err:?}'. Exiting...");
+                std::process::exit(1);
+            })
+            .expect("error is handled inside");
+    }
+
+    let ctx = Arc::get_mut(&mut ctx).expect("all threads owning ctx have stopped");
+    let soa = ctx.to_soa();
     let mut intensities = Vec::<f32>::with_capacity(patterns.len() * two_thetas.len());
     unsafe {
         // SAFETY: this is OK because discretize_peaks **sets** every single f64-sized
@@ -276,14 +393,6 @@ where
         let noise = ffi::Noise {
             v: noise_val,
             kind: noise_kind,
-        };
-
-        let soa = ffi::PeakSOA {
-            intensity: ffi_peak_intensity.as_ptr(),
-            pos: ffi_peak_pos.as_ptr(),
-            fwhm: ffi_peak_info_fwhm.as_ptr(),
-            eta: ffi_peak_info_eta.as_ptr(),
-            n_peaks_tot,
         };
 
         let ret = ffi::render_peaks_and_background(
