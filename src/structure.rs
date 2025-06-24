@@ -3,7 +3,6 @@ use log::error;
 use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};

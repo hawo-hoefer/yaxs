@@ -103,8 +103,6 @@ where
 
     let mut rng_state = Vec::<u64>::with_capacity(jobs.len() * 4);
 
-    let mut start_idx = 0;
-
     let (noise_kind, mut noise_data) = match jobs.first().expect("at least one job").noise() {
         Some(Noise::Uniform { .. }) => {
             let mut data = Vec::<f64>::with_capacity(2 * jobs.len());

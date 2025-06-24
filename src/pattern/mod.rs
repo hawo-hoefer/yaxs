@@ -19,7 +19,7 @@ use crate::structure::Strain;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::{SimulationKind, VolumeFraction};
+use crate::cfg::VolumeFraction;
 
 pub mod adxrd;
 pub mod edxrd;

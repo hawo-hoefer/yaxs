@@ -11,7 +11,7 @@ use yaxs::structure::Structure;
 
 use log::{error, info};
 
-use yaxs::cfg::{Config, SimulationKind, SimulationParameters, StructureDef, ToDiscretize};
+use yaxs::cfg::{Config, SimulationKind, StructureDef};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,

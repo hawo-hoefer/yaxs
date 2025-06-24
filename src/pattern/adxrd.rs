@@ -1,4 +1,3 @@
-use std::ops::DerefMut;
 
 use super::{
     render_peak, DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator,
