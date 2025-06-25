@@ -183,13 +183,24 @@ impl SampleParameters {
     }
 }
 
+pub struct CompactSimResults {
+    pub all_simulated_peaks: Box<[Peaks]>,
+    pub all_strains: Box<[Strain]>,
+    pub all_preferred_orientations: Box<[Option<MarchDollase>]>,
+    pub n_permutations: usize,
+}
+
+impl CompactSimResults {
+    pub fn idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
+        struct_idx * self.n_permutations + perm_idx
+    }
+}
+
 pub struct ToDiscretize {
     pub structures: Arc<[Structure]>,
     pub sample_parameters: SampleParameters,
+    pub sim_res: Arc<CompactSimResults>,
     // pub simulation_parameters: SimulationParameters,
-    pub all_simulated_peaks: Arc<[Box<[Peaks]>]>,
-    pub all_strains: Arc<[Box<[Strain]>]>,
-    pub all_preferred_orientations: Arc<[Box<[Option<MarchDollase>]>]>,
 }
 
 impl ToDiscretize {
@@ -220,9 +231,7 @@ impl ToDiscretize {
 
         DiscretizeAngleDisperse {
             common: RenderCommon {
-                all_simulated_peaks: Arc::clone(&self.all_simulated_peaks),
-                all_strains: Arc::clone(&self.all_strains),
-                all_preferred_orientations: Arc::clone(&self.all_preferred_orientations),
+                sim_res: Arc::clone(&self.sim_res),
                 impurity_peaks,
                 indices,
                 random_seed: rng.random(),
@@ -258,9 +267,7 @@ impl ToDiscretize {
 
         DiscretizeEnergyDispersive {
             common: RenderCommon {
-                all_simulated_peaks: Arc::clone(&self.all_simulated_peaks),
-                all_strains: Arc::clone(&self.all_strains),
-                all_preferred_orientations: Arc::clone(&self.all_preferred_orientations),
+                sim_res: Arc::clone(&self.sim_res),
                 indices,
                 impurity_peaks,
                 noise: simulation_parameters

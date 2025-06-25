@@ -2,14 +2,15 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::mem;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 
-use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
+use crate::cfg::{apply_strain_cfg, CompactSimResults, SampleParameters, StrainCfg};
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
@@ -460,6 +461,96 @@ impl Structure {
     }
 }
 
+struct PeakSimResult {
+    strain: Strain,
+    po: Option<MarchDollase>,
+    peaks: Peaks,
+    struct_id: usize,
+    permutation_id: usize,
+}
+
+struct WriteCtx {
+    inner: UnsafeCell<Inner>,
+}
+
+struct Inner {
+    strain: Vec<Strain>,
+    pos: Vec<Option<MarchDollase>>,
+    peaks: Vec<Peaks>,
+    ok: Vec<bool>,
+    n_permutations: usize,
+}
+
+unsafe impl Sync for WriteCtx {}
+
+unsafe fn uninit_vec<T>(len: usize) -> Vec<T>
+where
+    T: Clone,
+{
+    let mut v = Vec::with_capacity(len);
+    v.resize(len, unsafe { MaybeUninit::zeroed().assume_init() });
+    v
+}
+
+impl WriteCtx {
+    pub fn new(n_structs: usize, n_permutations: usize) -> Self {
+        Self {
+            inner: UnsafeCell::new(Inner {
+                strain: unsafe { uninit_vec(n_structs * n_permutations) },
+                pos: unsafe { uninit_vec(n_structs * n_permutations) },
+                peaks: unsafe { uninit_vec(n_structs * n_permutations) },
+                ok: unsafe { uninit_vec(n_structs * n_permutations) },
+                n_permutations,
+            }),
+        }
+    }
+
+    pub unsafe fn add(&self, p: PeakSimResult) {
+        let Inner {
+            strain,
+            pos,
+            peaks,
+            ok,
+            n_permutations,
+        } = unsafe { &mut *(self.inner.get() as *mut Inner) };
+
+        let idx = p.struct_id * (*n_permutations) + p.permutation_id;
+
+        strain[idx] = p.strain;
+        pos[idx] = p.po;
+        peaks[idx] = p.peaks;
+        ok[idx] = true
+    }
+
+    pub fn to_to_discretize(
+        self,
+        structures: Arc<[Structure]>,
+        sample_parameters: SampleParameters,
+    ) -> ToDiscretize {
+        let Inner {
+            strain,
+            pos,
+            peaks,
+            ok,
+            n_permutations,
+        } = self.inner.into_inner();
+
+        // TODO: make this return a result instead so we can error gracefully
+        assert!(ok.iter().all(|x| *x));
+
+        ToDiscretize {
+            structures,
+            sample_parameters,
+            sim_res: Arc::new(CompactSimResults {
+                all_simulated_peaks: peaks.into(),
+                all_strains: strain.into(),
+                all_preferred_orientations: pos.into(),
+                n_permutations,
+            }),
+        }
+    }
+}
+
 /// Generate Peaks for the input structures and their physical parameters.
 ///
 /// * `sample_params`: physical parameter ranges for the structures
@@ -487,14 +578,6 @@ pub fn simulate_peaks(
         seed: u64,
         min_r: f64,
         max_r: f64,
-    }
-
-    struct PeakSimResult {
-        strain: Strain,
-        po: Option<MarchDollase>,
-        peaks: Peaks,
-        struct_id: usize,
-        permutation_id: usize,
     }
 
     struct RunCtx {
@@ -533,6 +616,7 @@ pub fn simulate_peaks(
     }
 
     let n_structs = structures.len();
+    let n_permutations = sample_parameters.structure_permutations;
 
     enum Task {
         Job(PeakSim),
@@ -546,16 +630,15 @@ pub fn simulate_peaks(
         structure_files: structure_files.into(),
     });
 
+    let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
+
     let n_threads: usize = std::thread::available_parallelism()
         .map(|x| x.into())
         .unwrap_or(1);
 
-    let mut job_results = Vec::new();
     if n_threads == 1 {
         info!("running single-threaded peak simulation");
-        for (struct_id, permutation_id) in
-            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
-        {
+        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
             let job = PeakSim {
                 structure: struct_id,
                 permutation: permutation_id,
@@ -563,18 +646,18 @@ pub fn simulate_peaks(
                 min_r,
                 max_r,
             };
-            job_results.push(ctx.run(job));
+            let p = ctx.run(job);
+            unsafe { results.add(p) };
         }
     } else {
         let (job_sender, job_receiver) = crossbeam_channel::unbounded();
-        let (peaks_sender, peaks_receiver) = crossbeam_channel::unbounded();
         info!("Launching {n_threads} threads for peak simulation");
 
         let handles = (0..n_threads)
             .map(|i| {
                 let ctx = Arc::clone(&ctx);
+                let results = Arc::clone(&results);
                 let job_receiver = job_receiver.clone();
-                let peaks_sender = peaks_sender.clone();
                 std::thread::spawn(move || {
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
@@ -583,18 +666,18 @@ pub fn simulate_peaks(
                             Err(_) => break,
                         };
 
-                        let _ = peaks_sender.send(ctx.run(job)).map_err(|err| {
-                        error!("Could not transfer result of peak simulation: '{err}'. Exiting...");
-                        std::process::exit(1);
-                    }).expect("error is handled inside");
+                        let p = ctx.run(job);
+                        unsafe {
+                            results.add(p);
+                        }
                     }
                     debug!("Peak Sim Thread {i} finished.");
                 })
             })
             .collect_vec();
 
-        for (struct_id, permutation_id) in (0..n_structs)
-            .cartesian_product(0..sample_parameters.structure_permutations)
+        for (struct_id, permutation_id) in
+            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
         {
             let job = PeakSim {
                 structure: struct_id,
@@ -622,71 +705,9 @@ pub fn simulate_peaks(
                 std::process::exit(1);
             });
         }
-
-        while let Ok(res) = peaks_receiver.recv() {
-            job_results.push(res);
-            if job_results.len() == n_structs * sample_parameters.structure_permutations {
-                break;
-            }
-        }
-    }
-    let mut all_preferred_orientations =
-        Vec::with_capacity(n_structs * sample_parameters.structure_permutations);
-    let mut all_strains = Vec::with_capacity(n_structs * sample_parameters.structure_permutations);
-    let mut all_simulated_peaks =
-        Vec::with_capacity(n_structs * sample_parameters.structure_permutations);
-
-    for _ in 0..n_structs {
-        let mut strains = Vec::new();
-        strains.reserve_exact(sample_parameters.structure_permutations);
-        let mut pos = Vec::new();
-        pos.reserve_exact(sample_parameters.structure_permutations);
-        let mut sim_peaks = Vec::new();
-        sim_peaks.reserve_exact(sample_parameters.structure_permutations);
-
-        strains.resize(strains.capacity(), unsafe {
-            mem::MaybeUninit::zeroed().assume_init()
-        });
-        pos.resize(pos.capacity(), unsafe {
-            mem::MaybeUninit::zeroed().assume_init()
-        });
-        #[allow(invalid_value)]
-        sim_peaks.resize(sim_peaks.capacity(), unsafe {
-            mem::MaybeUninit::zeroed().assume_init()
-        });
-
-        all_strains.push(strains.into_boxed_slice());
-        all_preferred_orientations.push(pos.into_boxed_slice());
-        all_simulated_peaks.push(sim_peaks.into_boxed_slice());
     }
 
-    let mut all_ok = Vec::new();
-    all_ok.resize(n_structs * sample_parameters.structure_permutations, false);
-
-    for PeakSimResult {
-        strain,
-        po,
-        peaks,
-        struct_id,
-        permutation_id,
-    } in job_results.drain(..)
-    {
-        all_ok[struct_id * sample_parameters.structure_permutations + permutation_id] = true;
-        all_strains[struct_id][permutation_id] = strain;
-        all_preferred_orientations[struct_id][permutation_id] = po;
-        all_simulated_peaks[struct_id][permutation_id] = peaks;
-    }
-
-    assert!(
-        all_ok.iter().all(|x| *x),
-        "simulation failed for some reason. please report this error"
-    );
-
-    ToDiscretize {
-        structures: Arc::clone(&ctx.structs),
-        sample_parameters: sample_parameters.into(),
-        all_simulated_peaks: all_simulated_peaks.into_boxed_slice().into(),
-        all_strains: all_strains.into_boxed_slice().into(),
-        all_preferred_orientations: all_preferred_orientations.into_boxed_slice().into(),
-    }
+    let results = Arc::into_inner(results).expect("no more references to write context");
+    let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
+    results.to_to_discretize(ctx.structs.into(), sample_parameters)
 }

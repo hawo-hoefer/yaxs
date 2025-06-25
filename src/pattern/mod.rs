@@ -13,13 +13,11 @@ use crate::math::{
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
 use crate::noise::Noise;
-use crate::preferred_orientation::MarchDollase;
-use crate::structure::Strain;
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
 use self::edxrd::Beamline;
 
-use crate::cfg::VolumeFraction;
+use crate::cfg::{CompactSimResults, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
@@ -36,14 +34,23 @@ pub trait DiscretizeJobGenerator {
 
 pub struct RenderCommon {
     // all simulated peaks for all phases in order [structure, structure permutations]
-    pub all_simulated_peaks: Arc<[Box<[Peaks]>]>,
-    pub all_preferred_orientations: Arc<[Box<[Option<MarchDollase>]>]>,
-    pub all_strains: Arc<[Box<[Strain]>]>,
+    pub sim_res: Arc<CompactSimResults>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
     pub random_seed: u64,
     pub noise: Option<Noise>,
+}
+
+impl RenderCommon {
+    pub fn idx(&self, phase_id: usize) -> usize {
+        let perm_id = self.indices[phase_id];
+        self.sim_res.idx(phase_id, perm_id)
+    }
+
+    pub fn n_phases(&self) -> usize {
+        self.indices.len()
+    }
 }
 
 pub struct VFGenerator {

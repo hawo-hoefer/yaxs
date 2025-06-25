@@ -1,4 +1,3 @@
-
 use itertools::Itertools;
 use rand::Rng;
 use serde::de::{MapAccess, Visitor};
@@ -212,53 +211,50 @@ impl Discretizer for DiscretizeEnergyDispersive {
             theta_rad,
         } = &self.meta;
 
-        itertools::izip!(
-            self.common.all_simulated_peaks.into_iter(),
-            self.common.indices.clone(), // TODO: get rid of this clone
-            vol_fractions,
-            mean_ds_nm
-        )
-        .map(move |(phase_peaks, idx, vf, phase_mean_ds_nm)| {
-            phase_peaks[idx].iter().map(move |peak: &Peak| {
-                let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
+            .map(
+                move |(phase_idx, vf, phase_mean_ds_nm)| {
+                    let flat_idx = self.common.idx(phase_idx);
+                    self.common.sim_res.all_simulated_peaks[flat_idx]
+                        .iter()
+                        .map(move |peak: &Peak| {
+                            let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+                                *theta_rad,
+                                f_lorentz,
+                                *phase_mean_ds_nm,
+                                *vf,
+                                &self.beamline,
+                            );
+                            PeakRenderParams {
+                                pos: e_hkl_kev,
+                                intensity: peak_weight,
+                                fwhm,
+                                eta: *eta as f32,
+                            }
+                        })
+                },
+            )
+            .flatten()
+            .chain(self.common.impurity_peaks.iter().map(move |ip| {
+                let (e_hkl_kev, peak_weight, fwhm) = ip.peak.get_edxrd_render_params(
                     *theta_rad,
                     f_lorentz,
-                    *phase_mean_ds_nm,
-                    *vf,
+                    ip.mean_ds_nm,
+                    1.0,
                     &self.beamline,
                 );
                 PeakRenderParams {
                     pos: e_hkl_kev,
                     intensity: peak_weight,
                     fwhm,
-                    eta: *eta as f32,
+                    eta: ip.eta as f32,
                 }
-            })
-        })
-        .flatten()
-        .chain(self.common.impurity_peaks.iter().map(move |ip| {
-            let (e_hkl_kev, peak_weight, fwhm) = ip.peak.get_edxrd_render_params(
-                *theta_rad,
-                f_lorentz,
-                ip.mean_ds_nm,
-                1.0,
-                &self.beamline,
-            );
-            PeakRenderParams {
-                pos: e_hkl_kev,
-                intensity: peak_weight,
-                fwhm,
-                eta: ip.eta as f32,
-            }
-        }))
+            }))
     }
 
     fn n_peaks_tot(&self) -> usize {
-        self.common
-            .all_simulated_peaks
-            .iter()
-            .zip(&self.common.indices)
-            .map(|(phase_peaks, idx)| phase_peaks[*idx].len())
+        (0..self.common.n_phases())
+            .map(|i| self.common.sim_res.all_simulated_peaks[self.common.idx(i)].len())
             .sum::<usize>()
             + self.common.impurity_peaks.len()
     }
@@ -277,7 +273,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
 
     fn write_meta_data(&self, data: &mut PatternMeta, pat_id: usize) {
         use PatternMeta::*;
-        let n_phases = self.common.all_simulated_peaks.len();
+        let n_phases = self.common.indices.len();
         match data {
             VolumeFractions(ref mut dst) => {
                 for i in 0..n_phases {
@@ -286,7 +282,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let strain = &self.common.all_strains[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let strain = &self.common.sim_res.all_strains[flat_idx];
 
                     for j in 0..6 {
                         dst[(pat_id, i, j)] = strain.0[j] as f32;
@@ -304,7 +301,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             CagliotiParams(_) => unreachable!("No Caglioti Parameters in EDXRD"),
             MarchParameter(dst) => {
                 for i in 0..n_phases {
-                    let po = &self.common.all_preferred_orientations[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
                     dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
