@@ -155,111 +155,6 @@ impl Species {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn parse_single_element_ok() {
-        let (el, rest) = Species::try_parse_single_element("Fe").unwrap();
-        assert_eq!(el, Element::Fe);
-        assert_eq!(rest, "");
-    }
-
-    #[test]
-    fn parse_single_element_ion_ok() {
-        let (el, rest) = Species::try_parse_single_element("Fe3+").unwrap();
-        assert_eq!(el, Element::Fe);
-        assert_eq!(rest, "3+");
-    }
-
-    #[test]
-    fn parse_single_element_ion_rest_ok() {
-        let (el, rest) = Species::try_parse_single_element("Fe3+C-").unwrap();
-        assert_eq!(el, Element::Fe);
-        assert_eq!(rest, "3+C-");
-    }
-
-    #[test]
-    fn parse_single_element_ion_rest_wrong_symbol() {
-        Species::try_parse_single_element("Fear+C-").expect_err("");
-    }
-
-    #[test]
-    fn parse_element_two_non_ions() {
-        let (el, rest) = Species::try_parse_single_element("NiFe").unwrap();
-        assert_eq!(el, Element::Ni);
-        assert_eq!(rest, "Fe");
-    }
-
-    #[test]
-    fn parse_ionization_positive() {
-        let (el, rest) = Species::try_parse_ionization("3+").unwrap();
-        assert_eq!(el, 3);
-        assert_eq!(rest, "");
-    }
-
-    #[test]
-    fn parse_ionization_negative() {
-        let (el, rest) = Species::try_parse_ionization("3-").unwrap();
-        assert_eq!(el, -3);
-        assert_eq!(rest, "");
-    }
-
-    #[test]
-    fn parse_ionization_positive_no_number() {
-        let (el, rest) = Species::try_parse_ionization("+").unwrap();
-        assert_eq!(el, 1);
-        assert_eq!(rest, "");
-    }
-
-    #[test]
-    fn parse_site_no_charge() {
-        let site: Species = "FeNi".parse().unwrap();
-        assert_eq!(
-            site.0,
-            [
-                Atom {
-                    el: Element::Fe,
-                    ionization: 0
-                },
-                Atom {
-                    el: Element::Ni,
-                    ionization: 0
-                }
-            ]
-        )
-    }
-
-    #[test]
-    fn parse_site() {
-        let species: Species = "Fe3+Ni2-".parse().unwrap();
-        assert_eq!(
-            species.0,
-            [
-                Atom {
-                    el: Element::Fe,
-                    ionization: 3
-                },
-                Atom {
-                    el: Element::Ni,
-                    ionization: -2
-                }
-            ]
-        )
-    }
-
-    #[test]
-    fn parse_na_plus1() {
-        let _: Species = "Na+1".parse().unwrap();
-    }
-
-    #[test]
-    fn parse_na_minus1() {
-        let _: Species = "Na-1".parse().unwrap();
-    }
-}
-
 pub struct Scatter {
     a_s: [f64; 4],
     b_s: [f64; 4],
@@ -515,4 +410,109 @@ pub const fn atomic_scattering_params(a: &Atom) -> Option<Scatter> {
     };
 
     ret
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_single_element_ok() {
+        let (el, rest) = Species::try_parse_single_element("Fe").unwrap();
+        assert_eq!(el, Element::Fe);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_single_element_ion_ok() {
+        let (el, rest) = Species::try_parse_single_element("Fe3+").unwrap();
+        assert_eq!(el, Element::Fe);
+        assert_eq!(rest, "3+");
+    }
+
+    #[test]
+    fn parse_single_element_ion_rest_ok() {
+        let (el, rest) = Species::try_parse_single_element("Fe3+C-").unwrap();
+        assert_eq!(el, Element::Fe);
+        assert_eq!(rest, "3+C-");
+    }
+
+    #[test]
+    fn parse_single_element_ion_rest_wrong_symbol() {
+        Species::try_parse_single_element("Fear+C-").expect_err("");
+    }
+
+    #[test]
+    fn parse_element_two_non_ions() {
+        let (el, rest) = Species::try_parse_single_element("NiFe").unwrap();
+        assert_eq!(el, Element::Ni);
+        assert_eq!(rest, "Fe");
+    }
+
+    #[test]
+    fn parse_ionization_positive() {
+        let (el, rest) = Species::try_parse_ionization("3+").unwrap();
+        assert_eq!(el, 3);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_ionization_negative() {
+        let (el, rest) = Species::try_parse_ionization("3-").unwrap();
+        assert_eq!(el, -3);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_ionization_positive_no_number() {
+        let (el, rest) = Species::try_parse_ionization("+").unwrap();
+        assert_eq!(el, 1);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_site_no_charge() {
+        let site: Species = "FeNi".parse().unwrap();
+        assert_eq!(
+            site.0,
+            [
+                Atom {
+                    el: Element::Fe,
+                    ionization: 0
+                },
+                Atom {
+                    el: Element::Ni,
+                    ionization: 0
+                }
+            ]
+        )
+    }
+
+    #[test]
+    fn parse_site() {
+        let species: Species = "Fe3+Ni2-".parse().unwrap();
+        assert_eq!(
+            species.0,
+            [
+                Atom {
+                    el: Element::Fe,
+                    ionization: 3
+                },
+                Atom {
+                    el: Element::Ni,
+                    ionization: -2
+                }
+            ]
+        )
+    }
+
+    #[test]
+    fn parse_na_plus1() {
+        let _: Species = "Na+1".parse().unwrap();
+    }
+
+    #[test]
+    fn parse_na_minus1() {
+        let _: Species = "Na-1".parse().unwrap();
+    }
 }

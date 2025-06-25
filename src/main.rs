@@ -194,7 +194,7 @@ fn render_and_write_jobs<T, G>(
     G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();
-    let output_names = if let Some(_) = args.io.chunk_size {
+    let output_names = if args.io.chunk_size.is_some() {
         render_write_chunked(gen, &args.io)
     } else {
         // write as single chunk
@@ -203,7 +203,7 @@ fn render_and_write_jobs<T, G>(
             jobs.push(job);
         }
         let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(jobs, &xs, gen.abstol(), gen.n_phases());
+        let (intensities, pattern_metadata) = render_jobs(jobs, xs, gen.abstol(), gen.n_phases());
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");

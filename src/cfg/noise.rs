@@ -150,9 +150,9 @@ impl<'de> Deserialize<'de> for NoiseSpec {
                     return Ok(NoiseSpec::Uniform { min, max });
                 }
 
-                return Err(de::Error::custom(
+                Err(de::Error::custom(
                     "Could not parse noise from no information",
-                ));
+                ))
             }
         }
 

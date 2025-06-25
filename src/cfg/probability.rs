@@ -5,7 +5,7 @@ pub struct Probability(f64);
 
 impl Probability {
     pub fn new(p: f64) -> Option<Self> {
-        if p < 0.0 || p > 1.0 {
+        if !(0.0..=1.0).contains(&p) {
             return None;
         }
 
@@ -13,9 +13,9 @@ impl Probability {
     }
 }
 
-impl Into<f64> for Probability {
-    fn into(self) -> f64 {
-        self.0
+impl From<Probability> for f64 {
+    fn from(val: Probability) -> Self {
+        val.0
     }
 }
 
@@ -25,7 +25,7 @@ impl<'de> Deserialize<'de> for Probability {
         D: serde::Deserializer<'de>,
     {
         struct ProbVisitor;
-        impl<'de> serde::de::Visitor<'de> for ProbVisitor {
+        impl serde::de::Visitor<'_> for ProbVisitor {
             type Value = Probability;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

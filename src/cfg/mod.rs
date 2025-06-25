@@ -204,8 +204,8 @@ pub struct ToDiscretize {
 }
 
 impl ToDiscretize {
-    pub fn generate_adxrd_job<'a>(
-        &'a self,
+    pub fn generate_adxrd_job(
+        &self,
         vf_generator: &VFGenerator,
         angle_dispersive: &AngleDispersive,
         simulation_parameters: &SimulationParameters,
@@ -240,7 +240,7 @@ impl ToDiscretize {
                     .as_ref()
                     .map(|x| x.generate(rng)),
             },
-            emission_lines: emission_lines.clone().into(),
+            emission_lines: emission_lines.clone(),
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
             meta: ADXRDMeta {
@@ -256,8 +256,8 @@ impl ToDiscretize {
         }
     }
 
-    pub fn generate_edxrd_job<'a>(
-        &'a self,
+    pub fn generate_edxrd_job(
+        &self,
         vf_generator: &VFGenerator,
         energy_dispersive: &EnergyDispersive,
         simulation_parameters: &SimulationParameters,

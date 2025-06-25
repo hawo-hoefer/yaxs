@@ -60,7 +60,7 @@ impl Background {
         let iterator = intensities.iter_mut().zip(positions);
 
         match self {
-            Background::None => return,
+            Background::None => (),
             Background::Polynomial { poly_coef, scale } => {
                 for (intensity, pos) in iterator {
                     *intensity += scale * polynomial_at(poly_coef, *pos);

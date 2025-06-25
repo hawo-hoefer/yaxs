@@ -17,7 +17,7 @@ pub struct Mat3Rows<'a, T> {
     n: usize,
 }
 
-impl<'a, T> Iterator for Mat3Rows<'a, T>
+impl<T> Iterator for Mat3Rows<'_, T>
 where
     T: Copy,
 {
@@ -231,11 +231,11 @@ where
         // |d,e,f| * |y|
         // |g,h,i|   |z|
         // +-----+   +-+
-        return Vec3::new(
+        Vec3::new(
             a * rhs.x + b * rhs.y + c * rhs.z,
             d * rhs.x + e * rhs.y + f * rhs.z,
             g * rhs.x + h * rhs.y + i * rhs.z,
-        );
+        )
     }
 }
 
@@ -251,11 +251,11 @@ where
         // |d,e,f| * |y|
         // |g,h,i|   |z|
         // +-----+   +-+
-        return Vec3::new(
+        Vec3::new(
             self[(0, 0)] * rhs.x + self[(0, 1)] * rhs.y + self[(0, 2)] * rhs.z,
             self[(1, 0)] * rhs.x + self[(1, 1)] * rhs.y + self[(1, 2)] * rhs.z,
             self[(2, 0)] * rhs.x + self[(2, 1)] * rhs.y + self[(2, 2)] * rhs.z,
-        );
+        )
     }
 }
 
@@ -266,7 +266,7 @@ where
     type Output = Mat3<T>;
 
     fn mul(self, rhs: T) -> Self::Output {
-        let mut ret = self.clone();
+        let mut ret = self;
         for v in ret.v.iter_mut() {
             *v = *v * rhs;
         }

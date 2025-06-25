@@ -19,13 +19,13 @@ fn main() {
     }
 
     let output = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .expect("need git executable and ability to execute process");
     let git_hash = String::from_utf8(output.stdout).expect("git hash is utf8");
     let git_hash = git_hash.trim();
     let output = Command::new("git")
-        .args(&["diff", "--quiet"])
+        .args(["diff", "--quiet"])
         .output()
         .expect("needs to execute git diff");
     let version = if output

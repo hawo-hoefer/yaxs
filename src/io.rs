@@ -140,7 +140,7 @@ pub fn write_to_npz(
         });
     }
 
-    w.add_array("intensities", &intensities).map_err(|err| {
+    w.add_array("intensities", intensities).map_err(|err| {
         error!(
             "Could not write data file '{path}': {err}",
             path = path.as_ref().display()
@@ -175,7 +175,7 @@ where
     }))
     .map_err(|err| {
         error!("Could not queue write job: {err}.");
-        ()
+        
     })
 }
 

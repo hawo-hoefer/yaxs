@@ -9,11 +9,11 @@ use crate::structure::{Lattice, SGClass};
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive
-const DATA_HEADER_START: &'static str = "data_";
-const LOOP_HEADER_START: &'static str = "loop_";
-const ANGLE_KEYS: [&'static str; 3] =
+const DATA_HEADER_START: &str = "data_";
+const LOOP_HEADER_START: &str = "loop_";
+const ANGLE_KEYS: [&str; 3] =
     ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
-const LENGTH_KEYS: [&'static str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
+const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SITE_DIST_TOL: f64 = 1e-8;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -61,7 +61,7 @@ impl CIFContents {
     pub fn get_symops(&self) -> Result<Vec<SymOp>, String> {
         let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [&'static str; 2] = [
+            const SITE_KEYS: [&str; 2] = [
                 "_space_group_symop_operation_xyz",
                 "_symmetry_equiv_pos_as_xyz",
             ];
@@ -127,7 +127,7 @@ impl CIFContents {
 
     pub fn get_sites(&self) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [&'static str; 5] = [
+            const SITE_KEYS: [&str; 5] = [
                 "_atom_site_type_symbol",
                 "_atom_site_fract_x",
                 "_atom_site_fract_y",
@@ -186,9 +186,9 @@ impl CIFContents {
 
             for op in symops.iter() {
                 let s = Site {
-                    coords: op.apply(base_site.coords.clone()),
+                    coords: op.apply(base_site.coords),
                     species: base_site.species.clone(),
-                    occu: base_site.occu.clone(),
+                    occu: base_site.occu,
                 };
 
                 if site_exists_periodic(&s, &sites) {
@@ -209,7 +209,7 @@ impl CIFContents {
             .ok_or_else(|| "No symmetry group in cif. checked '_symmetry_Int_Tables_number' and '_space_group_IT_number'.".to_string())?;
         let sg_no = match *sg_no {
             // TODO: add test for invalid sg_no
-            Value::Int(sg_no) if sg_no > 230 || sg_no < 1 => {
+            Value::Int(sg_no) if !(1..=230).contains(&sg_no) => {
                 return Err(format!(
                     "space group number is out of range. Needs to be in [1, 230], got {sg_no}"
                 ))
@@ -289,7 +289,7 @@ impl<'a> CifParser<'a> {
             .c
             .chars()
             .next()
-            .ok_or_else(|| format!("Cannot parse value from empty contents"))?
+            .ok_or_else(|| "Cannot parse value from empty contents".to_string())?
         {
             '+' | '-' | '0'..='9' => {
                 // try to parse number. if it fails, we parse as string
@@ -400,7 +400,7 @@ impl<'a> CifParser<'a> {
                 self.c = rest;
                 Ok(Value::Text(text.to_string()))
             }
-            None => return Err(format!("Cannot Parse CIF value from empty contents")),
+            None => Err("Cannot Parse CIF value from empty contents".to_string()),
         }
     }
 
@@ -419,8 +419,8 @@ impl<'a> CifParser<'a> {
             // what if the input number is an integer and has precision - like 12312(12)
             // or if there is a float like 1.234e17(123)?
             // in these cases, we crash and burn, we should probably error gracefully
-            if num.find(|x: char| x == 'e').is_some() // float in scientific notation
-                || num.find(|x: char| x == '.' || x == 'e').is_none()
+            if num.find('e').is_some() // float in scientific notation
+                || num.find(['.', 'e']).is_none()
             // is an integer because no decimal point or scientific notation 'e'
             {
                 return Err(format!(

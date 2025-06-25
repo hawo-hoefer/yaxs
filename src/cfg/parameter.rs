@@ -56,10 +56,10 @@ where
         let p = Inner::deserialize(deserializer)?;
 
         match p {
-            Inner::Fixed(v) => return Ok(Parameter::Fixed(v)),
+            Inner::Fixed(v) => Ok(Parameter::Fixed(v)),
             Inner::Range(lo, hi) => {
                 if lo > hi {
-                    return Err(serde::de::Error::custom(&format!( "lower bound needs to be smaller than or equal to upper bound. got {lo:?} > {hi:?}" )));
+                    return Err(serde::de::Error::custom(format!( "lower bound needs to be smaller than or equal to upper bound. got {lo:?} > {hi:?}" )));
                 }
 
                 Ok(Parameter::Range(lo, hi))

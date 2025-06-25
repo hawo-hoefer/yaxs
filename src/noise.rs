@@ -5,7 +5,7 @@ fn std_normal_box_muller_tf(rng: &mut impl Rng) -> f64 {
     let u1: f64 = rng.random();
     let u2: f64 = rng.random();
 
-    return (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ mod test {
 
     fn xoshiro256_double(state: &mut [u64; 4]) -> f64 {
         let result = xoshiro_dummy(state);
-        return result as f64 / std::u64::MAX as f64;
+        result as f64 / std::u64::MAX as f64
     }
 
     #[test]

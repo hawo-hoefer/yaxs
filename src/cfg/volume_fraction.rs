@@ -6,7 +6,7 @@ pub struct VolumeFraction(pub f64);
 
 impl VolumeFraction {
     pub fn new(p: f64) -> Option<Self> {
-        if p < 0.0 || p > 1.0 {
+        if !(0.0..=1.0).contains(&p) {
             return None;
         }
 
@@ -20,7 +20,7 @@ impl<'de> Deserialize<'de> for VolumeFraction {
         D: serde::Deserializer<'de>,
     {
         struct VFVisitor;
-        impl<'de> serde::de::Visitor<'de> for VFVisitor {
+        impl serde::de::Visitor<'_> for VFVisitor {
             type Value = VolumeFraction;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
