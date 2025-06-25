@@ -350,7 +350,7 @@ fn lorentz_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
-pub fn render_jobs<'a, T>(
+pub fn render_jobs<T>(
     jobs: Vec<T>,
     two_thetas: &[f32],
     #[allow(unused)] atol: f32,
@@ -376,7 +376,7 @@ where
             }
         } else {
             use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, &two_thetas);
+            let intensities = discretize_peaks_cuda(jobs, two_thetas);
             let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
                 .expect("sizes must match");
         }

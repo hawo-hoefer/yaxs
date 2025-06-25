@@ -225,7 +225,7 @@ pub struct OutputNames {
     pub metadata_slot_names: Vec<String>,
 }
 
-pub fn render_write_chunked<'a, T>(
+pub fn render_write_chunked<T>(
     mut gen: impl DiscretizeJobGenerator<Item = T>,
     io_opts: &crate::io::Opts,
 ) -> OutputNames
@@ -296,7 +296,7 @@ where
 
         let _ = render_chunk_and_queue_write_in_thread(
             chunk,
-            &gen.xs(),
+            gen.xs(),
             chunk_path,
             tx.clone(),
             abstol,

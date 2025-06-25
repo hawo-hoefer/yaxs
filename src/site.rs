@@ -15,7 +15,7 @@ impl Site {
             let mut x = x - x.round();
             if x < 0.0 {
                 // map negative positions to positive end of unit cell
-                x = 1.0 + x
+                x += 1.0
             }
             x
         });

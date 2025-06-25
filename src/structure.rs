@@ -124,7 +124,6 @@ impl Lattice {
         for (i, v) in self
             .mat
             .row_iter()
-            .into_iter()
             .map(|x| x.into_iter().map(|a| a.powi(2)).sum::<f64>().sqrt())
             .enumerate()
         {
@@ -136,11 +135,11 @@ impl Lattice {
 
 impl std::fmt::Display for Lattice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Lattice(\n")?;
+        writeln!(f, "Lattice(")?;
         for row in self.mat.row_iter() {
-            write!(f, "  {:5.2}, {:5.2}, {:5.2}\n", row[0], row[1], row[2])?;
+            writeln!(f, "  {:5.2}, {:5.2}, {:5.2}", row[0], row[1], row[2])?;
         }
-        write!(f, ")\n")
+        writeln!(f, ")")
     }
 }
 
@@ -504,7 +503,7 @@ impl WriteCtx {
             peaks,
             ok,
             n_permutations,
-        } = unsafe { &mut *(self.inner.get() as *mut Inner) };
+        } = unsafe { &mut *(self.inner.get()) };
 
         let idx = p.struct_id * (*n_permutations) + p.permutation_id;
 
@@ -514,7 +513,7 @@ impl WriteCtx {
         ok[idx] = true
     }
 
-    pub fn to_to_discretize(
+    pub fn make_to_discretize(
         self,
         structures: Arc<[Structure]>,
         sample_parameters: SampleParameters,
@@ -620,9 +619,9 @@ pub fn simulate_peaks(
 
     let ctx = Arc::new(RunCtx {
         structs: structures.into(),
-        po_cfgs: structure_po_configs.into(),
-        strain_cfgs: structure_strain_configs.into(),
-        structure_files: structure_files.into(),
+        po_cfgs: structure_po_configs,
+        strain_cfgs: structure_strain_configs,
+        structure_files,
     });
 
     let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
@@ -685,7 +684,7 @@ pub fn simulate_peaks(
         }
 
         for _ in 0..n_threads {
-            let _ = job_sender
+            job_sender
                 .send(Task::Stop)
                 .map_err(|err| {
                     error!("Could not send stop signal for peak simulation: '{err}'. Exiting...");
@@ -704,5 +703,5 @@ pub fn simulate_peaks(
 
     let results = Arc::into_inner(results).expect("no more references to write context");
     let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
-    results.to_to_discretize(ctx.structs.into(), sample_parameters)
+    results.make_to_discretize(ctx.structs, sample_parameters)
 }

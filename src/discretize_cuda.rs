@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use log::{debug, error};
@@ -118,15 +119,15 @@ impl RenderCtx {
             eta,
             pos,
             intens,
-        } = unsafe { &mut *(self.inner.get() as *mut Inner) };
+        } = unsafe { &mut *self.inner.get() };
 
-        fwhm[idx] = p.fwhm as f32;
-        eta[idx] = p.eta as f32;
+        fwhm[idx] = p.fwhm;
+        eta[idx] = p.eta;
         pos[idx] = p.pos;
         intens[idx] = p.intensity;
     }
 
-    pub fn to_soa(&mut self) -> ffi::PeakSOA<f32> {
+    pub fn as_soa(&mut self) -> ffi::PeakSOA<f32> {
         let Inner {
             fwhm,
             eta,
@@ -146,7 +147,7 @@ impl RenderCtx {
 
 unsafe impl Sync for RenderCtx {}
 
-pub fn discretize_peaks_cuda<'a, T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
+pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
 where
     T: Discretizer + Send + Sync + 'static,
 {
@@ -328,41 +329,37 @@ where
     }
 
     let ctx = Arc::get_mut(&mut ctx).expect("all threads owning ctx have stopped");
-    let soa = ctx.to_soa();
-    let mut intensities = Vec::<f32>::with_capacity(patterns.len() * two_thetas.len());
+    let soa = ctx.as_soa();
+
+    let noise_val = match noise_kind {
+        ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
+            none: core::ptr::null(),
+        },
+        ffi::NoiseKind::Gaussian => ffi::NoiseVal {
+            gaussian: noise_data.as_ptr(),
+        },
+        ffi::NoiseKind::Uniform => ffi::NoiseVal {
+            uniform: Uniform {
+                min: noise_data.as_ptr(),
+                max: noise_data[patterns.len()..].as_ptr(),
+            },
+        },
+    };
+
+    let rng_state_ptr = if noise_kind != ffi::NoiseKind::NoiseNone {
+        rng_state.as_ptr()
+    } else {
+        core::ptr::null()
+    };
+
+    let noise = ffi::Noise {
+        v: noise_val,
+        kind: noise_kind,
+    };
+
+    let mut intensities = unsafe { uninit_vec(patterns.len() * two_thetas.len()) };
+
     unsafe {
-        // SAFETY: this is OK because discretize_peaks **sets** every single f64-sized
-        // slot in intensities, and the length is set to the capacity. Therefore we are
-        // not touching memory outside of the allocated bounds, and after the call to
-        // discretize_peaks, we are only dealing with initialized memory
-        intensities.set_len(intensities.capacity());
-
-        let noise_val = match noise_kind {
-            ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
-                none: core::ptr::null(),
-            },
-            ffi::NoiseKind::Gaussian => ffi::NoiseVal {
-                gaussian: noise_data.as_ptr(),
-            },
-            ffi::NoiseKind::Uniform => ffi::NoiseVal {
-                uniform: Uniform {
-                    min: noise_data.as_ptr(),
-                    max: noise_data[patterns.len()..].as_ptr(),
-                },
-            },
-        };
-
-        let rng_state_ptr = if noise_kind != ffi::NoiseKind::NoiseNone {
-            rng_state.as_ptr()
-        } else {
-            core::ptr::null()
-        };
-
-        let noise = ffi::Noise {
-            v: noise_val,
-            kind: noise_kind,
-        };
-
         let ret = ffi::render_peaks_and_background(
             soa,
             patterns.as_ptr(),
@@ -378,7 +375,7 @@ where
                 BkgSOA::Exponential(_) => ffi::BkgKind::Exponential,
             },
             match &bkg_soa {
-                BkgSOA::None => 0 as *const f32,
+                BkgSOA::None => core::ptr::null(),
                 BkgSOA::Polynomial { all_coef, .. } => all_coef.as_ptr(),
                 BkgSOA::Exponential(vec) => vec.as_ptr(),
             },
@@ -388,13 +385,13 @@ where
                 BkgSOA::Exponential(_) => 1,
             },
             match &bkg_soa {
-                BkgSOA::None => 0 as *const f32,
+                BkgSOA::None => core::ptr::null(),
                 BkgSOA::Polynomial { .. } | BkgSOA::Exponential(_) => bkg_scales.as_ptr(),
             },
             normalize,
         );
         assert!(ret);
-    };
+    }
 
     intensities
 }

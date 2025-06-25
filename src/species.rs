@@ -37,11 +37,11 @@ impl FromStr for Species {
         let mut species = Vec::new();
         let mut val = value;
         loop {
-            if val.len() == 0 {
+            if val.is_empty() {
                 break;
             }
             let (el, v) = Species::try_parse_single_element(val)?;
-            let (ionization, v) = Species::try_parse_ionization(v).unwrap_or_else(|| (0, v));
+            let (ionization, v) = Species::try_parse_ionization(v).unwrap_or((0, v));
             val = v;
             species.push(Atom { el, ionization })
         }
@@ -81,7 +81,7 @@ impl Species {
                 let mut rest =
                     std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character");
 
-                if rest.len() == 0 {
+                if rest.is_empty() {
                     // output is finished, stop
                     return Some((1, rest));
                 }
@@ -93,7 +93,7 @@ impl Species {
                     return Some((ion, rest));
                 };
 
-                if ion.len() == 0 {
+                if ion.is_empty() {
                     // no numbers left
                     return Some((1, rest));
                 }
@@ -107,7 +107,7 @@ impl Species {
                 let mut rest =
                     std::str::from_utf8(&val.as_bytes()[1..]).expect("at least one character");
 
-                if rest.len() == 0 {
+                if rest.is_empty() {
                     // output is finished, stop
                     return Some((1, rest));
                 }
@@ -119,7 +119,7 @@ impl Species {
                     return Some((-ion, rest));
                 };
 
-                if ion.len() == 0 {
+                if ion.is_empty() {
                     // no numbers left
                     return Some((-1, rest));
                 }

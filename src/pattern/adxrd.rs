@@ -65,7 +65,7 @@ impl Discretizer for DiscretizeAngleDispersive {
 
         itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
             .cartesian_product(&self.emission_lines)
-            .map(move |((phase_idx, vf, phase_mean_ds_nm), emission_line)| {
+            .flat_map(move |((phase_idx, vf, phase_mean_ds_nm), emission_line)| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 let idx = self.common.idx(phase_idx);
                 self.common.sim_res.all_simulated_peaks[idx]
@@ -89,7 +89,6 @@ impl Discretizer for DiscretizeAngleDispersive {
                         }
                     })
             })
-            .flatten()
             .chain(
                 self.common
                     .impurity_peaks

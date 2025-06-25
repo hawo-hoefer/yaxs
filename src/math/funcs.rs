@@ -174,7 +174,7 @@ pub mod acm757 {
         }
 
         // CHEVAL =  ( D1 - D2 ) / TWO
-        return (d1 - d2) / 2.0;
+        (d1 - d2) / 2.0
     }
 
     /// Calculate the first synchrotron radiation function defined as
@@ -348,8 +348,8 @@ pub mod acm757 {
     pub fn synch_2(x: f64) -> Option<f64> {
         // chebyshev coefficients
         const ASYN21: [f64; 15] = [
-            38.61783_99238_43085_48014e0,
-            23.03771_55949_63734_59697e0,
+            3.861783_99238_43085_48014e1,
+            2.303771_55949_63734_59697e1,
             5.38024_99868_33570_59676e0,
             0.61567_93806_99571_07760e0,
             0.40668_80046_68895_5843e-1,

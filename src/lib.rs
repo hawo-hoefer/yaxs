@@ -16,6 +16,7 @@ pub mod symop;
 #[cfg(not(feature = "cpu-only"))]
 pub mod discretize_cuda;
 
+#[allow(clippy::uninit_vec)]
 pub(crate) unsafe fn uninit_vec<T>(len: usize) -> Vec<T> {
     let mut v = Vec::with_capacity(len);
     unsafe { v.set_len(len) };
