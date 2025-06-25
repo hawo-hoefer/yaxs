@@ -93,29 +93,6 @@ struct RenderCtx {
     inner: UnsafeCell<Inner>,
 }
 
-fn test() {
-    let mut v = Vec::new();
-    v.resize(1024, 1.2f32);
-
-    let mut v2 = Vec::new();
-    v2.resize(1024, 1.2f32);
-
-    let v = Arc::new((v, v2));
-
-    let h = {
-        let v = Arc::clone(&v);
-        std::thread::spawn(move || v.0.iter().sum::<f32>())
-    };
-
-    let h2 = {
-        let v = Arc::clone(&v);
-        std::thread::spawn(move || v.1.iter().map(|x| x.powi(2)).sum::<f32>())
-    };
-
-    h.join();
-    h2.join();
-}
-
 struct Inner {
     fwhm: Vec<f32>,
     eta: Vec<f32>,
