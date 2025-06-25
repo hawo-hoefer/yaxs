@@ -1,4 +1,4 @@
-kind: !EnergyDisperse
+kind: !EnergyDispersive
     n_steps: 1024
     # energy_range_kev: [10, 160]
     energy_range_kev: [20, 160]

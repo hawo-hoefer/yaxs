@@ -1,4 +1,4 @@
-kind: !AngleDisperse
+kind: !AngleDispersive
   emission_lines:
   - wavelength_ams: 1.5406
     weight: 1.0

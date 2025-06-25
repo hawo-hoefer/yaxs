@@ -33,12 +33,12 @@ are fixed for all simulations, while parameters specified as ranges will be samp
 | sample displacement       | both          |
 
 ## 1. Simulation Kind
-This section contains the type of the simulation (EnergyDisperse or AngleDisperse)
+This section contains the type of the simulation (EnergyDispersive or AngleDispersive)
 and the corresponding parameters.
 
 ### An example EDXRD configuration
 ```yaml
-kind: !EnergyDisperse
+kind: !EnergyDispersive
     n_steps: 1024                            # number of energy steps
     energy_range_kev: [20, 160]              # energy range to simulate
     theta_deg: 3.965                         # beam reflection angle
@@ -52,7 +52,7 @@ kind: !EnergyDisperse
 ### An example ADXRD configuration
 Angle dispersive simulation simulates XRD patterns for the Bragg-Brentano diffractometer geometry.
 ```yaml
-kind: !AngleDisperse
+kind: !AngleDispersive
   emission_lines:                       # list of emission lines with wavelength and relative strength
   - wavelength_ams: 1.5406              # wavelength in Amstrong
     weight: 1.0                         # relative emission line strength in arbitrary units

@@ -4,7 +4,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDisperse, SimulationParameters, ToDiscretize};
+use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
@@ -327,7 +327,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
 }
 
 pub struct JobGen<T> {
-    cfg: EnergyDisperse,
+    cfg: EnergyDispersive,
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
@@ -338,7 +338,7 @@ pub struct JobGen<T> {
 
 impl<T> JobGen<T> {
     pub fn new(
-        cfg: EnergyDisperse,
+        cfg: EnergyDispersive,
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,

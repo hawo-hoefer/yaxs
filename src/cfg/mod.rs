@@ -25,7 +25,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::math::e_kev_to_lambda_ams;
-use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDisperse, EmissionLine};
+use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{ImpurityPeak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::MarchDollase;
@@ -41,8 +41,8 @@ pub struct Config {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SimulationKind {
-    AngleDisperse(AngleDisperse),
-    EnergyDisperse(EnergyDisperse),
+    AngleDispersive(AngleDispersive),
+    EnergyDispersive(EnergyDispersive),
 }
 
 impl SimulationKind {
@@ -56,8 +56,8 @@ impl SimulationKind {
         rng: &mut impl Rng,
     ) -> ToDiscretize {
         let (min_r, max_r) = match self {
-            SimulationKind::AngleDisperse(angle_disperse) => {
-                let min_line = &angle_disperse
+            SimulationKind::AngleDispersive(angle_dispersive) => {
+                let min_line = &angle_dispersive
                     .emission_lines
                     .iter()
                     .min_by(|a, b| {
@@ -68,7 +68,7 @@ impl SimulationKind {
                     .expect("at least one emission line");
 
                 let (two_theta_range, wavelength_ams) =
-                    (angle_disperse.two_theta_range, min_line.wavelength_ams);
+                    (angle_dispersive.two_theta_range, min_line.wavelength_ams);
 
                 let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
                 let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
@@ -76,7 +76,7 @@ impl SimulationKind {
                 info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
                 (min_r, max_r)
             }
-            SimulationKind::EnergyDisperse(EnergyDisperse {
+            SimulationKind::EnergyDispersive(EnergyDispersive {
                 n_steps: _,
                 energy_range_kev,
                 theta_deg,
@@ -107,7 +107,7 @@ impl SimulationKind {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct AngleDisperse {
+pub struct AngleDispersive {
     pub emission_lines: Box<[EmissionLine]>,
 
     pub n_steps: usize,
@@ -127,7 +127,7 @@ pub struct Caglioti {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EnergyDisperse {
+pub struct EnergyDispersive {
     pub n_steps: usize,
     pub energy_range_kev: (f64, f64),
     pub theta_deg: f64,
@@ -207,11 +207,11 @@ impl ToDiscretize {
     pub fn generate_adxrd_job<'a>(
         &'a self,
         vf_generator: &VFGenerator,
-        angle_disperse: &AngleDisperse,
+        angle_dispersive: &AngleDispersive,
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
-    ) -> DiscretizeAngleDisperse {
-        let AngleDisperse {
+    ) -> DiscretizeAngleDispersive {
+        let AngleDispersive {
             caglioti: Caglioti { u, v, w },
             background,
             emission_lines,
@@ -219,7 +219,7 @@ impl ToDiscretize {
             two_theta_range: _,
             goniometer_radius_mm,
             sample_displacement_mu_m,
-        } = angle_disperse;
+        } = angle_dispersive;
 
         let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
 
@@ -229,7 +229,7 @@ impl ToDiscretize {
         let background = background.generate_bkg(rng);
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
-        DiscretizeAngleDisperse {
+        DiscretizeAngleDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
                 impurity_peaks,
@@ -259,7 +259,7 @@ impl ToDiscretize {
     pub fn generate_edxrd_job<'a>(
         &'a self,
         vf_generator: &VFGenerator,
-        energy_disperse: &EnergyDisperse,
+        energy_dispersive: &EnergyDispersive,
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive {
@@ -276,13 +276,13 @@ impl ToDiscretize {
                     .map(|x| x.generate(rng)),
                 random_seed: rng.random(),
             },
-            beamline: energy_disperse.beamline.clone(),
+            beamline: energy_dispersive.beamline.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions: vf_generator.generate(rng),
                 eta,
                 mean_ds_nm,
-                theta_rad: energy_disperse.theta_deg.to_radians(),
+                theta_rad: energy_dispersive.theta_deg.to_radians(),
             },
         }
     }

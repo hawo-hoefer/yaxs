@@ -173,12 +173,12 @@ fn main() {
     };
 
     match cfg.kind.clone() {
-        SimulationKind::AngleDisperse(angle_disperse) => {
-            let gen = adxrd::JobGen::new(angle_disperse, to_discretize, params, vf_generator, rng);
+        SimulationKind::AngleDispersive(angle_dispersive) => {
+            let gen = adxrd::JobGen::new(angle_dispersive, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
-        SimulationKind::EnergyDisperse(energ_disperse) => {
-            let gen = edxrd::JobGen::new(energ_disperse, to_discretize, params, vf_generator, rng);
+        SimulationKind::EnergyDispersive(energy_dispersive) => {
+            let gen = edxrd::JobGen::new(energy_dispersive, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }

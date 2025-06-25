@@ -14,7 +14,7 @@ use crate::math::{
 };
 use crate::noise::Noise;
 
-pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDisperse};
+pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
 use crate::cfg::{CompactSimResults, VolumeFraction};

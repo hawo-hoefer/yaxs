@@ -2,7 +2,7 @@ use super::{
     render_peak, DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator,
 };
 use crate::background::Background;
-use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
+use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::noise::Noise;
 use itertools::Itertools;
@@ -42,7 +42,7 @@ impl EmissionLine {
     }
 }
 
-pub struct DiscretizeAngleDisperse {
+pub struct DiscretizeAngleDispersive {
     pub common: RenderCommon,
     pub emission_lines: Box<[EmissionLine]>,
     pub normalize: bool,
@@ -50,7 +50,7 @@ pub struct DiscretizeAngleDisperse {
     pub goniometer_radius_mm: f64,
 }
 
-impl Discretizer for DiscretizeAngleDisperse {
+impl Discretizer for DiscretizeAngleDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let ADXRDMeta {
             vol_fractions,
@@ -226,7 +226,7 @@ impl Discretizer for DiscretizeAngleDisperse {
 }
 
 pub struct JobGen<T> {
-    cfg: AngleDisperse,
+    cfg: AngleDispersive,
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
@@ -237,7 +237,7 @@ pub struct JobGen<T> {
 
 impl<T> JobGen<T> {
     pub fn new(
-        cfg: AngleDisperse,
+        cfg: AngleDispersive,
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
@@ -295,7 +295,7 @@ where
         self.sim_params.n_patterns - self.n
     }
 
-    type Item = DiscretizeAngleDisperse;
+    type Item = DiscretizeAngleDispersive;
 
     fn abstol(&self) -> f32 {
         self.sim_params.abstol
