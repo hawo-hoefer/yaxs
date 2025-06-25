@@ -64,6 +64,10 @@ Further information on the input file structure can be found [here](./inputfile.
 - [x] Implement support for noise
     - Usually noise is added during augmentation anyway, so we may not need this
     - therefore, low priority
+- [x] parallel front end / peak position simulation
+- [x] parallel gpu job generation
+- [x] CI
+    - [ ] use caching in CI to improve speed
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] EDXRD: deal with filters
 - [ ] peak intensities
@@ -78,7 +82,3 @@ Further information on the input file structure can be found [here](./inputfile.
     - in `pymatgen`, they are passed separately
     - figure out if I want to do that somehow
     - low priority
-- [x] parallel front end / peak position simulation
-- [x] parallel gpu job generation
-- [x] CI
-    - [ ] use caching in CI to improve speed
