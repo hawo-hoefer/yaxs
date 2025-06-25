@@ -7,6 +7,8 @@ mod probability;
 mod structure;
 mod volume_fraction;
 
+use std::sync::Arc;
+
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::info;
@@ -47,9 +49,9 @@ impl SimulationKind {
     pub fn simulate_peaks(
         &self,
         structures: Box<[Structure]>,
-        pref_o: Box<[&Option<MarchDollaseCfg>]>,
-        strain_cfgs: Box<[&Option<StrainCfg>]>,
-        structure_paths: Box<[&String]>,
+        pref_o: Box<[Option<MarchDollaseCfg>]>,
+        strain_cfgs: Box<[Option<StrainCfg>]>,
+        structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
         rng: &mut impl Rng,
     ) -> ToDiscretize {
@@ -181,23 +183,34 @@ impl SampleParameters {
     }
 }
 
+pub struct CompactSimResults {
+    pub all_simulated_peaks: Box<[Peaks]>,
+    pub all_strains: Box<[Strain]>,
+    pub all_preferred_orientations: Box<[Option<MarchDollase>]>,
+    pub n_permutations: usize,
+}
+
+impl CompactSimResults {
+    pub fn idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
+        struct_idx * self.n_permutations + perm_idx
+    }
+}
+
 pub struct ToDiscretize {
-    pub structures: Box<[Structure]>,
+    pub structures: Arc<[Structure]>,
     pub sample_parameters: SampleParameters,
+    pub sim_res: Arc<CompactSimResults>,
     // pub simulation_parameters: SimulationParameters,
-    pub all_simulated_peaks: Box<[Box<[Peaks]>]>,
-    pub all_strains: Box<[Box<[Strain]>]>,
-    pub all_preferred_orientations: Box<[Box<[Option<MarchDollase>]>]>,
 }
 
 impl ToDiscretize {
     pub fn generate_adxrd_job<'a>(
         &'a self,
-        vf_generator: &VFGenerator<'a>,
-        angle_disperse: &'a AngleDisperse,
-        simulation_parameters: &'a SimulationParameters,
+        vf_generator: &VFGenerator,
+        angle_disperse: &AngleDisperse,
+        simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
-    ) -> DiscretizeAngleDisperse<'a> {
+    ) -> DiscretizeAngleDisperse {
         let AngleDisperse {
             caglioti: Caglioti { u, v, w },
             background,
@@ -218,9 +231,7 @@ impl ToDiscretize {
 
         DiscretizeAngleDisperse {
             common: RenderCommon {
-                all_simulated_peaks: &self.all_simulated_peaks,
-                all_strains: &self.all_strains,
-                all_preferred_orientations: &self.all_preferred_orientations,
+                sim_res: Arc::clone(&self.sim_res),
                 impurity_peaks,
                 indices,
                 random_seed: rng.random(),
@@ -229,7 +240,7 @@ impl ToDiscretize {
                     .as_ref()
                     .map(|x| x.generate(rng)),
             },
-            emission_lines: &emission_lines,
+            emission_lines: emission_lines.clone().into(),
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
             meta: ADXRDMeta {
@@ -247,18 +258,16 @@ impl ToDiscretize {
 
     pub fn generate_edxrd_job<'a>(
         &'a self,
-        energy_disperse: &'a EnergyDisperse,
-        vf_generator: &VFGenerator<'a>,
-        simulation_parameters: &'a SimulationParameters,
+        vf_generator: &VFGenerator,
+        energy_disperse: &EnergyDisperse,
+        simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
-    ) -> DiscretizeEnergyDispersive<'a> {
+    ) -> DiscretizeEnergyDispersive {
         let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
 
         DiscretizeEnergyDispersive {
             common: RenderCommon {
-                all_simulated_peaks: &self.all_simulated_peaks,
-                all_strains: &self.all_strains,
-                all_preferred_orientations: &self.all_preferred_orientations,
+                sim_res: Arc::clone(&self.sim_res),
                 indices,
                 impurity_peaks,
                 noise: simulation_parameters
@@ -267,7 +276,7 @@ impl ToDiscretize {
                     .map(|x| x.generate(rng)),
                 random_seed: rng.random(),
             },
-            beamline: &energy_disperse.beamline,
+            beamline: energy_disperse.beamline.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions: vf_generator.generate(rng),

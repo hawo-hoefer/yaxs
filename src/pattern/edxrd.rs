@@ -10,7 +10,9 @@ use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
 use crate::pattern::lorentz_factor;
 
-use super::{Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator};
+use super::{
+    DiscretizeJobGenerator, Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator,
+};
 
 /// Wiggler Beamline Parameters
 ///
@@ -191,14 +193,14 @@ pub struct EDXRDMeta {
     pub theta_rad: f64,
 }
 
-pub struct DiscretizeEnergyDispersive<'a> {
-    pub common: RenderCommon<'a>,
-    pub beamline: &'a Beamline,
+pub struct DiscretizeEnergyDispersive {
+    pub common: RenderCommon,
+    pub beamline: Beamline,
     pub normalize: bool,
     pub meta: EDXRDMeta,
 }
 
-impl Discretizer for DiscretizeEnergyDispersive<'_> {
+impl Discretizer for DiscretizeEnergyDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let f_lorentz = lorentz_factor(self.meta.theta_rad);
 
@@ -209,53 +211,50 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             theta_rad,
         } = &self.meta;
 
-        itertools::izip!(
-            self.common.all_simulated_peaks,
-            self.common.indices.clone(), // TODO: get rid of this clone
-            vol_fractions,
-            mean_ds_nm
-        )
-        .map(move |(phase_peaks, idx, vf, phase_mean_ds_nm)| {
-            phase_peaks[idx].iter().map(move |peak: &Peak| {
-                let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
+            .map(
+                move |(phase_idx, vf, phase_mean_ds_nm)| {
+                    let flat_idx = self.common.idx(phase_idx);
+                    self.common.sim_res.all_simulated_peaks[flat_idx]
+                        .iter()
+                        .map(move |peak: &Peak| {
+                            let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+                                *theta_rad,
+                                f_lorentz,
+                                *phase_mean_ds_nm,
+                                *vf,
+                                &self.beamline,
+                            );
+                            PeakRenderParams {
+                                pos: e_hkl_kev,
+                                intensity: peak_weight,
+                                fwhm,
+                                eta: *eta as f32,
+                            }
+                        })
+                },
+            )
+            .flatten()
+            .chain(self.common.impurity_peaks.iter().map(move |ip| {
+                let (e_hkl_kev, peak_weight, fwhm) = ip.peak.get_edxrd_render_params(
                     *theta_rad,
                     f_lorentz,
-                    *phase_mean_ds_nm,
-                    *vf,
+                    ip.mean_ds_nm,
+                    1.0,
                     &self.beamline,
                 );
                 PeakRenderParams {
                     pos: e_hkl_kev,
                     intensity: peak_weight,
                     fwhm,
-                    eta: *eta as f32,
+                    eta: ip.eta as f32,
                 }
-            })
-        })
-        .flatten()
-        .chain(self.common.impurity_peaks.iter().map(move |ip| {
-            let (e_hkl_kev, peak_weight, fwhm) = ip.peak.get_edxrd_render_params(
-                *theta_rad,
-                f_lorentz,
-                ip.mean_ds_nm,
-                1.0,
-                &self.beamline,
-            );
-            PeakRenderParams {
-                pos: e_hkl_kev,
-                intensity: peak_weight,
-                fwhm,
-                eta: ip.eta as f32,
-            }
-        }))
+            }))
     }
 
     fn n_peaks_tot(&self) -> usize {
-        self.common
-            .all_simulated_peaks
-            .iter()
-            .zip(&self.common.indices)
-            .map(|(phase_peaks, idx)| phase_peaks[*idx].len())
+        (0..self.common.n_phases())
+            .map(|i| self.common.sim_res.all_simulated_peaks[self.common.idx(i)].len())
             .sum::<usize>()
             + self.common.impurity_peaks.len()
     }
@@ -274,7 +273,7 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
 
     fn write_meta_data(&self, data: &mut PatternMeta, pat_id: usize) {
         use PatternMeta::*;
-        let n_phases = self.common.all_simulated_peaks.len();
+        let n_phases = self.common.indices.len();
         match data {
             VolumeFractions(ref mut dst) => {
                 for i in 0..n_phases {
@@ -283,7 +282,8 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let strain = &self.common.all_strains[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let strain = &self.common.sim_res.all_strains[flat_idx];
 
                     for j in 0..6 {
                         dst[(pat_id, i, j)] = strain.0[j] as f32;
@@ -301,7 +301,8 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
             CagliotiParams(_) => unreachable!("No Caglioti Parameters in EDXRD"),
             MarchParameter(dst) => {
                 for i in 0..n_phases {
-                    let po = &self.common.all_preferred_orientations[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
                     dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
@@ -325,28 +326,80 @@ impl Discretizer for DiscretizeEnergyDispersive<'_> {
     }
 }
 
-pub fn generate_edxrd_jobs<'a>(
-    energy_disperse: &'a EnergyDisperse,
-    job_cfg: &'a ToDiscretize,
-    simulation_parameters: &'a SimulationParameters,
-    vf_generator: &VFGenerator<'a>,
-    rng: &mut impl Rng,
-) -> (Vec<DiscretizeEnergyDispersive<'a>>, Vec<f32>) {
-    let (e0, e1) = energy_disperse.energy_range_kev;
-    let energies = (0..energy_disperse.n_steps)
-        .map(|x| x as f32 / (energy_disperse.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
-        .collect_vec();
+pub struct JobGen<T> {
+    cfg: EnergyDisperse,
+    discretize_info: ToDiscretize,
+    sim_params: SimulationParameters,
+    vf_generator: VFGenerator,
+    energies: Vec<f32>,
+    n: usize,
+    rng: T,
+}
 
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
-    for _ in 0..simulation_parameters.n_patterns {
-        jobs.push(job_cfg.generate_edxrd_job(
-            &energy_disperse,
+impl<T> JobGen<T> {
+    pub fn new(
+        cfg: EnergyDisperse,
+        discretize_info: ToDiscretize,
+        sim_params: SimulationParameters,
+        vf_generator: VFGenerator,
+        rng: T,
+    ) -> Self
+    where
+        T: Rng,
+    {
+        let (e0, e1) = cfg.energy_range_kev;
+        let energies = (0..cfg.n_steps)
+            .map(|x| x as f32 / (cfg.n_steps - 1) as f32 * (e1 - e0) as f32 + e0 as f32)
+            .collect_vec();
+
+        Self {
             vf_generator,
-            simulation_parameters,
+            cfg,
+            discretize_info,
+            sim_params,
             rng,
-        ));
+            energies,
+            n: 0,
+        }
+    }
+}
+
+impl<T> DiscretizeJobGenerator for JobGen<T>
+where
+    T: Rng,
+{
+    type Item = DiscretizeEnergyDispersive;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n >= self.sim_params.n_patterns {
+            return None;
+        }
+
+        let job = self.discretize_info.generate_edxrd_job(
+            &self.vf_generator,
+            &self.cfg,
+            &self.sim_params,
+            &mut self.rng,
+        );
+
+        self.n += 1;
+
+        Some(job)
     }
 
-    (jobs, energies)
+    fn remaining(&self) -> usize {
+        self.sim_params.n_patterns - self.n
+    }
+
+    fn xs(&self) -> &[f32] {
+        &self.energies
+    }
+
+    fn n_phases(&self) -> usize {
+        self.discretize_info.structures.len()
+    }
+
+    fn abstol(&self) -> f32 {
+        self.sim_params.abstol
+    }
 }

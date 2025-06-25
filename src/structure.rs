@@ -1,19 +1,24 @@
 use itertools::Itertools;
-use log::error;
+use log::{debug, error, info};
 use num_complex::Complex;
+use rand_xoshiro::Xoshiro256PlusPlus;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
+use std::sync::Arc;
 
 use ordered_float::NotNan;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
-use crate::cfg::{apply_strain_cfg, SampleParameters, StrainCfg};
+use crate::cfg::{apply_strain_cfg, CompactSimResults, SampleParameters, StrainCfg};
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::{Mat3, Vec3};
-use crate::pattern::Peak;
+use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
+use crate::uninit_vec;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
@@ -457,6 +462,90 @@ impl Structure {
     }
 }
 
+struct PeakSimResult {
+    strain: Strain,
+    po: Option<MarchDollase>,
+    peaks: Peaks,
+    struct_id: usize,
+    permutation_id: usize,
+}
+
+struct WriteCtx {
+    inner: UnsafeCell<Inner>,
+}
+
+struct Inner {
+    strain: Vec<Strain>,
+    pos: Vec<Option<MarchDollase>>,
+    peaks: Vec<MaybeUninit<Peaks>>,
+    ok: Vec<bool>,
+    n_permutations: usize,
+}
+
+unsafe impl Sync for WriteCtx {}
+
+impl WriteCtx {
+    pub fn new(n_structs: usize, n_permutations: usize) -> Self {
+        Self {
+            inner: UnsafeCell::new(Inner {
+                strain: unsafe { uninit_vec(n_structs * n_permutations) },
+                pos: unsafe { uninit_vec(n_structs * n_permutations) },
+                peaks: unsafe { uninit_vec(n_structs * n_permutations) },
+                ok: unsafe { uninit_vec(n_structs * n_permutations) },
+                n_permutations,
+            }),
+        }
+    }
+
+    pub unsafe fn add(&self, p: PeakSimResult) {
+        let Inner {
+            strain,
+            pos,
+            peaks,
+            ok,
+            n_permutations,
+        } = unsafe { &mut *(self.inner.get() as *mut Inner) };
+
+        let idx = p.struct_id * (*n_permutations) + p.permutation_id;
+
+        strain[idx] = p.strain;
+        pos[idx] = p.po;
+        peaks[idx] = MaybeUninit::new(p.peaks);
+        ok[idx] = true
+    }
+
+    pub fn to_to_discretize(
+        self,
+        structures: Arc<[Structure]>,
+        sample_parameters: SampleParameters,
+    ) -> ToDiscretize {
+        let Inner {
+            strain,
+            pos,
+            mut peaks,
+            ok,
+            n_permutations,
+        } = self.inner.into_inner();
+
+        // TODO: make this return a result instead so we can error gracefully
+        assert!(ok.iter().all(|x| *x));
+
+        ToDiscretize {
+            structures,
+            sample_parameters,
+            sim_res: Arc::new(CompactSimResults {
+                all_simulated_peaks: peaks
+                    .drain(..)
+                    .map(|x| unsafe { x.assume_init() })
+                    .collect(),
+                all_strains: strain.into(),
+                all_preferred_orientations: pos.into(),
+                n_permutations,
+            }),
+        }
+    }
+}
+
 /// Generate Peaks for the input structures and their physical parameters.
 ///
 /// * `sample_params`: physical parameter ranges for the structures
@@ -473,48 +562,147 @@ pub fn simulate_peaks(
     (min_r, max_r): (f64, f64),
     sample_parameters: SampleParameters,
     structures: Box<[Structure]>,
-    structure_po_configs: Box<[&Option<MarchDollaseCfg>]>,
-    structure_strain_configs: Box<[&Option<StrainCfg>]>,
-    structure_files: Box<[&String]>,
+    structure_po_configs: Box<[Option<MarchDollaseCfg>]>,
+    structure_strain_configs: Box<[Option<StrainCfg>]>,
+    structure_files: Box<[String]>,
     rng: &mut impl Rng,
 ) -> ToDiscretize {
-    let mut all_simulated_peaks = Vec::with_capacity(structures.len());
-    let mut all_strains = Vec::with_capacity(structures.len());
-    let mut all_preferred_orientations = Vec::with_capacity(structures.len());
+    struct PeakSim {
+        structure: usize,
+        permutation: usize,
+        seed: u64,
+        min_r: f64,
+        max_r: f64,
+    }
 
-    for (s, po_cfg, strain_cfg, file) in itertools::izip!(
-        structures.iter(),
-        structure_po_configs.iter(),
-        structure_strain_configs.iter(),
-        structure_files,
-    ) {
-        let mut permuted_phase_peaks = Vec::with_capacity(sample_parameters.structure_permutations);
-        let mut strains = Vec::with_capacity(sample_parameters.structure_permutations);
-        let mut pos = Vec::with_capacity(sample_parameters.structure_permutations);
-        for _ in 0..sample_parameters.structure_permutations {
-            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, s, rng) else {
-                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.");
+    struct RunCtx {
+        structs: Arc<[Structure]>,
+        po_cfgs: Box<[Option<MarchDollaseCfg>]>,
+        strain_cfgs: Box<[Option<StrainCfg>]>,
+        structure_files: Box<[String]>,
+    }
+
+    impl RunCtx {
+        fn run(&self, job: PeakSim) -> PeakSimResult {
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
+            let Some((perm_s, strain)) = apply_strain_cfg(
+                &self.strain_cfgs[job.structure],
+                &self.structs[job.structure],
+                &mut rng,
+            ) else {
+                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]);
                 error!("Exiting...");
                 std::process::exit(1);
             };
-            let po = po_cfg.as_ref().map(|cfg| cfg.generate(rng));
+            let po_cfg = &self.po_cfgs[job.structure];
+            let po = po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
             let peaks = perm_s
-                .get_d_spacings_intensities(min_r, max_r, po.as_ref())
+                .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref())
                 .into_boxed_slice();
-            pos.push(po);
-            permuted_phase_peaks.push(peaks);
-            strains.push(strain);
+
+            PeakSimResult {
+                strain,
+                po,
+                peaks,
+                struct_id: job.structure,
+                permutation_id: job.permutation,
+            }
         }
-        all_simulated_peaks.push(permuted_phase_peaks.into());
-        all_strains.push(strains.into());
-        all_preferred_orientations.push(pos.into())
     }
 
-    ToDiscretize {
-        structures,
-        sample_parameters,
-        all_simulated_peaks: all_simulated_peaks.into(),
-        all_strains: all_strains.into(),
-        all_preferred_orientations: all_preferred_orientations.into(),
+    let n_structs = structures.len();
+    let n_permutations = sample_parameters.structure_permutations;
+
+    enum Task {
+        Job(PeakSim),
+        Stop,
     }
+
+    let ctx = Arc::new(RunCtx {
+        structs: structures.into(),
+        po_cfgs: structure_po_configs.into(),
+        strain_cfgs: structure_strain_configs.into(),
+        structure_files: structure_files.into(),
+    });
+
+    let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
+
+    let n_threads: usize = std::thread::available_parallelism()
+        .map(|x| x.into())
+        .unwrap_or(1);
+
+    if n_threads == 1 {
+        info!("running single-threaded peak simulation");
+        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
+            let job = PeakSim {
+                structure: struct_id,
+                permutation: permutation_id,
+                seed: rng.random(),
+                min_r,
+                max_r,
+            };
+            let p = ctx.run(job);
+            unsafe { results.add(p) };
+        }
+    } else {
+        let (job_sender, job_receiver) = crossbeam_channel::unbounded();
+        info!("Launching {n_threads} threads for peak simulation");
+
+        let handles = (0..n_threads)
+            .map(|i| {
+                let ctx = Arc::clone(&ctx);
+                let results = Arc::clone(&results);
+                let job_receiver = job_receiver.clone();
+                std::thread::spawn(move || {
+                    loop {
+                        let job: PeakSim = match job_receiver.recv() {
+                            Ok(Task::Stop) => break,
+                            Ok(Task::Job(v)) => v,
+                            Err(_) => break,
+                        };
+
+                        let p = ctx.run(job);
+                        unsafe {
+                            results.add(p);
+                        }
+                    }
+                    debug!("Peak Sim Thread {i} finished.");
+                })
+            })
+            .collect_vec();
+
+        for (struct_id, permutation_id) in
+            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
+        {
+            let job = PeakSim {
+                structure: struct_id,
+                permutation: permutation_id,
+                seed: rng.random(),
+                min_r,
+                max_r,
+            };
+            let _ = job_sender.send(Task::Job(job));
+        }
+
+        for _ in 0..n_threads {
+            let _ = job_sender
+                .send(Task::Stop)
+                .map_err(|err| {
+                    error!("Could not send stop signal for peak simulation: '{err}'. Exiting...");
+                    std::process::exit(1);
+                })
+                .expect("error is handled inside");
+        }
+
+        for handle in handles {
+            let _ = handle.join().map_err(|err| {
+                error!("could not join peak simulation thread: '{err:?}'. Exiting...");
+                std::process::exit(1);
+            });
+        }
+    }
+
+    let results = Arc::into_inner(results).expect("no more references to write context");
+    let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
+    results.to_to_discretize(ctx.structs.into(), sample_parameters)
 }

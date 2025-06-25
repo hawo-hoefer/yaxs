@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::cfg::SimulationKind;
 use crate::math::Vec3;
 use crate::pattern::render_jobs;
+use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
 
 #[derive(Args, Clone)]
@@ -154,8 +155,8 @@ pub fn write_to_npz(
 /// # Errors
 ///
 /// This function will return an error if the writing thread has died and cannot be sent to
-pub fn render_chunk_and_queue_write_in_thread<D, T>(
-    jobs: &[D],
+pub fn render_chunk_and_queue_write_in_thread<'a, D, T>(
+    jobs: Vec<D>,
     two_thetas: &[f32],
     path: T,
     send: Sender<Arc<WriteJob<T>>>,
@@ -164,7 +165,7 @@ pub fn render_chunk_and_queue_write_in_thread<D, T>(
 ) -> Result<(), ()>
 where
     T: AsRef<Path> + Send + Sync,
-    D: Discretizer,
+    D: Discretizer + Send + Sync + 'static,
 {
     let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs);
     send.send(Arc::new(WriteJob::Write {
@@ -224,16 +225,14 @@ pub struct OutputNames {
     pub metadata_slot_names: Vec<String>,
 }
 
-pub fn render_write_chunked<T>(
-    jobs: &[T],
-    two_thetas: &[f32],
-    abstol: f32,
-    n_phases: usize,
+pub fn render_write_chunked<'a, T>(
+    mut gen: impl DiscretizeJobGenerator<Item = T>,
     io_opts: &crate::io::Opts,
 ) -> OutputNames
 where
-    T: Discretizer,
+    T: Discretizer + Send + Sync + 'static,
 {
+    let abstol = gen.abstol();
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
     let compress = io_opts.compress;
     let io_thread_handle = std::thread::spawn(move || {
@@ -263,7 +262,7 @@ where
     });
 
     let mut i = 0;
-    let l = jobs.len();
+    let l = gen.remaining();
     let chunk_size = io_opts.chunk_size.unwrap_or(l);
     let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
     let pad_width = if n_chunks > 1 {
@@ -279,7 +278,16 @@ where
             i / chunk_size,
             width = pad_width as usize
         );
-        let chunk: &[T] = &jobs[i..(i + chunk_size).min(l)];
+        let mut chunk = Vec::with_capacity(chunk_size.min(gen.remaining()));
+        for _ in 0..chunk_size {
+            let Some(job) = gen.next() else {
+                break;
+            };
+
+            chunk.push(job);
+        }
+
+        let actual_chunk_size = chunk.len();
 
         let mut chunk_path = std::path::PathBuf::new();
         chunk_path.push(&io_opts.output_path);
@@ -288,17 +296,18 @@ where
 
         let _ = render_chunk_and_queue_write_in_thread(
             chunk,
-            &two_thetas,
+            &gen.xs(),
             chunk_path,
             tx.clone(),
             abstol,
-            n_phases,
+            gen.n_phases(),
         )
         .map_err(|_| {
             // Error is logged in thread
             std::process::exit(1);
         });
-        i += chunk_size;
+
+        i += actual_chunk_size;
     }
     let _ = tx.send(Arc::new(WriteJob::Done));
     let Some((data_slot_names, metadata_slot_names)) =

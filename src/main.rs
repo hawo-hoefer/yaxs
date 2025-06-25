@@ -6,18 +6,17 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::pattern::adxrd::generate_adxrd_jobs;
-use yaxs::pattern::edxrd::generate_edxrd_jobs;
+use yaxs::pattern::{adxrd, edxrd};
 use yaxs::structure::Structure;
 
 use log::{error, info};
 
-use yaxs::cfg::{Config, SimulationKind, SimulationParameters, StructureDef, ToDiscretize};
+use yaxs::cfg::{Config, SimulationKind, StructureDef};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, Discretizer, VFGenerator};
+use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, VFGenerator};
 
 #[derive(Parser)]
 #[command(
@@ -117,7 +116,7 @@ fn main() {
         let mut p = CifParser::new(&cif);
 
         vf_constraints.push(*volume_fraction);
-        structure_paths.push(path);
+        structure_paths.push(path.clone());
         structures.push(
             Structure::try_from(&p.parse().unwrap_or_else(|err| {
                 error!("Invalid CIF Syntax for '{path}': {err}");
@@ -128,11 +127,11 @@ fn main() {
                 std::process::exit(1);
             }),
         );
-        strain_cfgs.push(strain);
-        pref_o.push(po);
+        strain_cfgs.push(strain.clone());
+        pref_o.push(po.clone());
     }
 
-    let vf_generator = VFGenerator::try_new(&vf_constraints)
+    let vf_generator = VFGenerator::try_new(vf_constraints)
         .map_err(|_| {
             std::process::exit(1);
         })
@@ -153,73 +152,58 @@ fn main() {
 
     info!("Simulating Peak Positions took {elapsed:.2}s");
 
-    match &cfg.kind {
+    let params = cfg.simulation_parameters;
+
+    let extra = io::Extra {
+        max_phases: cfg.sample_parameters.structures.len(),
+        encoding: cfg
+            .sample_parameters
+            .structures
+            .iter()
+            .map(|StructureDef { path, .. }| path.to_string())
+            .collect_vec(),
+        preferred_orientation_hkl: cfg
+            .sample_parameters
+            .structures
+            .iter()
+            .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
+            .collect_vec(),
+
+        cfg: cfg.kind.clone(),
+    };
+
+    match cfg.kind.clone() {
         SimulationKind::AngleDisperse(angle_disperse) => {
-            let (jobs, xs) = generate_adxrd_jobs(
-                &angle_disperse,
-                &to_discretize,
-                &cfg.simulation_parameters,
-                &vf_generator,
-                &mut rng,
-            );
-            render_and_write_jobs(
-                &to_discretize,
-                args,
-                &jobs,
-                &xs,
-                timestamp_started,
-                &cfg.simulation_parameters,
-                cfg.kind.clone(),
-            )
+            let gen = adxrd::JobGen::new(angle_disperse, to_discretize, params, vf_generator, rng);
+            render_and_write_jobs(gen, args, timestamp_started, extra)
         }
-        SimulationKind::EnergyDisperse(energy_disperse) => {
-            let (jobs, xs) = generate_edxrd_jobs(
-                &energy_disperse,
-                &to_discretize,
-                &cfg.simulation_parameters,
-                &vf_generator,
-                &mut rng,
-            );
-            render_and_write_jobs(
-                &to_discretize,
-                args,
-                &jobs,
-                &xs,
-                timestamp_started,
-                &cfg.simulation_parameters,
-                cfg.kind.clone(),
-            )
+        SimulationKind::EnergyDisperse(energ_disperse) => {
+            let gen = edxrd::JobGen::new(energ_disperse, to_discretize, params, vf_generator, rng);
+            render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }
 }
 
-fn render_and_write_jobs<T>(
-    cfg: &ToDiscretize,
+fn render_and_write_jobs<T, G>(
+    mut gen: G,
     args: Cli,
-    jobs: &[T],
-    xs: &[f32],
     timestamp_started: chrono::DateTime<Utc>,
-    simulation_parameters: &SimulationParameters,
-    kind: SimulationKind,
+    extra: io::Extra,
 ) where
-    T: Discretizer,
+    T: Discretizer + Send + Sync + 'static,
+    G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();
     let output_names = if let Some(_) = args.io.chunk_size {
-        render_write_chunked(
-            &jobs,
-            &xs,
-            simulation_parameters.abstol,
-            cfg.sample_parameters.structures.len(),
-            &args.io,
-        )
+        render_write_chunked(gen, &args.io)
     } else {
-        let (intensities, pattern_metadata) = render_jobs(
-            &jobs,
-            &xs,
-            simulation_parameters.abstol,
-            cfg.sample_parameters.structures.len(),
-        );
+        // write as single chunk
+        let mut jobs = Vec::with_capacity(gen.remaining());
+        while let Some(job) = gen.next() {
+            jobs.push(job);
+        }
+        let xs = gen.xs();
+        let (intensities, pattern_metadata) = render_jobs(jobs, &xs, gen.abstol(), gen.n_phases());
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");
@@ -244,22 +228,7 @@ fn render_and_write_jobs<T>(
         datafiles: output_names.chunk_names,
         input_names: &output_names.data_slot_names,
         target_names: &output_names.metadata_slot_names,
-        extra: io::Extra {
-            encoding: cfg
-                .sample_parameters
-                .structures
-                .iter()
-                .map(|StructureDef { path, .. }| path.to_string())
-                .collect_vec(),
-            max_phases: cfg.sample_parameters.structures.len(),
-            cfg: kind.clone(),
-            preferred_orientation_hkl: cfg
-                .sample_parameters
-                .structures
-                .iter()
-                .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
-                .collect_vec(),
-        },
+        extra,
     })
     .expect("SimulationMetadata is serializable");
 

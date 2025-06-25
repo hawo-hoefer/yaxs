@@ -1,4 +1,6 @@
-use super::{render_peak, Discretizer, PeakRenderParams, RenderCommon, VFGenerator};
+use super::{
+    render_peak, DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator,
+};
 use crate::background::Background;
 use crate::cfg::{AngleDisperse, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -40,15 +42,15 @@ impl EmissionLine {
     }
 }
 
-pub struct DiscretizeAngleDisperse<'a> {
-    pub common: RenderCommon<'a>,
-    pub emission_lines: &'a [EmissionLine],
+pub struct DiscretizeAngleDisperse {
+    pub common: RenderCommon,
+    pub emission_lines: Box<[EmissionLine]>,
     pub normalize: bool,
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
 }
 
-impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
+impl Discretizer for DiscretizeAngleDisperse {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let ADXRDMeta {
             vol_fractions,
@@ -61,71 +63,64 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             background: _,
         } = &self.meta;
 
-        itertools::izip!(
-            self.common.all_simulated_peaks,
-            self.common.indices.clone(), // TODO: get rid of this clone
-            vol_fractions,
-            mean_ds_nm
-        )
-        .cartesian_product(self.emission_lines)
-        .map(
-            move |((phase_peaks, idx, vf, phase_mean_ds_nm), emission_line)| {
+        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
+            .cartesian_product(&self.emission_lines)
+            .map(move |((phase_idx, vf, phase_mean_ds_nm), emission_line)| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                phase_peaks[idx].iter().map(move |peak| {
-                    let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        *u,
-                        *v,
-                        *w,
-                        *phase_mean_ds_nm,
-                        vf * emission_line.weight,
-                        *sample_displacement_mu_m,
-                        self.goniometer_radius_mm,
-                    );
-                    PeakRenderParams {
-                        pos: two_theta_hkl_deg,
-                        intensity: peak_weight,
-                        fwhm,
-                        eta: *eta as f32,
-                    }
-                })
-            },
-        )
-        .flatten()
-        .chain(
-            self.common
-                .impurity_peaks
-                .iter()
-                .cartesian_product(self.emission_lines)
-                .map(move |(ip, emission_line)| {
-                    let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                    let (two_theta_hkl_deg, peak_weight, fwhm) = ip.peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        *u,
-                        *v,
-                        *w,
-                        ip.mean_ds_nm,
-                        1.0,
-                        0.0,
-                        self.goniometer_radius_mm,
-                    );
-                    PeakRenderParams {
-                        pos: two_theta_hkl_deg,
-                        intensity: peak_weight,
-                        fwhm,
-                        eta: ip.eta as f32,
-                    }
-                }),
-        )
+                let idx = self.common.idx(phase_idx);
+                self.common.sim_res.all_simulated_peaks[idx]
+                    .iter()
+                    .map(move |peak| {
+                        let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
+                            wavelength_nm,
+                            *u,
+                            *v,
+                            *w,
+                            *phase_mean_ds_nm,
+                            vf * emission_line.weight,
+                            *sample_displacement_mu_m,
+                            self.goniometer_radius_mm,
+                        );
+                        PeakRenderParams {
+                            pos: two_theta_hkl_deg,
+                            intensity: peak_weight,
+                            fwhm,
+                            eta: *eta as f32,
+                        }
+                    })
+            })
+            .flatten()
+            .chain(
+                self.common
+                    .impurity_peaks
+                    .iter()
+                    .cartesian_product(&self.emission_lines)
+                    .map(move |(ip, emission_line)| {
+                        let wavelength_nm = emission_line.wavelength_ams / 10.0;
+                        let (two_theta_hkl_deg, peak_weight, fwhm) =
+                            ip.peak.get_adxrd_render_params(
+                                wavelength_nm,
+                                *u,
+                                *v,
+                                *w,
+                                ip.mean_ds_nm,
+                                1.0,
+                                0.0,
+                                self.goniometer_radius_mm,
+                            );
+                        PeakRenderParams {
+                            pos: two_theta_hkl_deg,
+                            intensity: peak_weight,
+                            fwhm,
+                            eta: ip.eta as f32,
+                        }
+                    }),
+            )
     }
 
     fn n_peaks_tot(&self) -> usize {
-        (self
-            .common
-            .all_simulated_peaks
-            .iter()
-            .zip(&self.common.indices)
-            .map(|(phase_peaks, idx)| phase_peaks[*idx].len())
+        ((0..self.common.n_phases())
+            .map(|i| self.common.sim_res.all_simulated_peaks[self.common.idx(i)].len())
             .sum::<usize>()
             + self.common.impurity_peaks.len())
             * self.emission_lines.len()
@@ -141,7 +136,7 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
 
     fn write_meta_data(&self, data: &mut PatternMeta, pat_id: usize) {
         use PatternMeta::*;
-        let n_phases = self.common.all_simulated_peaks.len();
+        let n_phases = self.common.n_phases();
         match data {
             VolumeFractions(ref mut dst) => {
                 for i in 0..n_phases {
@@ -150,7 +145,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let strain = &self.common.all_strains[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let strain = &self.common.sim_res.all_strains[flat_idx];
 
                     for j in 0..6 {
                         dst[(pat_id, i, j)] = strain.0[j] as f32;
@@ -172,7 +168,8 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
             }
             MarchParameter(dst) => {
                 for i in 0..n_phases {
-                    let po = &self.common.all_preferred_orientations[i][self.common.indices[i]];
+                    let flat_idx = self.common.idx(i);
+                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
                     dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
@@ -228,98 +225,79 @@ impl<'a> Discretizer for DiscretizeAngleDisperse<'a> {
     }
 }
 
-impl<'a> DiscretizeAngleDisperse<'a> {
-    pub fn discretize_into(&self, pat: &mut [f32], two_thetas: &[f32], abstol: f32) {
-        let ADXRDMeta {
-            vol_fractions,
-            eta,
-            mean_ds_nm,
-            u,
-            v,
-            w,
-            background,
-            sample_displacement_mu_m,
-        } = &self.meta;
+pub struct JobGen<T> {
+    cfg: AngleDisperse,
+    discretize_info: ToDiscretize,
+    sim_params: SimulationParameters,
+    vf_generator: VFGenerator,
+    two_thetas: Vec<f32>,
+    n: usize,
+    rng: T,
+}
 
-        for (phase_peaks, idx, vf, phase_mean_ds_nm) in itertools::izip!(
-            self.common.all_simulated_peaks.iter(),
-            self.common.indices.iter(),
-            vol_fractions,
-            mean_ds_nm,
-        ) {
-            let peaks = &phase_peaks[*idx];
-            // * `pat`: target pattern
-            // * `two_thetas`: two theta values of pattern's intensities in degrees
-            // * `wavelength`: wavelength of the x-rays in nanometers
-            // * `mean_ds`: mean domain size used for scherrer broadening
-            // * `u`: caglioti parameter u
-            // * `v`: caglioti parameter v
-            // * `w`: caglioti parameter w
-            // $$\Delta 2\theta = 2 \Delta_\text{R} / R \cos\theta$$
-            for emission_line in self.emission_lines {
-                let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                for peak in peaks.iter() {
-                    let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        *u,
-                        *v,
-                        *w,
-                        *phase_mean_ds_nm,
-                        vf * emission_line.weight,
-                        *sample_displacement_mu_m,
-                        self.goniometer_radius_mm,
-                    );
-                    render_peak(
-                        two_theta_hkl_deg,
-                        peak_weight,
-                        fwhm,
-                        *eta as f32,
-                        abstol,
-                        two_thetas,
-                        pat,
-                    )
-                }
-            }
+impl<T> JobGen<T> {
+    pub fn new(
+        cfg: AngleDisperse,
+        discretize_info: ToDiscretize,
+        sim_params: SimulationParameters,
+        vf_generator: VFGenerator,
+        rng: T,
+    ) -> Self {
+        let mut two_thetas = Vec::with_capacity(cfg.n_steps);
+        two_thetas.resize(two_thetas.capacity(), 0.0f32);
+        for (i, t) in two_thetas.iter_mut().enumerate() {
+            let r = cfg.two_theta_range;
+            *t = (r.0 + (r.1 - r.0) * (i as f64 / (cfg.n_steps as f64 - 1.0))) as f32;
         }
-        background.render(pat, two_thetas);
 
-        if self.normalize {
-            // TODO: check for NaNs and normalization
-            let f = *pat.first().unwrap();
-            let vmin = pat.iter().fold(f, |a, b| f32::min(a, *b));
-            let vmax = pat.iter().fold(f, |a, b| f32::max(a, *b));
-            pat.iter_mut().for_each(|x| {
-                *x = (*x - vmin) / (vmax - vmin);
-            });
+        Self {
+            cfg,
+            discretize_info,
+            sim_params,
+            vf_generator,
+            two_thetas,
+            n: 0,
+            rng,
         }
     }
 }
 
-pub fn generate_adxrd_jobs<'a>(
-    angle_disperse: &'a AngleDisperse,
-    job_cfg: &'a ToDiscretize,
-    simulation_parameters: &'a SimulationParameters,
-    vf_generator: &VFGenerator<'a>,
-    rng: &mut impl Rng,
-) -> (Vec<DiscretizeAngleDisperse<'a>>, Vec<f32>) {
-    // Prepare rendering / generation (two_thetas buffer, concentrations)
-    let mut two_thetas = Vec::with_capacity(angle_disperse.n_steps);
-    two_thetas.resize(two_thetas.capacity(), 0.0f32);
-    for (i, t) in two_thetas.iter_mut().enumerate() {
-        let r = angle_disperse.two_theta_range;
-        *t = (r.0 + (r.1 - r.0) * (i as f64 / (angle_disperse.n_steps as f64 - 1.0))) as f32;
+impl<T> DiscretizeJobGenerator for JobGen<T>
+where
+    T: Rng,
+{
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n >= self.sim_params.n_patterns {
+            return None;
+        }
+
+        let job = self.discretize_info.generate_adxrd_job(
+            &self.vf_generator,
+            &self.cfg,
+            &self.sim_params,
+            &mut self.rng,
+        );
+
+        self.n += 1;
+
+        Some(job)
     }
 
-    // create rendering jobs
-    let mut jobs = Vec::with_capacity(simulation_parameters.n_patterns);
-    for _ in 0..simulation_parameters.n_patterns {
-        jobs.push(job_cfg.generate_adxrd_job(
-            vf_generator,
-            &angle_disperse,
-            &simulation_parameters,
-            rng,
-        ));
+    fn xs(&self) -> &[f32] {
+        &self.two_thetas
     }
 
-    (jobs, two_thetas)
+    fn n_phases(&self) -> usize {
+        self.discretize_info.structures.len()
+    }
+
+    fn remaining(&self) -> usize {
+        self.sim_params.n_patterns - self.n
+    }
+
+    type Item = DiscretizeAngleDisperse;
+
+    fn abstol(&self) -> f32 {
+        self.sim_params.abstol
+    }
 }
