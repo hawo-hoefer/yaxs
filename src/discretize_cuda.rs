@@ -1,5 +1,4 @@
 use std::cell::UnsafeCell;
-use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use log::{debug, error};
@@ -7,6 +6,7 @@ use log::{debug, error};
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
+use crate::uninit_vec;
 
 use self::ffi::Uniform;
 
@@ -102,22 +102,13 @@ struct Inner {
 
 impl RenderCtx {
     pub fn new(peak_cap: usize) -> Self {
-        let mut intens = Vec::with_capacity(peak_cap);
-        let mut pos = Vec::with_capacity(peak_cap);
-        let mut eta = Vec::with_capacity(peak_cap);
-        let mut fwhm = Vec::with_capacity(peak_cap);
-
-        intens.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
-        pos.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
-        eta.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
-        fwhm.resize(peak_cap, unsafe { MaybeUninit::zeroed().assume_init() });
 
         Self {
             inner: UnsafeCell::new(Inner {
-                fwhm,
-                eta,
-                pos,
-                intens,
+                intens: unsafe { uninit_vec(peak_cap) },
+                pos:  unsafe { uninit_vec(peak_cap) },
+                eta:  unsafe { uninit_vec(peak_cap) },
+                fwhm: unsafe { uninit_vec(peak_cap) },
             }),
         }
     }

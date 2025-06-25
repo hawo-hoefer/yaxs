@@ -15,3 +15,12 @@ pub mod symop;
 
 #[cfg(not(feature = "cpu-only"))]
 pub mod discretize_cuda;
+
+pub(crate) unsafe fn uninit_vec<T>(len: usize) -> Vec<T>
+where
+    T: Clone,
+{
+    let mut v = Vec::with_capacity(len);
+    unsafe { v.set_len(len) };
+    v
+}

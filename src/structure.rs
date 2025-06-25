@@ -4,7 +4,6 @@ use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use ordered_float::NotNan;
@@ -18,6 +17,7 @@ use crate::math::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
+use crate::uninit_vec;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
@@ -482,15 +482,6 @@ struct Inner {
 }
 
 unsafe impl Sync for WriteCtx {}
-
-unsafe fn uninit_vec<T>(len: usize) -> Vec<T>
-where
-    T: Clone,
-{
-    let mut v = Vec::with_capacity(len);
-    v.resize(len, unsafe { MaybeUninit::zeroed().assume_init() });
-    v
-}
 
 impl WriteCtx {
     pub fn new(n_structs: usize, n_permutations: usize) -> Self {
