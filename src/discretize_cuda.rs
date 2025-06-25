@@ -93,6 +93,29 @@ struct RenderCtx {
     inner: UnsafeCell<Inner>,
 }
 
+fn test() {
+    let mut v = Vec::new();
+    v.resize(1024, 1.2f32);
+
+    let mut v2 = Vec::new();
+    v2.resize(1024, 1.2f32);
+
+    let v = Arc::new((v, v2));
+
+    let h = {
+        let v = Arc::clone(&v);
+        std::thread::spawn(move || v.0.iter().sum::<f32>())
+    };
+
+    let h2 = {
+        let v = Arc::clone(&v);
+        std::thread::spawn(move || v.1.iter().map(|x| x.powi(2)).sum::<f32>())
+    };
+
+    h.join();
+    h2.join();
+}
+
 struct Inner {
     fwhm: Vec<f32>,
     eta: Vec<f32>,
@@ -102,12 +125,11 @@ struct Inner {
 
 impl RenderCtx {
     pub fn new(peak_cap: usize) -> Self {
-
         Self {
             inner: UnsafeCell::new(Inner {
                 intens: unsafe { uninit_vec(peak_cap) },
-                pos:  unsafe { uninit_vec(peak_cap) },
-                eta:  unsafe { uninit_vec(peak_cap) },
+                pos: unsafe { uninit_vec(peak_cap) },
+                eta: unsafe { uninit_vec(peak_cap) },
                 fwhm: unsafe { uninit_vec(peak_cap) },
             }),
         }
@@ -283,30 +305,28 @@ where
         start_idx += n_peaks;
     }
 
-    enum InfoJob {
-        Job(usize),
-        Stop,
-    }
-    let (tx, rx) = crossbeam_channel::unbounded();
-
     let patterns = Arc::new(patterns);
-
     let jobs = Arc::new(jobs);
 
-    let n_threads = 12;
+    let n_threads: usize = std::thread::available_parallelism()
+        .map(|x| x.into())
+        .unwrap_or(1);
+
+    let mut chunk_size = jobs.len() / n_threads;
+    if chunk_size % jobs.len() != 0 {
+        chunk_size += 1;
+    }
+    assert!(chunk_size * n_threads >= jobs.len());
+
     let mut handles = Vec::new();
     for i in 0..n_threads {
-        let rx = rx.clone();
+        let start = chunk_size * i;
+        let end = (chunk_size * (i + 1)).min(jobs.len());
         let patterns = Arc::clone(&patterns);
         let ctx = Arc::clone(&ctx);
         let jobs = Arc::clone(&jobs);
         let handle = std::thread::spawn(move || {
-            loop {
-                let idx: usize = match rx.recv() {
-                    Ok(InfoJob::Job(idx)) => idx,
-                    Ok(InfoJob::Stop) | Err(_) => break,
-                };
-
+            for idx in start..end {
                 for (i, p) in jobs[idx].peak_info_iterator().enumerate() {
                     let pat = &patterns[idx];
                     assert!(i < pat.n_peaks, "error in peak number computation");
@@ -318,26 +338,6 @@ where
             debug!("peak info generation thread {i} exiting");
         });
         handles.push(handle);
-    }
-
-    for idx in 0..jobs.len() {
-        let _ = tx
-            .send(InfoJob::Job(idx))
-            .map_err(|err| {
-                error!("Could not create peak info gathering job {idx}: '{err}'. Exiting...");
-                std::process::exit(1);
-            })
-            .expect("error is handled inside");
-    }
-
-    for idx in 0..n_threads {
-        let _ = tx
-            .send(InfoJob::Stop)
-            .map_err(|err| {
-                error!("Could send stop signal to peak info gathering thread {idx}: '{err}'. Exiting...");
-                std::process::exit(1);
-            })
-            .expect("error is handled inside");
     }
 
     for (i, handle) in handles.drain(..).enumerate() {

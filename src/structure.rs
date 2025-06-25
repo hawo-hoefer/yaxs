@@ -4,6 +4,7 @@ use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use ordered_float::NotNan;
@@ -476,7 +477,7 @@ struct WriteCtx {
 struct Inner {
     strain: Vec<Strain>,
     pos: Vec<Option<MarchDollase>>,
-    peaks: Vec<Peaks>,
+    peaks: Vec<MaybeUninit<Peaks>>,
     ok: Vec<bool>,
     n_permutations: usize,
 }
@@ -509,7 +510,7 @@ impl WriteCtx {
 
         strain[idx] = p.strain;
         pos[idx] = p.po;
-        peaks[idx] = p.peaks;
+        peaks[idx] = MaybeUninit::new(p.peaks);
         ok[idx] = true
     }
 
@@ -521,7 +522,7 @@ impl WriteCtx {
         let Inner {
             strain,
             pos,
-            peaks,
+            mut peaks,
             ok,
             n_permutations,
         } = self.inner.into_inner();
@@ -533,7 +534,10 @@ impl WriteCtx {
             structures,
             sample_parameters,
             sim_res: Arc::new(CompactSimResults {
-                all_simulated_peaks: peaks.into(),
+                all_simulated_peaks: peaks
+                    .drain(..)
+                    .map(|x| unsafe { x.assume_init() })
+                    .collect(),
                 all_strains: strain.into(),
                 all_preferred_orientations: pos.into(),
                 n_permutations,
