@@ -110,8 +110,13 @@ pub fn write_to_npz(
     compress: bool,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     info!("Writing {path}", path = path.as_ref().display());
-    let w =
-        BufWriter::new(std::fs::File::create_new(&path).expect("We deleted the directory before"));
+    let w = BufWriter::new(std::fs::File::create_new(&path).map_err(|err| {
+        format!(
+            "Could not create file '{p}' for writing: {e}",
+            p = path.as_ref().display(),
+            e = err.to_string()
+        )
+    })?);
 
     let mut w = if compress {
         NpzWriter::new_compressed(w)
@@ -157,7 +162,7 @@ where
     T: AsRef<Path> + Send + Sync,
     D: Discretizer + Send + Sync + 'static,
 {
-    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs);
+    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs)?;
     send.send(Arc::new(WriteJob::Write {
         intensities,
         meta,
@@ -169,40 +174,37 @@ where
 /// prepare an output directory for saving generated XRD patterns
 ///
 /// * `opts`: IO options for writing the data
-pub fn prepare_output_directory(opts: &Opts) {
+pub fn prepare_output_directory(opts: &Opts) -> Result<(), String> {
     match std::fs::DirBuilder::new().create(&opts.output_path) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
             info!(
                 "Removing '{out_dir}' according to user input...",
                 out_dir = opts.output_path.display()
             );
-            std::fs::remove_dir_all(&opts.output_path).unwrap_or_else(|err| {
-                error!(
+            std::fs::remove_dir_all(&opts.output_path).map_err(|err| {
+                format!(
                     "Could not remove output directory '{out_dir}': {err}",
                     out_dir = opts.output_path.display()
-                );
-                std::process::exit(1);
-            });
-            std::fs::create_dir(&opts.output_path).unwrap_or_else(|err| {
-                error!(
+                )
+            })?;
+            std::fs::create_dir(&opts.output_path).map_err(|err| {
+                format!(
                     "Could not (re)create output directory '{out_dir}': {err}",
                     out_dir = opts.output_path.display()
-                );
-                std::process::exit(1);
-            });
+                )
+            })?;
+            Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !opts.overwrite => {
-            error!("Could not create output directory '{}': Already exists. Use '--overwrite' to overwrite existing files and directories.", opts.output_path.display());
-            std::process::exit(1);
+            Err(format!("Output directory '{}' already exists. Use '--overwrite' to overwrite existing files and directories.", opts.output_path.display()))
         }
         Err(e) => {
-            error!(
+            Err(format!(
                 "Could not create output directory {out_dir}: {e:?}",
                 out_dir = opts.output_path.display()
-            );
-            std::process::exit(1);
+            ))
         }
-        Ok(_) => {} // all good,
+        Ok(()) => {Ok(())} // all good,
     }
 }
 
@@ -215,7 +217,7 @@ pub struct OutputNames {
 pub fn render_write_chunked<T>(
     mut gen: impl DiscretizeJobGenerator<Item = T>,
     io_opts: &crate::io::Opts,
-) -> OutputNames
+) -> Result<OutputNames, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
@@ -293,27 +295,22 @@ where
             abstol,
             gen.n_phases(),
         )
-        .map_err(|err| {
-            error!("Could not queue write job: {err}.");
-            std::process::exit(1);
-        })
-        .expect("exit on error");
+        .map_err(|err| format!("Could not queue write job: {err}."))?;
 
         i += actual_chunk_size;
     }
+
     let _ = tx.send(Arc::new(WriteJob::Done));
-    let Some((data_slot_names, metadata_slot_names)) =
-        io_thread_handle.join().unwrap_or_else(|err| {
-            error!("Could not join io thread: {err:?}");
-            std::process::exit(1)
-        })
+    let Some((data_slot_names, metadata_slot_names)) = io_thread_handle
+        .join()
+        .map_err(|err| format!("Could not join io thread: {err:?}"))?
     else {
-        error!("Did not write any chunks.");
-        std::process::exit(1);
+        return Err("Did not write any chunks.".to_string());
     };
-    OutputNames {
+
+    Ok(OutputNames {
         chunk_names: Some(datafiles),
         data_slot_names,
         metadata_slot_names,
-    }
+    })
 }

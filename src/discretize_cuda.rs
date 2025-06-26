@@ -146,7 +146,7 @@ impl RenderCtx {
 
 unsafe impl Sync for RenderCtx {}
 
-pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Vec<f32>
+pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Result<Vec<f32>, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
@@ -318,13 +318,9 @@ where
     }
 
     for (i, handle) in handles.drain(..).enumerate() {
-        handle
-            .join()
-            .map_err(|err| {
-                error!("could not join peak info generation thread {i}: '{err:?}'. Exiting...");
-                std::process::exit(1);
-            })
-            .expect("error is handled inside");
+        handle.join().map_err(|err| {
+            format!("Cuda backend: could not join peak info generation thread {i}: '{err:?}'")
+        })?
     }
 
     let ctx = Arc::get_mut(&mut ctx).expect("all threads owning ctx have stopped");
@@ -389,8 +385,13 @@ where
             },
             normalize,
         );
-        assert!(ret);
+        if !ret {
+            return Err(
+                "An error has happened in the cuda backend. See the above log for details."
+                    .to_string(),
+            );
+        }
     }
 
-    intensities
+    Ok(intensities)
 }

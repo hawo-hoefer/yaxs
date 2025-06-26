@@ -565,7 +565,7 @@ pub fn simulate_peaks(
     structure_strain_configs: Box<[Option<StrainCfg>]>,
     structure_files: Box<[String]>,
     rng: &mut impl Rng,
-) -> ToDiscretize {
+) -> Result<ToDiscretize, String> {
     struct PeakSim {
         structure: usize,
         permutation: usize,
@@ -582,16 +582,14 @@ pub fn simulate_peaks(
     }
 
     impl RunCtx {
-        fn run(&self, job: PeakSim) -> PeakSimResult {
+        fn run(&self, job: PeakSim) -> Result<PeakSimResult, String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
             let Some((perm_s, strain)) = apply_strain_cfg(
                 &self.strain_cfgs[job.structure],
                 &self.structs[job.structure],
                 &mut rng,
             ) else {
-                error!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]);
-                error!("Exiting...");
-                std::process::exit(1);
+                return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]));
             };
             let po_cfg = &self.po_cfgs[job.structure];
             let po = po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
@@ -599,13 +597,13 @@ pub fn simulate_peaks(
                 .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref())
                 .into_boxed_slice();
 
-            PeakSimResult {
+            Ok(PeakSimResult {
                 strain,
                 po,
                 peaks,
                 struct_id: job.structure,
                 permutation_id: job.permutation,
-            }
+            })
         }
     }
 
@@ -640,7 +638,7 @@ pub fn simulate_peaks(
                 min_r,
                 max_r,
             };
-            let p = ctx.run(job);
+            let p = ctx.run(job)?;
             unsafe { results.add(p) };
         }
     } else {
@@ -652,7 +650,7 @@ pub fn simulate_peaks(
                 let ctx = Arc::clone(&ctx);
                 let results = Arc::clone(&results);
                 let job_receiver = job_receiver.clone();
-                std::thread::spawn(move || {
+                std::thread::spawn(move || -> Result<(), String> {
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
                             Ok(Task::Stop) => break,
@@ -660,12 +658,15 @@ pub fn simulate_peaks(
                             Err(_) => break,
                         };
 
-                        let p = ctx.run(job);
+                        let p = ctx
+                            .run(job)
+                            .map_err(|err| format!("Peak Simulation Thread {i}: {err}"))?;
                         unsafe {
                             results.add(p);
                         }
                     }
                     debug!("Peak Sim Thread {i} finished.");
+                    Ok(())
                 })
             })
             .collect_vec();
@@ -686,22 +687,17 @@ pub fn simulate_peaks(
         for _ in 0..n_threads {
             job_sender
                 .send(Task::Stop)
-                .map_err(|err| {
-                    error!("Could not send stop signal for peak simulation: '{err}'. Exiting...");
-                    std::process::exit(1);
-                })
-                .expect("error is handled inside");
+                .map_err(|err| format!("Could not send stop signal for peak simulation: '{err}'"))?
         }
 
         for handle in handles {
-            let _ = handle.join().map_err(|err| {
-                error!("could not join peak simulation thread: '{err:?}'. Exiting...");
-                std::process::exit(1);
-            });
+            handle.join().map_err(|err| {
+                format!("Could not join peak simulation thread: '{err:?}'. Exiting...")
+            })??;
         }
     }
 
     let results = Arc::into_inner(results).expect("no more references to write context");
     let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
-    results.make_to_discretize(ctx.structs, sample_parameters)
+    Ok(results.make_to_discretize(ctx.structs, sample_parameters))
 }

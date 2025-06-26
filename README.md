@@ -41,6 +41,9 @@ Further information on the input file structure can be found [here](./inputfile.
 - [ ] XRD pattern bonuses
     - [ ] Air Scattering
     - [x] Preferred Orientation
+        - preferred orientation with direction towards sample surface is implemented
+        - [ ] implement other directions
+        - [ ] also, how do we handle viewing angles orthogonal to the direction of the preferred orientation??
 - [x] rendering using cuda backend
     - [x] peak positions
     - [x] backgrounds

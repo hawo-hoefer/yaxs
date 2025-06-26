@@ -14,6 +14,19 @@ pub enum Parameter<T> {
 }
 
 impl<T> Parameter<T> {
+    pub fn range_checked(lo: T, hi: T) -> Result<Self, String>
+    where
+        T: std::fmt::Debug + PartialOrd,
+    {
+        if lo > hi {
+            return Err(format!(
+                "lower bound needs to be smaller than or equal to upper bound. got {lo:?} > {hi:?}"
+            ));
+        }
+
+        Ok(Self::Range(lo, hi))
+    }
+
     pub fn upper_bound(&self) -> T
     where
         T: Copy,
@@ -58,11 +71,7 @@ where
         match p {
             Inner::Fixed(v) => Ok(Parameter::Fixed(v)),
             Inner::Range(lo, hi) => {
-                if lo > hi {
-                    return Err(serde::de::Error::custom(format!( "lower bound needs to be smaller than or equal to upper bound. got {lo:?} > {hi:?}" )));
-                }
-
-                Ok(Parameter::Range(lo, hi))
+                Parameter::range_checked(lo, hi).map_err(|err| serde::de::Error::custom(err))
             }
         }
     }
@@ -82,10 +91,8 @@ where
     pub fn sampler(&self) -> Result<Uniform<T>, T> {
         match self {
             Parameter::Fixed(v) => Err(*v),
-            Parameter::Range(lo, hi) => Ok(Uniform::try_from(*lo..=*hi).unwrap_or_else(|err| {
-                error!("Could not sample mean domain size: {err}");
-                std::process::exit(1);
-            })),
+            Parameter::Range(lo, hi) => Ok(Uniform::try_from(*lo..=*hi)
+                .unwrap_or_else(|_| unreachable!("proper initialization should prevent this"))),
         }
     }
 }

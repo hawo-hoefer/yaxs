@@ -65,7 +65,13 @@ fn main() {
         }
     };
 
-    prepare_output_directory(&args.io);
+    prepare_output_directory(&args.io)
+        .map_err(|err| {
+            error!("Could not prepare output directory: {err}");
+            std::process::exit(1);
+        })
+        .expect("error is handled inside");
+
     let cfg_file_name = args
         .cfg
         .file_name()
@@ -132,21 +138,28 @@ fn main() {
     }
 
     let vf_generator = VFGenerator::try_new(vf_constraints)
-        .or_else(|| {
+        .map_err(|err| {
+            error!("Error: Could not generate volume fractions: '{err}'");
             std::process::exit(1);
         })
         .expect("error is handled inside");
 
     let begin = Instant::now();
 
-    let to_discretize = cfg.kind.simulate_peaks(
-        structures.into(),
-        pref_o.into(),
-        strain_cfgs.into(),
-        structure_paths.into(),
-        cfg.sample_parameters.clone(),
-        &mut rng,
-    );
+    let to_discretize = cfg
+        .kind
+        .simulate_peaks(
+            structures.into(),
+            pref_o.into(),
+            strain_cfgs.into(),
+            structure_paths.into(),
+            cfg.sample_parameters.clone(),
+            &mut rng,
+        )
+        .unwrap_or_else(|err| {
+            error!("Could not simulate peaks: {err}");
+            std::process::exit(1);
+        });
 
     let elapsed = begin.elapsed().as_secs_f64();
 
@@ -168,7 +181,6 @@ fn main() {
             .iter()
             .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
             .collect_vec(),
-
         cfg: cfg.kind.clone(),
     };
 
@@ -184,6 +196,10 @@ fn main() {
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }
+    .unwrap_or_else(|err| {
+        error!("Could not render peak shapes: {err}");
+        std::process::exit(1);
+    })
 }
 
 fn render_and_write_jobs<T, G>(
@@ -191,7 +207,8 @@ fn render_and_write_jobs<T, G>(
     args: Cli,
     timestamp_started: chrono::DateTime<Utc>,
     extra: io::Extra,
-) where
+) -> Result<(), String>
+where
     T: Discretizer + Send + Sync + 'static,
     G: DiscretizeJobGenerator<Item = T>,
 {
@@ -205,19 +222,27 @@ fn render_and_write_jobs<T, G>(
             jobs.push(job);
         }
         let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(jobs, xs, gen.abstol(), gen.n_phases());
+        let (intensities, pattern_metadata) = render_jobs(jobs, xs, gen.abstol(), gen.n_phases())?;
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");
         let (data_slot_names, metadata_slot_names) =
             write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
-                .unwrap_or_else(|_| std::process::exit(1));
-        OutputNames {
+                .unwrap_or_else(|err| {
+                    error!("Error writing data to disk: {err}");
+                    std::process::exit(1)
+                });
+        Ok(OutputNames {
             chunk_names: None,
             data_slot_names,
             metadata_slot_names,
-        }
+        })
     };
+
+    let output_names = output_names.unwrap_or_else(|err| {
+        error!("could not write data to disk: {err}");
+        std::process::exit(1)
+    });
 
     let elapsed = begin_render.elapsed().as_secs_f64();
 
@@ -259,4 +284,5 @@ fn render_and_write_jobs<T, G>(
     });
 
     info!("Done rendering patterns. Took {elapsed:.2}s");
+    Ok(())
 }

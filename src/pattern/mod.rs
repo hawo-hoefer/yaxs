@@ -60,13 +60,15 @@ pub struct VFGenerator {
 }
 
 impl VFGenerator {
-    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Option<Self> {
+    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Result<Self, String> {
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
 
         if fraction_sum > 1.0 {
-            error!("Could not create volume fraction generator. Specified fractions need to sum to less than or equal to 1.0. Got sum: {}", fraction_sum);
-            return None;
+            return Err(format!(
+                "Specified fractions need to sum to less than or equal to 1.0. Got sum: {}",
+                fraction_sum
+            ));
         }
 
         if fraction_sum > 0.99 && n_free > 0 {
@@ -75,11 +77,10 @@ impl VFGenerator {
 
         if n_free == 0 && fraction_sum < 1.0 - 1e-5 {
             // no free parameters and fraction sum smaller than 1
-            error!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum);
-            return None;
+            return Err(format!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum));
         }
 
-        Some(Self {
+        Ok(Self {
             n_free,
             fraction_sum,
             fractions,
@@ -149,6 +150,14 @@ impl VFGenerator {
         concentration_buf.truncate(self.fractions.len());
         concentration_buf.into_boxed_slice()
     }
+}
+
+fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
+    (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
+}
+
+fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
+    (theta_rad * 2.0).cos().powi(2)
 }
 
 pub struct PeakRenderParams {
@@ -291,7 +300,7 @@ impl Peak {
         // theta = asin(lambda / 2d)
         let wavelength_ams = wavelength_nm * 10.0;
         let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
-        let f_lorentz = lorentz_factor(theta_hkl_rad);
+        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
         let fwhm = caglioti(u, v, w, theta_hkl_rad)
             + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
@@ -336,8 +345,10 @@ where {
         // g_hkl in ams = m^-10
         let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
         let beamline_intensity = beamline.get_intensity(e_kev);
+        let polarization_correction = edxrd_polarization_factor_horizontal_plane(theta_rad);
         let peak_weight = self.i_hkl
             * f_lorentz
+            * polarization_correction
             * e_kev_to_lambda_ams(e_kev).powi(3)
             * beamline_intensity
             * weight;
@@ -347,16 +358,12 @@ where {
     }
 }
 
-fn lorentz_factor(theta_rad: f64) -> f64 {
-    (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
-}
-
 pub fn render_jobs<T>(
     jobs: Vec<T>,
     two_thetas: &[f32],
     #[allow(unused)] atol: f32,
     n_phases: usize,
-) -> (Array2<f32>, Vec<PatternMeta>)
+) -> Result<(Array2<f32>, Vec<PatternMeta>), String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
@@ -377,13 +384,13 @@ where
             }
         } else {
             use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, two_thetas);
+            let intensities = discretize_peaks_cuda(jobs, two_thetas)?;
             let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
                 .expect("sizes must match");
         }
     };
 
-    (intensities, metadata)
+    Ok((intensities, metadata))
 }
 
 #[cfg(test)]

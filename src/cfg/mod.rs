@@ -54,7 +54,7 @@ impl SimulationKind {
         structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
         rng: &mut impl Rng,
-    ) -> ToDiscretize {
+    ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = match self {
             SimulationKind::AngleDispersive(angle_dispersive) => {
                 let min_line = &angle_dispersive
