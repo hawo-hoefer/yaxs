@@ -10,6 +10,7 @@ pub struct Mat4<T> {
 }
 
 impl<T> Mat4<T> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         r0c0: T,
         r0c1: T,

@@ -60,13 +60,13 @@ pub struct VFGenerator {
 }
 
 impl VFGenerator {
-    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Result<Self, ()> {
+    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Option<Self> {
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
 
         if fraction_sum > 1.0 {
             error!("Could not create volume fraction generator. Specified fractions need to sum to less than or equal to 1.0. Got sum: {}", fraction_sum);
-            return Err(());
+            return None;
         }
 
         if fraction_sum > 0.99 && n_free > 0 {
@@ -76,10 +76,10 @@ impl VFGenerator {
         if n_free == 0 && fraction_sum < 1.0 - 1e-5 {
             // no free parameters and fraction sum smaller than 1
             error!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum);
-            return Err(());
+            return None;
         }
 
-        Ok(Self {
+        Some(Self {
             n_free,
             fraction_sum,
             fractions,
@@ -273,7 +273,8 @@ impl Peak {
     /// * `w`: caglioti w parameter
     /// * `mean_ds_nm`: mean domain size in nanometers
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
-    /// emission line's relative intensity)
+    ///   emission line's relative intensity)
+    #[allow(clippy::too_many_arguments)]
     pub fn get_adxrd_render_params(
         &self,
         wavelength_nm: f64,
@@ -310,7 +311,7 @@ impl Peak {
     /// * `wavelength_nm`: X-ray wavelength
     /// * `mean_ds_nm`: mean domain size in nanometers
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
-    /// emission line's relative intensity)
+    ///    emission line's relative intensity)
     pub fn get_edxrd_render_params(
         &self,
         theta_rad: f64,

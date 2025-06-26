@@ -154,11 +154,15 @@ pub struct SampleParameters {
     pub structure_permutations: usize,
 }
 
+pub struct Sample {
+    eta: f64,
+    mean_ds_nm: Box<[f64]>,
+    impurity_peaks: Box<[ImpurityPeak]>,
+    struct_ids: Box<[usize]>,
+}
+
 impl SampleParameters {
-    pub fn generate(
-        &self,
-        rng: &mut impl Rng,
-    ) -> (f64, Box<[f64]>, Box<[ImpurityPeak]>, Box<[usize]>) {
+    pub fn generate(&self, rng: &mut impl Rng) -> Sample {
         let eta = self.eta.generate(rng);
 
         let mean_ds_nm = self
@@ -174,12 +178,17 @@ impl SampleParameters {
             .map(|impurities| generate_impurities(impurities, rng))
             .unwrap_or(Box::new([]));
 
-        let indices = (0..self.structures.len())
+        let struct_ids = (0..self.structures.len())
             .map(|_| rng.random_range(0..self.structure_permutations))
             .collect_vec()
             .into();
 
-        (eta, mean_ds_nm, impurity_peaks, indices)
+        Sample {
+            eta,
+            mean_ds_nm,
+            impurity_peaks,
+            struct_ids,
+        }
     }
 }
 
@@ -221,7 +230,12 @@ impl ToDiscretize {
             sample_displacement_mu_m,
         } = angle_dispersive;
 
-        let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
+        let Sample {
+            eta,
+            mean_ds_nm,
+            impurity_peaks,
+            struct_ids,
+        } = self.sample_parameters.generate(rng);
 
         let u = u.generate(rng);
         let v = v.generate(rng);
@@ -233,7 +247,7 @@ impl ToDiscretize {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
                 impurity_peaks,
-                indices,
+                indices: struct_ids,
                 random_seed: rng.random(),
                 noise: simulation_parameters
                     .noise
@@ -263,12 +277,17 @@ impl ToDiscretize {
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive {
-        let (eta, mean_ds_nm, impurity_peaks, indices) = self.sample_parameters.generate(rng);
+        let Sample {
+            eta,
+            mean_ds_nm,
+            impurity_peaks,
+            struct_ids,
+        } = self.sample_parameters.generate(rng);
 
         DiscretizeEnergyDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
-                indices,
+                indices: struct_ids,
                 impurity_peaks,
                 noise: simulation_parameters
                     .noise

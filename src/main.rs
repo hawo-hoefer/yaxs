@@ -132,10 +132,10 @@ fn main() {
     }
 
     let vf_generator = VFGenerator::try_new(vf_constraints)
-        .map_err(|_| {
+        .or_else(|| {
             std::process::exit(1);
         })
-        .unwrap();
+        .expect("error is handled inside");
 
     let begin = Instant::now();
 
@@ -174,11 +174,13 @@ fn main() {
 
     match cfg.kind.clone() {
         SimulationKind::AngleDispersive(angle_dispersive) => {
-            let gen = adxrd::JobGen::new(angle_dispersive, to_discretize, params, vf_generator, rng);
+            let gen =
+                adxrd::JobGen::new(angle_dispersive, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
         SimulationKind::EnergyDispersive(energy_dispersive) => {
-            let gen = edxrd::JobGen::new(energy_dispersive, to_discretize, params, vf_generator, rng);
+            let gen =
+                edxrd::JobGen::new(energy_dispersive, to_discretize, params, vf_generator, rng);
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }

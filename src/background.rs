@@ -25,6 +25,7 @@ fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
 
     let mut cn = Vec::with_capacity(chebyshev_coefs.len());
     cn.resize(chebyshev_coefs.len(), 0.0f32);
+    #[allow(clippy::needless_range_loop)]
     for i in 2..chebyshev_coefs.len() {
         // cn[:] = 0
         cn.iter_mut().for_each(|coef| *coef = 0.0);

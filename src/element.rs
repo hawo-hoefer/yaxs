@@ -157,6 +157,7 @@ impl TryFrom<&str> for Element {
 
 // Stolen from S.P. Ong et. al, 2013 pymatgen
 // (src/pymatgen/analysis/diffraction/atomic_scattering_params.json)
+#[allow(clippy::approx_constant)]
 pub const fn atomic_scattering_params(el: Element) -> Option<[[f64; 2]; 4]> {
     #[rustfmt::skip]
     let ret = match el {

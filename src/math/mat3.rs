@@ -35,6 +35,7 @@ where
 }
 
 impl<T> Mat3<T> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         r0c0: T,
         r0c1: T,

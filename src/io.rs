@@ -108,7 +108,7 @@ pub fn write_to_npz(
     intensities: &Array2<f32>,
     meta: &[PatternMeta],
     compress: bool,
-) -> Result<(Vec<String>, Vec<String>), ()> {
+) -> Result<(Vec<String>, Vec<String>), String> {
     info!("Writing {path}", path = path.as_ref().display());
     let w =
         BufWriter::new(std::fs::File::create_new(&path).expect("We deleted the directory before"));
@@ -123,29 +123,19 @@ pub fn write_to_npz(
     for m in meta.iter() {
         use PatternMeta::*;
         meta_names.push(m.name().to_string());
-        let succ = match m {
+        match m {
             Etas(array_base) => w.add_array(m.name(), array_base),
             VolumeFractions(array_base) => w.add_array(m.name(), array_base),
             Strains(array_base) => w.add_array(m.name(), array_base),
             MeanDsNm(array_base) => w.add_array(m.name(), array_base),
             CagliotiParams(array_base) => w.add_array(m.name(), array_base),
             MarchParameter(array_base) => w.add_array(m.name(), array_base),
-        };
-        succ.unwrap_or_else(|err| {
-            error!(
-                "Could not write data to file '{path}': {err}",
-                path = path.as_ref().display()
-            );
-            std::process::exit(1);
-        });
+        }
+        .map_err(|err| err.to_string())?;
     }
 
-    w.add_array("intensities", intensities).map_err(|err| {
-        error!(
-            "Could not write data file '{path}': {err}",
-            path = path.as_ref().display()
-        )
-    })?;
+    w.add_array("intensities", intensities)
+        .map_err(|err| err.to_string())?;
     let data_names = vec!["intensities".to_string()];
     Ok((data_names, meta_names))
 }
@@ -155,14 +145,14 @@ pub fn write_to_npz(
 /// # Errors
 ///
 /// This function will return an error if the writing thread has died and cannot be sent to
-pub fn render_chunk_and_queue_write_in_thread<'a, D, T>(
+pub fn render_chunk_and_queue_write_in_thread<D, T>(
     jobs: Vec<D>,
     two_thetas: &[f32],
     path: T,
     send: Sender<Arc<WriteJob<T>>>,
     abstol: f32,
     n_structs: usize,
-) -> Result<(), ()>
+) -> Result<(), String>
 where
     T: AsRef<Path> + Send + Sync,
     D: Discretizer + Send + Sync + 'static,
@@ -173,10 +163,7 @@ where
         meta,
         path,
     }))
-    .map_err(|err| {
-        error!("Could not queue write job: {err}.");
-        
-    })
+    .map_err(|err| err.to_string())
 }
 
 /// prepare an output directory for saving generated XRD patterns
@@ -233,7 +220,7 @@ where
     T: Discretizer + Send + Sync + 'static,
 {
     let abstol = gen.abstol();
-    let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<_>>>();
+    let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<PathBuf>>>();
     let compress = io_opts.compress;
     let io_thread_handle = std::thread::spawn(move || {
         let mut names = None;
@@ -246,7 +233,11 @@ where
                         ref path,
                         ref meta,
                     } => match crate::io::write_to_npz(path, intensities, meta, compress) {
-                        Err(()) => {
+                        Err(err) => {
+                            error!(
+                                "Could not write data to file '{path}': {err}. IO thread quitting.",
+                                path = path.display()
+                            );
                             error!("IO thread quitting...");
                             return names;
                         }
@@ -294,7 +285,7 @@ where
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        let _ = render_chunk_and_queue_write_in_thread(
+        render_chunk_and_queue_write_in_thread(
             chunk,
             gen.xs(),
             chunk_path,
@@ -302,10 +293,11 @@ where
             abstol,
             gen.n_phases(),
         )
-        .map_err(|_| {
-            // Error is logged in thread
+        .map_err(|err| {
+            error!("Could not queue write job: {err}.");
             std::process::exit(1);
-        });
+        })
+        .expect("exit on error");
 
         i += actual_chunk_size;
     }
