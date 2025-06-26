@@ -198,7 +198,9 @@ __global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
   for (size_t i = tid * pat_len; i < (tid + 1) * pat_len; ++i) {
     float noise =
         (float)(xoshiro256_plus_plus_next_double01(rng) * (hi - lo) + lo);
-    if (tid == 0) { printf("%.2f\n", noise); }
+    if (tid == 0) {
+      printf("%.2f\n", noise);
+    }
     intensities_d[i] += noise;
   }
 }
@@ -256,9 +258,10 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
                      n_patterns * sizeof(double), cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying gaussian noise standard deviations to device");
 
-    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
                                        (void *)render_gaussian_noise, 0,
                                        array_count);
+    log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     render_gaussian_noise<<<grid_size, block_size>>>(
@@ -266,9 +269,10 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
         n_patterns);
   } break;
   case Uniform: {
-    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
                                        (void *)render_uniform_noise, 0,
                                        array_count);
+    log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     printf("------> Rendering uniform noise\n");
@@ -415,8 +419,9 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns;
-    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                       (void *)get_extrema, 0, array_count);
+    cudaError_t ret = cudaOccupancyMaxPotentialBlockSize(
+        &min_grid_size, &block_size, (void *)get_extrema, 0, array_count);
+    log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
@@ -427,8 +432,9 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns * pat_len;
-    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                       (void *)normalize, 0, array_count);
+    cudaError_t ret = cudaOccupancyMaxPotentialBlockSize(
+        &min_grid_size, &block_size, (void *)normalize, 0, array_count);
+    log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     normalize<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
@@ -487,8 +493,10 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   int block_size = 0;
   int min_grid_size = 0;
   int array_count = n_patterns * pat_len;
-  cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+  ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
                                      (void *)render_peaks, 0, array_count);
+  log_cuda_err(ret, "finding cuda kernel launch configuration");
+  assert(block_size > 0 && "block size must be larger than 0");
   int grid_size = (array_count + block_size - 1) / block_size;
 
   render_peaks<<<grid_size, block_size>>>(peak_soa_d, patterns_d, intensities_d,

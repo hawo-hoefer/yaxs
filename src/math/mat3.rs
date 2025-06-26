@@ -152,10 +152,24 @@ impl<T> Mat3<T> {
     /// assert_eq!(ri.next(), Some(Vec3::new(3, 4, 5)));
     /// assert_eq!(ri.next(), Some(Vec3::new(6, 7, 8)));
     /// ```
-    pub fn row_iter(&self) -> Mat3Rows<T> {
+    pub fn row_iter(&self) -> Mat3Rows<'_, T> {
         Mat3Rows { mat: self, n: 0 }
     }
 
+    /// access a matrix row. Panics on out of range access
+    ///
+    /// ```
+    /// use yaxs::math::{Vec3, Mat3};
+    ///
+    /// let mat = Mat3::new(
+    ///     0, 1, 2,
+    ///     3, 4, 5,
+    ///     6, 7, 8,
+    /// );
+    /// assert_eq!(mat.row(0), Vec3::new(0, 1, 2));
+    /// assert_eq!(mat.row(1), Vec3::new(3, 4, 5));
+    /// assert_eq!(mat.row(2), Vec3::new(6, 7, 8));
+    /// ```
     pub fn row(&self, i: usize) -> Vec3<T>
     where
         T: Copy,

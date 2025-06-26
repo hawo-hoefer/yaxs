@@ -110,7 +110,7 @@ mod test {
     #[test]
     fn polynomial_at_simple_quadratic() {
         let coefs = [0.0, 0.0, 1.0];
-        assert_eq!(polynomial_at(&coefs, 10.0), 100.0);
+        assert!((polynomial_at(&coefs, 10.0) - 100.0).abs() < 1e-5);
     }
 
     #[test]
