@@ -1,7 +1,8 @@
 use std::cell::UnsafeCell;
+use std::ffi::{c_char, c_int, CStr};
 use std::sync::Arc;
 
-use log::{debug, info};
+use log::{debug, error, info};
 
 use crate::background::Background;
 use crate::noise::Noise;
@@ -11,6 +12,8 @@ use crate::uninit_vec;
 use self::ffi::Uniform;
 
 mod ffi {
+    use std::ffi::{c_char, c_int, CStr};
+
     #[link(name = "discretize_cuda")]
     extern "C" {
         pub fn render_peaks_and_background(
@@ -27,6 +30,14 @@ mod ffi {
             bkg_degree_if_poly: usize,
             bkg_scale_if_not_none: *const f32,
             normalize: bool,
+            error_print_handle: extern "C" fn(
+                file: *const c_char,
+                line: c_int,
+                msg: *const c_char,
+                cuda_err: *const c_char,
+            ),
+            info_print_handle: extern "C" fn(msg: *const c_char),
+            debug_print_handle: extern "C" fn(msg: *const c_char),
         ) -> bool;
     }
 
@@ -146,11 +157,36 @@ impl RenderCtx {
 
 unsafe impl Sync for RenderCtx {}
 
+extern "C" fn c_error_handler(
+    _file: *const c_char,
+    _line: c_int,
+    msg: *const c_char,
+    cuda_err: *const c_char,
+) {
+    let msg = unsafe { CStr::from_ptr(msg) };
+    let cuda_err = unsafe { CStr::from_ptr(cuda_err) };
+    error!(
+        "CUDA Error while {}: {}",
+        msg.to_str().expect("valid utf-8"),
+        cuda_err.to_str().expect("valid utf-8")
+    );
+}
+
+extern "C" fn c_info_handler(msg: *const c_char) {
+    let msg = unsafe { CStr::from_ptr(msg) };
+    info!("CUDA: {}", msg.to_str().expect("valid utf-8"));
+}
+
+extern "C" fn c_debug_handler(msg: *const c_char) {
+    let msg = unsafe { CStr::from_ptr(msg) };
+    debug!("CUDA: {}", msg.to_str().expect("valid utf-8"));
+}
+
 pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Result<Vec<f32>, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    debug!("Preparing CUDA-based rendering");
+    debug!("Collecting peak rendering info for CUDA-based rendering");
     use self::ffi::BkgSOA;
 
     let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();
@@ -313,7 +349,7 @@ where
                     unsafe { ctx.set_at(peak_idx, p) };
                 }
             }
-            debug!("peak info generation thread {i} exiting");
+            debug!("Peak info generation thread {i} exiting");
         });
         handles.push(handle);
     }
@@ -385,6 +421,9 @@ where
                 BkgSOA::Polynomial { .. } | BkgSOA::Exponential(_) => bkg_scales.as_ptr(),
             },
             normalize,
+            c_error_handler,
+            c_info_handler,
+            c_debug_handler,
         );
         if !ret {
             return Err(

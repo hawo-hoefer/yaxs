@@ -55,12 +55,18 @@ typedef struct {
   NoiseKind kind;
 } Noise;
 
+typedef void (*error_fn)(const char *, int, const char *, const char *);
+typedef void (*info_fn)(const char *);
+typedef void (*debug_fn)(const char *);
+error_fn errf;
+info_fn infof;
+debug_fn debugf;
+
 #define TAU 3.1415926535897932384626433832795028841972f * 2.0f
 #define PI 3.1415926535897932384626433832795028841972f
 #define log_cuda_err(ret, msg)                                                 \
   if (ret != cudaSuccess) {                                                    \
-    fprintf(stderr, "%s:%d: CUDA Error %d while %s: %s\n", __FILE__, __LINE__, \
-            ret, msg, cudaGetErrorString(ret));                                \
+    errf(__FILE__, __LINE__, msg, cudaGetErrorString(ret));                    \
     fflush(stderr);                                                            \
     return false;                                                              \
   }
@@ -224,6 +230,7 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
   if (noise.kind == NoiseNone) {
     assert(rng_state == NULL);
     assert(noise.v.none == NULL);
+    debugf("No noise specified");
     return true;
   }
   assert(rng_state);
@@ -235,12 +242,14 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
   int min_grid_size = 0;
   int array_count = n_patterns;
 
+  debugf("Allocating noise RNG state");
   uint64_t *rng_state_d;
   double *noise_data_d;
   cudaError_t ret =
       cudaMalloc(&rng_state_d, sizeof(Xoshiro256PlusPlus) * n_patterns);
   log_cuda_err(ret, "allocating random state for noise generation");
 
+  debugf("Initializing noise RNG state");
   ret = cudaMemcpy(rng_state_d, rng_state,
                    sizeof(Xoshiro256PlusPlus) * n_patterns,
                    cudaMemcpyHostToDevice);
@@ -250,36 +259,37 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
   case NoiseNone:
     assert(false && "unreachable, we early return");
   case Gaussian: {
+    infof("rendering gaussian noise");
     // for gaussian noise, we only have standard deviations
+    debugf("Allocating memory for standard deviations");
     ret = cudaMalloc(&noise_data_d, sizeof(double) * n_patterns);
     log_cuda_err(ret, "allocating device memory for gaussian noise sigmas");
 
+    debugf("Initializing standard deviations");
     ret = cudaMemcpy(noise_data_d, noise.v.gaussian,
                      n_patterns * sizeof(double), cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying gaussian noise standard deviations to device");
 
+    debugf("Determining gaussian noise kernel launch parameters");
     ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                       (void *)render_gaussian_noise, 0,
-                                       array_count);
+                                             (void *)render_gaussian_noise, 0,
+                                             array_count);
     log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
+    debugf("Launching gaussian noise kernel");
     render_gaussian_noise<<<grid_size, block_size>>>(
         intensities_d, noise_data_d, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
         n_patterns);
   } break;
   case Uniform: {
-    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                       (void *)render_uniform_noise, 0,
-                                       array_count);
-    log_cuda_err(ret, "finding cuda kernel launch configuration");
-    int grid_size = (array_count + block_size - 1) / block_size;
-
-    printf("------> Rendering uniform noise\n");
+    infof("Rendering uniform noise");
+    debugf("Allocating memory for noise limits");
     ret = cudaMalloc(&noise_data_d, 2 * sizeof(double) * n_patterns);
     log_cuda_err(
         ret, "allocating device memory for uniform noise distribution limits");
 
+    debugf("Initializing noise limits");
     ret = cudaMemcpy(noise_data_d, noise.v.uniform.min,
                      n_patterns * sizeof(double), cudaMemcpyHostToDevice);
 
@@ -287,11 +297,18 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
                      n_patterns * sizeof(double), cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying uniform maxima deviations to device");
 
+    debugf("Determining uniform noise kernel launch parameters");
+    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
+                                             (void *)render_uniform_noise, 0,
+                                             array_count);
+    log_cuda_err(ret, "finding cuda kernel launch configuration");
+    int grid_size = (array_count + block_size - 1) / block_size;
     // bounds are stored the following way: all minima, then all maxima.
     UniformBounds bounds = {
         .min = &noise_data_d[0],
         .max = &noise_data_d[n_patterns],
     };
+    debugf("Launching uniform noise kernel");
     render_uniform_noise<<<grid_size, block_size>>>(
         intensities_d, bounds, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
         n_patterns);
@@ -313,16 +330,20 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
   cudaError_t ret;
   switch (background_kind) {
   case BkgNone:
+    debugf("No background specified");
     // all good, do nothing
     break;
 
   case Exponential: {
+    infof("Rendering exponential background");
+    debugf("Allocating memory for exponential background parameters");
     float *bkg_slope_d, *bkg_scales_d;
     ret = cudaMalloc(&bkg_slope_d, sizeof(float) * n_patterns);
     log_cuda_err(ret, "allocating background info buffer");
     ret = cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns);
     log_cuda_err(ret, "allocating background scale buffer");
 
+    debugf("Initializing exponential background parameters");
     ret = cudaMemcpy(bkg_slope_d, bkg_data, sizeof(float) * n_patterns,
                      cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying background info to device");
@@ -330,6 +351,7 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
                      sizeof(float) * n_patterns, cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying background scales to device");
 
+    debugf("Launching exponential background kernel");
     render_exp_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d,
                                               bkg_slope_d, bkg_scales_d,
                                               pat_len, n_patterns);
@@ -340,6 +362,8 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
   }
 
   case Polynomial: {
+    infof("Rendering polynomial background");
+    debugf("Allocating memory for polynomial background parameters");
     float *bkg_coefs_d, *bkg_scales_d;
     ret = cudaMalloc(&bkg_coefs_d,
                      sizeof(float) * n_patterns * bkg_degree_if_poly);
@@ -348,6 +372,7 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
     ret = cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns);
     log_cuda_err(ret, "allocating background scale buffer");
 
+    debugf("initializing polynomial background parameters");
     ret = cudaMemcpy(bkg_coefs_d, bkg_data,
                      sizeof(float) * n_patterns * bkg_degree_if_poly,
                      cudaMemcpyHostToDevice);
@@ -356,6 +381,7 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
                      sizeof(float) * n_patterns, cudaMemcpyHostToDevice);
     log_cuda_err(ret, "copying background scales to device");
 
+    debugf("Launching polynomial background kernel");
     render_poly_bkg<<<grid_size, block_size>>>(
         intensities_d, two_thetas_d, bkg_coefs_d, bkg_scales_d, pat_len,
         n_patterns, bkg_degree_if_poly);
@@ -410,12 +436,16 @@ __global__ void normalize(float *intensities, size_t n_patterns, size_t pat_len,
 }
 
 bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
+  infof("Normalizing patterns");
+
+  debugf("Allocating memory for extrema");
   float *all_minima, *all_maxima;
   cudaError_t ret = cudaMalloc(&all_minima, 2 * n_patterns * sizeof(float));
   log_cuda_err(ret, "allocating extrema buffer for normalization");
   all_maxima = &all_minima[n_patterns];
 
   {
+    debugf("determining get_extrema kernel launch parameters");
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns;
@@ -424,11 +454,13 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
+    debugf("launching get_extrema kernel");
     get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
                                            all_minima, all_maxima);
   }
 
   {
+    debugf("determining normalization kernel launch parameters");
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns * pat_len;
@@ -437,6 +469,7 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     log_cuda_err(ret, "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
+    debugf("launching normalization kernel");
     normalize<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
                                          all_minima, all_maxima);
   }
@@ -450,13 +483,20 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                  size_t n_patterns, size_t pat_len, Noise noise,
                                  uint64_t *rng_state, BkgKind background_kind,
                                  float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none,
-                                 bool normalize) {
+                                 float *bkg_scales_if_not_none, bool normalize,
+                                 error_fn errfn, info_fn infofn,
+                                 debug_fn debugfn) {
+  errf = errfn;
+  infof = infofn;
+  debugf = debugfn;
+  infof("Beginning CUDA rendering");
+
   float *intensities_d, *two_thetas_d;
   float *peaks_d;
   CUDAPattern *patterns_d;
   bool return_value = true;
 
+  debugf("Allocating CUDA memory");
   // clang-format off
   cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
   log_cuda_err(ret, "allocating two_thetas buffer");
@@ -468,6 +508,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
   cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
 
+  debugf("Copying data to GPU");
   ret = cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peaks_soa to device");
   ret = cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
@@ -490,15 +531,17 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   log_cuda_err(ret, "copying two_thetas to device");
   // clang-format on
 
+  debugf("Determining peak rendering kernel launch parameters");
   int block_size = 0;
   int min_grid_size = 0;
   int array_count = n_patterns * pat_len;
-  ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                     (void *)render_peaks, 0, array_count);
+  ret = cudaOccupancyMaxPotentialBlockSize(
+      &min_grid_size, &block_size, (void *)render_peaks, 0, array_count);
   log_cuda_err(ret, "finding cuda kernel launch configuration");
   assert(block_size > 0 && "block size must be larger than 0");
   int grid_size = (array_count + block_size - 1) / block_size;
 
+  infof("Rendering peaks");
   render_peaks<<<grid_size, block_size>>>(peak_soa_d, patterns_d, intensities_d,
                                           two_thetas_d, n_patterns, pat_len);
 
