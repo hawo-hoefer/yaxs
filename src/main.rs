@@ -1,5 +1,7 @@
-use chrono::Utc;
+use chrono::{Datelike, Timelike, Utc};
 use clap::Parser;
+use colog::format::CologStyle;
+use colored::Colorize;
 use itertools::Itertools;
 use rand::SeedableRng;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
@@ -38,8 +40,63 @@ struct Cli {
     io: io::Opts,
 }
 
+struct CustomPrefix;
+
+impl CologStyle for CustomPrefix {
+    fn prefix_token(&self, level: &log::Level) -> String {
+        let datetime: chrono::DateTime<Utc> = SystemTime::now().into();
+        let datetime = datetime.naive_local();
+        let date_str = format!(
+            "{y}-{m:02}-{d:02}",
+            y = datetime.year(),
+            m = datetime.month(),
+            d = datetime.day(),
+        );
+        let time_str = format!(
+            "{h:02}:{m:02}:{s:02}",
+            h = datetime.hour(),
+            m = datetime.minute(),
+            s = datetime.second(),
+        );
+
+        format!(
+            "{pref}{level} {date} {time}{post}",
+            pref = "[".blue().bold(),
+            post = "]".blue().bold(),
+            level = self.level_color(level, self.level_token(level)),
+            date = self.level_color(level, &date_str),
+            time = self.level_color(level, &time_str),
+        )
+    }
+
+    #[rustfmt::skip]
+    fn level_token(&self, level: &log::Level) -> &str {
+        match level {
+            log::Level::Error => "ERROR",
+            log::Level::Warn  => "WARN ",
+            log::Level::Info  => "INFO ",
+            log::Level::Debug => "DEBUG",
+            log::Level::Trace => "TRACE",
+        }
+    }
+
+    fn level_color(&self, level: &log::Level, msg: &str) -> String {
+        match level {
+            log::Level::Error => msg.red().bold().to_string(),
+            log::Level::Warn => msg.yellow().bold().to_string(),
+            log::Level::Info => msg.green().to_string(),
+            log::Level::Debug => msg.bright_purple().to_string(),
+            log::Level::Trace => msg.white().to_string(),
+        }
+    }
+}
+
 fn main() {
-    colog::init();
+    colog::basic_builder()
+        .filter_level(log::LevelFilter::Info)
+        .format(colog::formatter(CustomPrefix))
+        .parse_env("LOG_LEVEL")
+        .init();
 
     let args = Cli::parse();
     let f = match std::fs::File::open(&args.cfg) {
@@ -54,8 +111,14 @@ fn main() {
         }
     };
 
-    let cfg: Config = match serde_yaml::from_reader(BufReader::new(f)) {
-        Ok(cfg) => cfg,
+    let cfg = match serde_yaml::from_reader::<_, Config>(BufReader::new(f)) {
+        Ok(cfg) => {
+            if cfg.simulation_parameters.n_patterns == 0 {
+                error!("Number n_patterns needs to be larger than 0",);
+                std::process::exit(1);
+            }
+            cfg
+        }
         Err(e) => {
             error!(
                 "Could not parse config: '{x}': {e}",
@@ -89,7 +152,6 @@ fn main() {
         })
         .expect("we deal with the error inside");
 
-    // let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.simulation_parameters.seed.unwrap_or(0));
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
         cfg.simulation_parameters.seed.unwrap_or(0),
     );

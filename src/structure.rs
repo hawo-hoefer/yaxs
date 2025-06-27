@@ -629,7 +629,7 @@ pub fn simulate_peaks(
         .unwrap_or(1);
 
     if n_threads == 1 {
-        info!("running single-threaded peak simulation");
+        info!("Running single-threaded peak simulation");
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
             let job = PeakSim {
                 structure: struct_id,
@@ -660,12 +660,12 @@ pub fn simulate_peaks(
 
                         let p = ctx
                             .run(job)
-                            .map_err(|err| format!("Peak Simulation Thread {i}: {err}"))?;
+                            .map_err(|err| format!("Peak simulation thread {i}: {err}"))?;
                         unsafe {
                             results.add(p);
                         }
                     }
-                    debug!("Peak Sim Thread {i} finished.");
+                    debug!("Peak simulation thread {i} finished.");
                     Ok(())
                 })
             })
@@ -684,6 +684,7 @@ pub fn simulate_peaks(
             let _ = job_sender.send(Task::Job(job));
         }
 
+        debug!("Sending stop signal to peak simulation threads");
         for _ in 0..n_threads {
             job_sender
                 .send(Task::Stop)
@@ -695,6 +696,8 @@ pub fn simulate_peaks(
                 format!("Could not join peak simulation thread: '{err:?}'. Exiting...")
             })??;
         }
+
+        debug!("All simulation threads joined")
     }
 
     let results = Arc::into_inner(results).expect("no more references to write context");

@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
-use log::debug;
+use log::{debug, info};
 
 use crate::background::Background;
 use crate::noise::Noise;
@@ -150,6 +150,7 @@ pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Result<Vec<
 where
     T: Discretizer + Send + Sync + 'static,
 {
+    debug!("Preparing CUDA-based rendering");
     use self::ffi::BkgSOA;
 
     let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();

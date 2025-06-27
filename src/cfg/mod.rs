@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
-use log::info;
+use log::{debug, info};
 use parameter::Parameter;
 use probability::Probability;
 
@@ -57,15 +57,11 @@ impl SimulationKind {
     ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = match self {
             SimulationKind::AngleDispersive(angle_dispersive) => {
-                let min_line = &angle_dispersive
-                    .emission_lines
-                    .iter()
-                    .min_by(|a, b| {
-                        a.wavelength_ams
-                            .partial_cmp(&b.wavelength_ams)
-                            .expect("no NaNs in wavelengths")
-                    })
-                    .expect("at least one emission line");
+                let min_line = &angle_dispersive.emission_lines.iter().min_by(|a, b| {
+                    a.wavelength_ams
+                        .partial_cmp(&b.wavelength_ams)
+                        .expect("no NaNs in wavelengths")
+                }).ok_or("At least one emission line is required for simulation")?;
 
                 let (two_theta_range, wavelength_ams) =
                     (angle_dispersive.two_theta_range, min_line.wavelength_ams);
@@ -73,7 +69,11 @@ impl SimulationKind {
                 let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
                 let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-                info!("Simulating {two_theta_range:?} {wavelength_ams:.2}");
+                info!(
+                    "Simulating angle dispersive XRD {wavelength_ams:.2} in 2-theta range [{t0}, {t1}] degrees",
+                    t0 = two_theta_range.0,
+                    t1 = two_theta_range.1
+                );
                 (min_r, max_r)
             }
             SimulationKind::EnergyDispersive(EnergyDispersive {
@@ -87,6 +87,12 @@ impl SimulationKind {
 
                 let theta_rad = theta_deg.to_radians();
 
+                info!(
+                    "Simulating energy dispersive XRD with theta {theta_deg:.2} in energy range [{e0}, {e1}] keV",
+                    e0 = energy_range_kev.0,
+                    e1 = energy_range_kev.1
+                );
+
                 let min_r = theta_rad.sin() / lambda_1 * 2.0;
                 let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
@@ -94,6 +100,7 @@ impl SimulationKind {
             }
         };
 
+        debug!("d-spacing range: [{},{}]", min_r, max_r);
         crate::structure::simulate_peaks(
             (min_r, max_r),
             sample_parameters,
