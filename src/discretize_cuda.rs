@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
-use log::{debug, error};
+use log::debug;
 
 use crate::background::Background;
 use crate::noise::Noise;

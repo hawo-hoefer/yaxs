@@ -1,4 +1,3 @@
-use log::error;
 use rand::distr::uniform::SampleUniform;
 use rand::distr::Uniform;
 use rand::Rng;

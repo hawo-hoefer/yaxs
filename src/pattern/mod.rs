@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cfg_if::cfg_if;
-use log::{error, warn};
+use log::warn;
 use ndarray::Array2;
 use rand::Rng;
 
@@ -204,7 +204,6 @@ pub trait Discretizer {
         }
 
         if self.normalize() {
-            // TODO: check for NaNs and normalization
             let f = *intensities.first().unwrap();
             let vmin = intensities.iter().fold(f, |a, b| f32::min(a, *b));
             let vmax = intensities.iter().fold(f, |a, b| f32::max(a, *b));

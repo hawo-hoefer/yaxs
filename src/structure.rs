@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use log::{debug, error, info};
+use log::{debug, info};
 use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::cell::UnsafeCell;
