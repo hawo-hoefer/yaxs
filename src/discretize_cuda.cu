@@ -564,9 +564,11 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
     }
   }
 
+  debugf("Synchronizing CUDA device");
   ret = cudaDeviceSynchronize();
   log_cuda_err(ret, "synchronizing device after rendering");
 
+  infof("Copying patterns from GPU to CPU");
   ret =
       cudaMemcpy(intensities, intensities_d,
                  n_patterns * pat_len * sizeof(float), cudaMemcpyDeviceToHost);
