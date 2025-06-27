@@ -427,7 +427,7 @@ where
         );
         if !ret {
             return Err(
-                "An error has happened in the cuda backend. See the above log for details."
+                "An error has happened in the cuda backend. See the above log for details. Out of memory issues may be mitigated by using a smaller chunk size (or any, if you aren't)"
                     .to_string(),
             );
         }

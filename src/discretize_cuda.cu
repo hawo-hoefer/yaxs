@@ -319,6 +319,10 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
 
   cudaFree(noise_data_d);
   cudaFree(rng_state_d);
+
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after noise");
+
   return true;
 }
 
@@ -401,6 +405,9 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
     break;
   }
   }
+
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after background");
   return true;
 }
 
@@ -500,23 +507,38 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   // clang-format off
   cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
   log_cuda_err(ret, "allocating two_thetas buffer");
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after allocating two_thetas");
+
   ret = cudaMalloc(&intensities_d, n_patterns * pat_len * sizeof(float));
   log_cuda_err(ret, "allocating intensities buffer");
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after allocating intensities");
+
   ret = cudaMalloc(&patterns_d, n_patterns * sizeof(CUDAPattern));
   log_cuda_err(ret, "allocating pattern buffer");
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after allocating patterns");
 
   static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
-  cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
+  ret = cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
+  log_cuda_err(ret, "allocating peak info buffer");
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after allocating peak info");
 
+  if (!patterns_d) {
+    errf("", 0, "allocation failed", "device pointer to peak info is null");
+    return false;
+  }
   debugf("Copying data to GPU");
   ret = cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peaks_soa to device");
+  log_cuda_err(ret, "copying peak intensities to device");
   ret = cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peaks_soa to device");
+  log_cuda_err(ret, "copying peak positions to device");
   ret = cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peaks_soa to device");
+  log_cuda_err(ret, "copying peak fwhms to device");
   ret = cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peaks_soa to device");
+  log_cuda_err(ret, "copying peak etas to device");
   PeakSOA peak_soa_d = (PeakSOA){
     .intensity = &peaks_d[0 * peaks_soa.n_peaks_tot],
     .pos = &peaks_d[1 * peaks_soa.n_peaks_tot],
@@ -548,6 +570,9 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   ret = cudaPeekAtLastError();
   log_cuda_err(ret, "launching discretization kernel");
 
+  ret = cudaDeviceSynchronize();
+  log_cuda_err(ret, "synchronizing device after peak rendering");
+
   if (!render_noise(intensities_d, noise, rng_state, pat_len, n_patterns)) {
     return false;
   }
@@ -562,11 +587,10 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
     if (!normalize_patterns(intensities_d, n_patterns, pat_len)) {
       return false;
     }
-  }
 
-  debugf("Synchronizing CUDA device");
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after rendering");
+    ret = cudaDeviceSynchronize();
+    log_cuda_err(ret, "synchronizing device after normalization");
+  }
 
   infof("Copying patterns from GPU to CPU");
   ret =
