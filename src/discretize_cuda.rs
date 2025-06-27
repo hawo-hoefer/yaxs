@@ -12,7 +12,7 @@ use crate::uninit_vec;
 use self::ffi::Uniform;
 
 mod ffi {
-    use std::ffi::{c_char, c_int, CStr};
+    use std::ffi::{c_char, c_int};
 
     #[link(name = "discretize_cuda")]
     extern "C" {
