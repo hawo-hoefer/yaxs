@@ -332,6 +332,7 @@ where
     }
     assert!(chunk_size * n_threads >= jobs.len());
 
+    // TODO: find some way to prune small peaks.
     let mut handles = Vec::new();
     for i in 0..n_threads {
         let start = chunk_size * i;

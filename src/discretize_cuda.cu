@@ -503,7 +503,18 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   CUDAPattern *patterns_d;
   bool return_value = true;
 
-  debugf("Allocating CUDA memory");
+  char alloc_calc[256];
+  snprintf(
+      alloc_calc, sizeof(alloc_calc),
+      "Allocating device memory for rendering of %ld peaks in %ld patterns: "
+      "%ld MiB",
+      peaks_soa.n_peaks_tot, n_patterns,
+      (pat_len * sizeof(float) + n_patterns * pat_len * sizeof(float) +
+       n_patterns * sizeof(CUDAPattern) +
+       4 * sizeof(float) * peaks_soa.n_peaks_tot) /
+          1000000);
+
+  debugf(alloc_calc);
   // clang-format off
   cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
   log_cuda_err(ret, "allocating two_thetas buffer");
