@@ -108,8 +108,13 @@ pub fn write_to_npz(
     intensities: &Array2<f32>,
     meta: &[PatternMeta],
     compress: bool,
+    progress: usize,
+    total: usize,
 ) -> Result<(Vec<String>, Vec<String>), String> {
-    info!("Writing {path}", path = path.as_ref().display());
+    info!(
+        "Writing ({progress}/{total}) path: {path}",
+        path = path.as_ref().display()
+    );
     let w = BufWriter::new(std::fs::File::create_new(&path).map_err(|err| {
         format!(
             "Could not create file '{p}' for writing: {e}",
@@ -221,10 +226,20 @@ pub fn render_write_chunked<T>(
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    let abstol = gen.abstol();
+    let l = gen.remaining();
+    let chunk_size = io_opts.chunk_size.unwrap_or(l);
+    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
+    info!("Rendering {n_chunks} of {chunk_size} patterns");
+    let pad_width = if n_chunks > 1 {
+        1 + (n_chunks - 1).ilog10()
+    } else {
+        1
+    };
+
     let (tx, rx) = std::sync::mpsc::channel::<Arc<WriteJob<PathBuf>>>();
     let compress = io_opts.compress;
     let io_thread_handle = std::thread::spawn(move || {
+        let mut chunks_done = 0;
         let mut names = None;
         loop {
             match rx.recv() {
@@ -234,7 +249,14 @@ where
                         ref intensities,
                         ref path,
                         ref meta,
-                    } => match crate::io::write_to_npz(path, intensities, meta, compress) {
+                    } => match crate::io::write_to_npz(
+                        path,
+                        intensities,
+                        meta,
+                        compress,
+                        chunks_done + 1,
+                        n_chunks,
+                    ) {
                         Err(err) => {
                             error!(
                                 "Could not write data to file '{path}': {err}. IO thread quitting.",
@@ -243,7 +265,10 @@ where
                             error!("IO thread quitting...");
                             return names;
                         }
-                        Ok(n) => names = Some(n),
+                        Ok(n) => {
+                            chunks_done += 1;
+                            names = Some(n)
+                        }
                     },
                 },
                 Err(err) => {
@@ -255,14 +280,6 @@ where
     });
 
     let mut i = 0;
-    let l = gen.remaining();
-    let chunk_size = io_opts.chunk_size.unwrap_or(l);
-    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
-    let pad_width = if n_chunks > 1 {
-        1 + (n_chunks - 1).ilog10()
-    } else {
-        1
-    };
 
     let mut datafiles = Vec::new();
     while i < l {
@@ -292,7 +309,7 @@ where
             gen.xs(),
             chunk_path,
             tx.clone(),
-            abstol,
+            gen.abstol(),
             gen.n_phases(),
         )
         .map_err(|err| format!("Could not queue write job: {err}."))?;

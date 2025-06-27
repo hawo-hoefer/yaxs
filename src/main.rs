@@ -289,7 +289,7 @@ where
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");
         let (data_slot_names, metadata_slot_names) =
-            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress)
+            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress, 1, 1)
                 .unwrap_or_else(|err| {
                     error!("Error writing data to disk: {err}");
                     std::process::exit(1)
