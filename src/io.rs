@@ -229,7 +229,7 @@ where
     let l = gen.remaining();
     let chunk_size = io_opts.chunk_size.unwrap_or(l);
     let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
-    info!("Rendering {n_chunks} of {chunk_size} patterns");
+    info!("Rendering {n_chunks} chunks of {chunk_size} patterns each");
     let pad_width = if n_chunks > 1 {
         1 + (n_chunks - 1).ilog10()
     } else {
