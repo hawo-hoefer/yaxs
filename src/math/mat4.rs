@@ -37,6 +37,20 @@ impl<T> Mat4<T> {
         }
     }
 
+    pub fn from_slice(vals: &[T]) -> Self
+    where
+        T: Copy,
+    {
+        assert_eq!(vals.len(), 16);
+        let mut v = [vals[0]; 16];
+
+        for (v0, v) in v.iter_mut().zip(vals) {
+            *v0 = *v;
+        }
+
+        Self { v }
+    }
+
     #[rustfmt::skip]
     pub fn identity() -> Mat4<T>
     where

@@ -214,7 +214,7 @@ fn main() {
             structures.into(),
             pref_o.into(),
             strain_cfgs.into(),
-            structure_paths.into(),
+            structure_paths.clone().into(),
             cfg.sample_parameters.clone(),
             &mut rng,
         )
@@ -288,12 +288,18 @@ where
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");
-        let (data_slot_names, metadata_slot_names) =
-            write_to_npz(data_path, &intensities, &pattern_metadata, args.io.compress, 1, 1)
-                .unwrap_or_else(|err| {
-                    error!("Error writing data to disk: {err}");
-                    std::process::exit(1)
-                });
+        let (data_slot_names, metadata_slot_names) = write_to_npz(
+            data_path,
+            &intensities,
+            &pattern_metadata,
+            args.io.compress,
+            1,
+            1,
+        )
+        .unwrap_or_else(|err| {
+            error!("Error writing data to disk: {err}");
+            std::process::exit(1)
+        });
         Ok(OutputNames {
             chunk_names: None,
             data_slot_names,

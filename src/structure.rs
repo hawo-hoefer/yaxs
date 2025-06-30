@@ -294,54 +294,18 @@ impl Structure {
         max_r: f64,
         po: Option<&MarchDollase>,
     ) -> Vec<Peak> {
-        let recip_lat = self.lat.recip_lattice_crystallographic();
-        let recp_len = recip_lat.recip_lattice().abc();
-        const RADIUS_TOL: f64 = 1e-8;
-        let r_cells = max_r + 1e-8;
-        let r_max =
-            (recp_len * (r_cells + 0.15) / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
-
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        let global_min = -max_r - RADIUS_TOL;
-        let global_max = max_r + RADIUS_TOL;
-
-        let n_min = -r_max;
-        let n_max = r_max;
-        for (hkl, g_hkl) in (n_min[0]..n_max[0])
-            .cartesian_product(n_min[1]..n_max[1])
-            .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(|((a, b), c)| -> Option<(Vec3<f64>, f64)> {
-                let hkl = Vec3::new(a as f64, b as f64, c as f64);
-                let pos = recip_lat.mat * hkl;
-                let g_hkl = pos.magnitude();
-
-                // currently, we produce XRD patterns like pymatgen
-                // Neighbor mapping from pymatgen.core.lattice.get_points_in_spheres
-                // does not seem to have any effect if center_coords is the 0-vector
-                // As far as I can tell, it only applies when center_coords are something
-                // other than the 0-vector so we will ignore it for now.
-                // i tested this using a modification of their code and random cifs from
-                // the COD-database
-                if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
-                    && pos
-                        .into_iter()
-                        .map(|&x| (x > global_min) && (x < global_max))
-                        .all(|x| x)
-                {
-                    Some((hkl, g_hkl))
-                } else {
-                    None
-                }
-            })
-        {
-            if g_hkl == 0.0 {
-                continue;
-            }
+        for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let s = g_hkl / 2.0;
             let s2 = s.powi(2);
 
             let mut f_hkl = Complex::new(0.0, 0.0);
+            // TODO: Debye-Waller Correction
+            // (we ignore it for now, in the test data we don't have DW-factors)
+            // dw_correction = np.exp(-dw_factors * s2)
+            let dw_correction = 1.0;
+
             for site in &self.sites {
                 // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
                 let g_dot_r: f64 = site.coords.dot(&hkl);
@@ -350,28 +314,19 @@ impl Structure {
                     // coeff = ATOMIC_SCATTERING_PARAMS[el.symbol]
                     // fs = el.Z - 41.78214 * s2 * sum(
                     //     [d[0] * exp(-d[1] * s2) for d in coeff])
-                    let z = species.el.z() as f64;
-                    // TODO: alternate (possibly more correct scattering parameters)
-                    use crate::element::atomic_scattering_params;
-                    let coef = atomic_scattering_params(species.el).unwrap();
-                    let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
-                    let fs = z - 41.78213 * s2 * sum;
-
-                    // TODO: Debye-Waller Correction
-                    // (we ignore it for now, in the test data we don't have DW-factors)
-                    // dw_correction = np.exp(-dw_factors * s2)
-                    let dw_correction = 1.0;
+                    let fs = species.el.scattering_factor(s2);
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    let f_part = fs
-                        * site.occu
-                        * Complex::new(0.0, -2.0 * std::f64::consts::PI * g_dot_r).exp()
-                        * dw_correction;
+                    let f_part =
+                        fs * site.occu * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
                     f_hkl += f_part;
                 }
             }
+            f_hkl *= dw_correction;
+
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
+
             if let Some(po) = po {
                 let w = po.weight(&hkl, &self.lat);
                 i_hkl *= w;
@@ -458,6 +413,54 @@ impl Structure {
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
         self.get_d_spacings_intensities(min_r, max_r, po)
+    }
+}
+
+impl<'a> Lattice {
+    pub fn iter_hkls(
+        &'a self,
+        min_r: f64,
+        max_r: f64,
+    ) -> impl Iterator<Item = (Vec3<f64>, f64)> + use<'a> {
+        const RADIUS_TOL: f64 = 1e-8;
+        let recip_lat = self.recip_lattice_crystallographic();
+        let recp_len = recip_lat.recip_lattice().abc();
+
+        let r_cells = max_r + 1e-8;
+        let r_max =
+            (recp_len * (r_cells + 0.15) / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
+        let global_min = -max_r - RADIUS_TOL;
+        let global_max = max_r + RADIUS_TOL;
+
+        let n_min = -r_max;
+        let n_max = r_max;
+        (n_min[0]..n_max[0])
+            .cartesian_product(n_min[1]..n_max[1])
+            .cartesian_product(n_min[2]..n_max[2])
+            .filter_map(move |((a, b), c)| -> Option<(Vec3<f64>, f64)> {
+                let hkl = Vec3::new(a as f64, b as f64, c as f64);
+                let pos = recip_lat.mat * hkl;
+                let g_hkl = pos.magnitude();
+
+                // currently, we produce XRD patterns like pymatgen
+                // Neighbor mapping from pymatgen.core.lattice.get_points_in_spheres
+                // does not seem to have any effect if center_coords is the 0-vector
+                // As far as I can tell, it only applies when center_coords are something
+                // other than the 0-vector so we will ignore it for now.
+                // i tested this using a modification of their code and random cifs from
+                // the COD-database
+                if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
+                    && g_hkl > 0.0
+                    && pos
+                        .into_iter()
+                        .map(|&x| (x > global_min) && (x < global_max))
+                        .all(|x| x)
+                {
+                    Some((hkl, g_hkl))
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -708,4 +711,60 @@ pub fn simulate_peaks(
     let results = Arc::into_inner(results).expect("no more references to write context");
     let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
     Ok(results.make_to_discretize(ctx.structs, sample_parameters))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    #[rustfmt::skip]
+    fn iter_hkls() {
+        let mat = Mat3::new(
+            8.08528000e+00, 0.00000000e+00, 4.95080614e-16,
+            1.30021219e-15, 8.08528000e+00, 4.95080614e-16,
+            0.00000000e+00, 0.00000000e+00, 8.08528000e+00,
+        );
+
+        let lat = Lattice { mat }.recip_lattice_crystallographic();
+
+        let hkls = lat.iter_hkls(0.0, 15.0).count();
+        assert_eq!(hkls, 26);
+
+        let mut iter = lat.iter_hkls(0.0, 15.0)
+            .sorted_by_key(|&(hkl, g_hkl)| (
+                NotNan::new(g_hkl).unwrap(),
+                NotNan::new(hkl.x).unwrap(),
+                NotNan::new(hkl.y).unwrap(),
+                NotNan::new(hkl.z).unwrap(),
+            ));
+
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  0.,  0.), 8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new( 0., -1.,  0.),  8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new( 0.,  0., -1.),  8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new(0., 0., 1.),  8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new(0., 1., 0.),  8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new(1., 0., 0.),  8.08528)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  1.,  0.),  11.434312631583936)));
+        assert_eq!(iter.next(), Some((Vec3::new( 1., -1.,  0.),  11.434312631583936)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1., -1.,  0.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  0., -1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  0.,  1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new( 0., -1., -1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new( 0., -1.,  1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new( 0.,  1., -1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(0., 1., 1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new( 1.,  0., -1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(1., 0., 1.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(1., 1., 0.),  11.434312631583937)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  1., -1.),  14.00411575342049)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1.,  1.,  1.),  14.00411575342049)));
+        assert_eq!(iter.next(), Some((Vec3::new( 1., -1., -1.),  14.00411575342049)));
+        assert_eq!(iter.next(), Some((Vec3::new( 1., -1.,  1.),  14.00411575342049)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1., -1., -1.),  14.004115753420491)));
+        assert_eq!(iter.next(), Some((Vec3::new(-1., -1.,  1.),  14.004115753420491)));
+        assert_eq!(iter.next(), Some((Vec3::new( 1.,  1., -1.),  14.004115753420491)));
+        assert_eq!(iter.next(), Some((Vec3::new(1., 1., 1.),  14.004115753420491)));
+        assert_eq!(iter.next(), None);
+    }
 }

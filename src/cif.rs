@@ -11,10 +11,9 @@ use crate::symop::SymOp;
 // TODO: make this case-insensitive
 const DATA_HEADER_START: &str = "data_";
 const LOOP_HEADER_START: &str = "loop_";
-const ANGLE_KEYS: [&str; 3] =
-    ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
+const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
-const SITE_DIST_TOL: f64 = 1e-8;
+const SITE_DIST_TOL: f64 = 1e-4;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
@@ -166,23 +165,25 @@ impl CIFContents {
             sites
                 .iter()
                 .map(|ps| {
-                    let dist = site.coords - ps.coords;
-                    dist.map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
+                    let delta = site.coords - ps.coords;
+                    delta
+                        .map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
                         .into_iter()
                         .all(|x| *x)
                 })
                 .any(|x| x)
         }
 
+
         // we parsed the symops, but still need to remove duplicate sites
         let mut sites = Vec::new();
         for base_site in (0..n).map(site_at_index) {
             let base_site = base_site?;
 
+            let base_site = base_site.normalized();
             if site_exists_periodic(&base_site, &sites) {
                 continue;
             }
-            sites.push(base_site.normalized());
 
             for op in symops.iter() {
                 let s = Site {

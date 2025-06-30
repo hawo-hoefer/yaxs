@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use ordered_float::Float;
@@ -29,6 +30,15 @@ impl<'a, T> Iterator for VecIter<'a, T> {
     }
 }
 
+impl<T> Display for Vec3<T>
+where
+    T: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}, {}, {}]", self.x, self.y, self.z)
+    }
+}
+
 impl<'a, T> IntoIterator for &'a Vec3<T> {
     type IntoIter = VecIter<'a, T>;
 
@@ -44,7 +54,6 @@ impl<T> Vec3<T> {
         Self { x, y, z }
     }
 
-    
     /// apply a function to the elements of a vector
     ///
     /// * `p`: function to apply

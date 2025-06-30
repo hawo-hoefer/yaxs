@@ -23,6 +23,14 @@ impl Element {
     pub fn z(&self) -> i32 {
         *self as i32 + 1
     }
+
+    pub fn scattering_factor(&self, s2: f64) -> f64 {
+        // TODO: alternate (possibly more correct scattering parameters)
+        let coef = atomic_scattering_params(*self).unwrap();
+        let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
+        let fs = self.z() as f64 - 41.78213 * s2 * sum;
+        fs
+    }
 }
 
 impl TryFrom<&str> for Element {
@@ -264,4 +272,16 @@ pub const fn atomic_scattering_params(el: Element) -> Option<[[f64; 2]; 4]> {
         _ => None
     };
     ret
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn scattering_factor_al() {
+        let s2 = 1.0;
+        assert!((Element::Al.scattering_factor(s2) - 2.544) < 0.001)
+    }
+
 }

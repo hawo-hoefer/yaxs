@@ -26,3 +26,21 @@ impl Site {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn normalization() {
+        let s = Site {
+            coords: Vec3::new(1.52, 0.2, -1.2),
+            species: Species::from_str("Fe+").unwrap(),
+            occu: 1.0,
+        };
+        let s2 = s.normalized();
+        assert_eq!(s2.coords, Vec3::new(0.52, 0.2, 0.8))
+    }
+}
