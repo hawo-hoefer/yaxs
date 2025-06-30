@@ -333,9 +333,11 @@ where
     }
     assert!(chunk_size * n_threads >= n_jobs);
     if chunk_size < 10 {
+        info!("Small amount of jobs ({n_jobs}). Falling back to single threaded CUDA input preparation.");
         n_threads = 1;
+        chunk_size = n_jobs;
     }
-    chunk_size = n_jobs;
+    info!("Generating CUDA inputs using {n_threads} threads");
 
     // TODO: find some way to prune small peaks.
     let mut handles = Vec::new();
