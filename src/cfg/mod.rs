@@ -57,11 +57,15 @@ impl SimulationKind {
     ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = match self {
             SimulationKind::AngleDispersive(angle_dispersive) => {
-                let min_line = &angle_dispersive.emission_lines.iter().min_by(|a, b| {
-                    a.wavelength_ams
-                        .partial_cmp(&b.wavelength_ams)
-                        .expect("no NaNs in wavelengths")
-                }).ok_or("At least one emission line is required for simulation")?;
+                let min_line = &angle_dispersive
+                    .emission_lines
+                    .iter()
+                    .min_by(|a, b| {
+                        a.wavelength_ams
+                            .partial_cmp(&b.wavelength_ams)
+                            .expect("no NaNs in wavelengths")
+                    })
+                    .ok_or("At least one emission line is required for simulation")?;
 
                 let (two_theta_range, wavelength_ams) =
                     (angle_dispersive.two_theta_range, min_line.wavelength_ams);

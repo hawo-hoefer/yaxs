@@ -624,9 +624,14 @@ pub fn simulate_peaks(
 
     let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
 
-    let n_threads: usize = std::thread::available_parallelism()
+    let mut n_threads: usize = std::thread::available_parallelism()
         .map(|x| x.into())
         .unwrap_or(1);
+
+    if n_structs * n_permutations < 50 {
+        info!("Small number of simulations. Using single-threaded mode.");
+        n_threads = 1;
+    }
 
     if n_threads == 1 {
         info!("Running single-threaded peak simulation");

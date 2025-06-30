@@ -321,22 +321,27 @@ where
 
     let patterns = Arc::new(patterns);
     let jobs = Arc::new(jobs);
+    let n_jobs = jobs.len();
 
-    let n_threads: usize = std::thread::available_parallelism()
+    let mut n_threads: usize = std::thread::available_parallelism()
         .map(|x| x.into())
         .unwrap_or(1);
 
-    let mut chunk_size = jobs.len() / n_threads;
-    if chunk_size % jobs.len() != 0 {
+    let mut chunk_size = n_jobs / n_threads;
+    if chunk_size % n_jobs != 0 || chunk_size == 0 {
         chunk_size += 1;
     }
-    assert!(chunk_size * n_threads >= jobs.len());
+    assert!(chunk_size * n_threads >= n_jobs);
+    if chunk_size < 10 {
+        n_threads = 1;
+    }
+    chunk_size = n_jobs;
 
     // TODO: find some way to prune small peaks.
     let mut handles = Vec::new();
     for i in 0..n_threads {
         let start = chunk_size * i;
-        let end = (chunk_size * (i + 1)).min(jobs.len());
+        let end = (chunk_size * (i + 1)).min(n_jobs);
         let patterns = Arc::clone(&patterns);
         let ctx = Arc::clone(&ctx);
         let jobs = Arc::clone(&jobs);
@@ -353,6 +358,10 @@ where
             debug!("Peak info generation thread {i} exiting");
         });
         handles.push(handle);
+
+        if end >= n_jobs {
+            break
+        }
     }
 
     for (i, handle) in handles.drain(..).enumerate() {
