@@ -188,6 +188,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
+            ImpurityPresent(Array1::<bool>::from_elem(n_patterns, false)),
         ]
     }
 
