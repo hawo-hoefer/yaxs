@@ -298,6 +298,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
                 }
             }
+            ImpurityPresent(dst) => {
+                dst[pat_id] = self.common.impurity_peaks.len() > 0;
+            }
             CagliotiParams(_) => unreachable!("No Caglioti Parameters in EDXRD"),
             MarchParameter(dst) => {
                 for i in 0..n_phases {
