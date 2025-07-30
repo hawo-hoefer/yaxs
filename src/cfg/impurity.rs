@@ -6,6 +6,15 @@ use crate::pattern::{ImpurityPeak, Peak};
 use super::{Parameter, Probability};
 
 #[derive(Serialize, Debug, Clone)]
+/// Specification for a phenomenological impurity peak
+///
+/// * `d_hkl_ams`: d_hkl for the peak
+/// * `intensity`: peak intensity
+/// * `eta`: peak eta for peak shape
+/// * `mean_ds_nm`: mean domain size for peak shape
+/// * `probability`: probability for a single peak to be in output. For each peak, presence will be
+/// evaluated separately
+/// * `n_peaks`: number of peaks to generate
 pub struct ImpuritySpec {
     d_hkl_ams: Parameter<f64>,
     intensity: Parameter<f64>,
