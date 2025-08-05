@@ -171,20 +171,25 @@ fn main() {
         mean_ds_nm: _,
     } in cfg.sample_parameters.structures.iter()
     {
+        let mut struct_path = args
+            .cfg
+            .parent()
+            .expect("cfg is file, must have parent dir")
+            .to_owned();
+        struct_path.push(struct_path.clone());
         let mut reader = BufReader::new(
-            std::fs::File::open(path)
+            std::fs::File::open(struct_path)
                 .map_err(|err| {
                     error!("Could not load cif at '{path}': {err}");
                     std::process::exit(1);
                 })
                 .expect("we exit if error"),
         );
+
         let mut cif = String::new();
         let _ = reader.read_to_string(&mut cif).unwrap();
         let mut p = CifParser::new(&cif);
 
-        vf_constraints.push(*volume_fraction);
-        structure_paths.push(path.clone());
         structures.push(
             Structure::try_from(&p.parse().unwrap_or_else(|err| {
                 error!("Invalid CIF Syntax for '{path}': {err}");
@@ -195,6 +200,8 @@ fn main() {
                 std::process::exit(1);
             }),
         );
+
+        vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
         pref_o.push(po.clone());
     }
