@@ -163,11 +163,9 @@ fn main() {
             let (r_min, r_max) = cfg.kind.get_r_range();
             (1.0 / r_max, 1.0 / r_min)
         };
-        println!("{:.2}, {:.2}", lb, ub);
         for spec in imp.iter_mut() {
             spec.validate_d_hkl_or_adjust(lb, ub);
         }
-        // spec.d_hkl_ams.lower_bound()
     }
 
     let mut structures = Vec::new();
