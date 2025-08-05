@@ -75,12 +75,6 @@ impl SimulationKind {
                     },
                 );
 
-                info!(
-                    "Simulating angle dispersive XRD 2-theta range [{t0}, {t1}] degrees",
-                    t0 = two_theta_range.0,
-                    t1 = two_theta_range.1
-                );
-
                 (min_r, max_r)
             }
             SimulationKind::EnergyDispersive(EnergyDispersive {
@@ -92,12 +86,6 @@ impl SimulationKind {
                 let lambda_1 = e_kev_to_lambda_ams(energy_range_kev.0);
 
                 let theta_rad = theta_deg.to_radians();
-
-                info!(
-                    "Simulating energy dispersive XRD with theta {theta_deg:.2} in energy range [{e0}, {e1}] keV",
-                    e0 = energy_range_kev.0,
-                    e1 = energy_range_kev.1
-                );
 
                 let min_r = theta_rad.sin() / lambda_1 * 2.0;
                 let max_r = theta_rad.sin() / lambda_0 * 2.0;
@@ -117,6 +105,39 @@ impl SimulationKind {
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = self.get_r_range();
+        match self {
+            SimulationKind::AngleDispersive(AngleDispersive {
+                two_theta_range,
+                emission_lines,
+                ..
+            }) => {
+                let mut lines = String::new();
+                use std::fmt::Write;
+                for (i, line) in emission_lines.iter().enumerate() {
+                    write!(&mut lines, "{}", line.wavelength_ams).expect("enough memory");
+                    if i != emission_lines.len() - 1 {
+                        write!(&mut lines, ", ").expect("enough memory");
+                    }
+                }
+                info!(
+                    "Simulating angle dispersive XRD with emission lines [{lines}] in 2-theta range [{t0}, {t1}] degrees",
+                    t0 = two_theta_range.0,
+                    t1 = two_theta_range.1
+                );
+            }
+            SimulationKind::EnergyDispersive(EnergyDispersive {
+                energy_range_kev,
+                theta_deg,
+                ..
+            }) => {
+                info!(
+                "Simulating energy dispersive XRD with theta {theta_deg:.2} in energy range [{e0}, {e1}] keV",
+                e0 = energy_range_kev.0,
+                e1 = energy_range_kev.1
+            );
+            }
+        }
+
         debug!("d-spacing range: [{},{}]", min_r, max_r);
         crate::structure::simulate_peaks(
             (min_r, max_r),
