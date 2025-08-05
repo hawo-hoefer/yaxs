@@ -46,45 +46,47 @@ pub enum SimulationKind {
 }
 
 impl SimulationKind {
-    pub fn simulate_peaks(
-        &self,
-        structures: Box<[Structure]>,
-        pref_o: Box<[Option<MarchDollaseCfg>]>,
-        strain_cfgs: Box<[Option<StrainCfg>]>,
-        structure_paths: Box<[String]>,
-        sample_parameters: SampleParameters,
-        rng: &mut impl Rng,
-    ) -> Result<ToDiscretize, String> {
-        let (min_r, max_r) = match self {
-            SimulationKind::AngleDispersive(angle_dispersive) => {
-                let min_line = &angle_dispersive
-                    .emission_lines
-                    .iter()
-                    .min_by(|a, b| {
-                        a.wavelength_ams
-                            .partial_cmp(&b.wavelength_ams)
-                            .expect("no NaNs in wavelengths")
-                    })
-                    .ok_or("At least one emission line is required for simulation")?;
+    pub fn get_r_range(&self) -> (f64, f64) {
+        match self {
+            SimulationKind::AngleDispersive(AngleDispersive {
+                emission_lines,
+                two_theta_range,
+                ..
+            }) => {
+                let get_recip_r = |e: &EmissionLine| -> (f64, f64) {
+                    let wavelength_ams = e.wavelength_ams;
+                    (
+                        (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0,
+                        (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0,
+                    )
+                };
+                let (min_r, max_r) = emission_lines.iter().map(get_recip_r).fold(
+                    (std::f64::MAX, std::f64::MIN),
+                    |(mut min, mut max), (new_min, new_max)| {
+                        if new_min < min {
+                            min = new_min;
+                        }
 
-                let (two_theta_range, wavelength_ams) =
-                    (angle_dispersive.two_theta_range, min_line.wavelength_ams);
+                        if new_max > max {
+                            max = new_max
+                        }
 
-                let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
-                let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
+                        (min, max)
+                    },
+                );
 
                 info!(
-                    "Simulating angle dispersive XRD {wavelength_ams:.2} in 2-theta range [{t0}, {t1}] degrees",
+                    "Simulating angle dispersive XRD 2-theta range [{t0}, {t1}] degrees",
                     t0 = two_theta_range.0,
                     t1 = two_theta_range.1
                 );
+
                 (min_r, max_r)
             }
             SimulationKind::EnergyDispersive(EnergyDispersive {
-                n_steps: _,
                 energy_range_kev,
                 theta_deg,
-                beamline: _,
+                ..
             }) => {
                 let lambda_0 = e_kev_to_lambda_ams(energy_range_kev.1);
                 let lambda_1 = e_kev_to_lambda_ams(energy_range_kev.0);
@@ -102,8 +104,19 @@ impl SimulationKind {
 
                 (min_r, max_r)
             }
-        };
+        }
+    }
 
+    pub fn simulate_peaks(
+        &self,
+        structures: Box<[Structure]>,
+        pref_o: Box<[Option<MarchDollaseCfg>]>,
+        strain_cfgs: Box<[Option<StrainCfg>]>,
+        structure_paths: Box<[String]>,
+        sample_parameters: SampleParameters,
+        rng: &mut impl Rng,
+    ) -> Result<ToDiscretize, String> {
+        let (min_r, max_r) = self.get_r_range();
         debug!("d-spacing range: [{},{}]", min_r, max_r);
         crate::structure::simulate_peaks(
             (min_r, max_r),

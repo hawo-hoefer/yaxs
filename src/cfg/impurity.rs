@@ -1,3 +1,4 @@
+use log::{error, warn};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +42,34 @@ impl ImpuritySpec {
             probability: probability.map(|p| p.into()),
             n_peaks,
         }
+    }
+
+    pub fn validate_d_hkl_or_adjust(&mut self, lb: f64, ub: f64) -> Option<()> {
+        match self.d_hkl_ams {
+            Parameter::Fixed(d_hkl_ams) => {
+                if d_hkl_ams > ub || d_hkl_ams < lb {
+                    error!(
+                        "Impurity position {} outside of visible range [{}, {}]",
+                        d_hkl_ams, lb, ub
+                    );
+                    return None;
+                }
+            }
+            Parameter::Range(ref mut lo, ref mut hi) => {
+                if *lo < lb {
+                    warn!("Invalid impurity definition. Lower d_hkl_ams bound {lo} may put impurity outside of visible area. Adjusting to {lb}...",
+                    );
+                    *lo = lb;
+                }
+
+                if *hi > ub {
+                    warn!("Invalid impurity definition. Upper d_hkl_ams bound {hi} may put impurity outside of visible area. Adjusting to {ub}...",
+                    );
+                    *hi = ub;
+                }
+            }
+        }
+        Some(())
     }
 }
 

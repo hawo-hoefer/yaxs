@@ -111,7 +111,7 @@ fn main() {
         }
     };
 
-    let cfg = match serde_yaml::from_reader::<_, Config>(BufReader::new(f)) {
+    let mut cfg = match serde_yaml::from_reader::<_, Config>(BufReader::new(f)) {
         Ok(cfg) => {
             if cfg.simulation_parameters.n_patterns == 0 {
                 error!("Number n_patterns needs to be larger than 0",);
@@ -157,6 +157,19 @@ fn main() {
     );
     let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
+    if let Some(ref mut imp) = cfg.sample_parameters.impurities {
+        // get upper and lower bound for d_hkl
+        let (lb, ub) = {
+            let (r_min, r_max) = cfg.kind.get_r_range();
+            (1.0 / r_max, 1.0 / r_min)
+        };
+        println!("{:.2}, {:.2}", lb, ub);
+        for spec in imp.iter_mut() {
+            spec.validate_d_hkl_or_adjust(lb, ub);
+        }
+        // spec.d_hkl_ams.lower_bound()
+    }
+
     let mut structures = Vec::new();
     let mut pref_o = Vec::new();
     let mut strain_cfgs = Vec::new();
@@ -176,9 +189,9 @@ fn main() {
             .parent()
             .expect("cfg is file, must have parent dir")
             .to_owned();
-        struct_path.push(struct_path.clone());
+        struct_path.push(path.clone());
         let mut reader = BufReader::new(
-            std::fs::File::open(struct_path)
+            std::fs::File::open(&struct_path)
                 .map_err(|err| {
                     error!("Could not load cif at '{path}': {err}");
                     std::process::exit(1);
@@ -200,6 +213,8 @@ fn main() {
                 std::process::exit(1);
             }),
         );
+
+        structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
 
         vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
