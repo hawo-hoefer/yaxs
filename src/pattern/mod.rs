@@ -61,6 +61,14 @@ pub struct VFGenerator {
 
 impl VFGenerator {
     pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Result<Self, String> {
+        if fractions.len() == 0 {
+            // no structures is ok. in that case, no volume fractions will be generated
+            return Ok(Self {
+                n_free: 0,
+                fraction_sum: 0.0,
+                fractions,
+            });
+        }
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
 
@@ -97,6 +105,14 @@ impl VFGenerator {
         //
         // Then, the first few elements are sorted, and the a difference is taken
         // between adjacent elements to produce the random numbers summing to one.
+
+        if self.fractions.len() == 0 {
+            // handle no structures case explicitly.
+            // theoretically, the code below should 'just work'
+            // but it's much clearer to do it this way.
+            return Vec::new().into();
+        }
+
         let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
         if self.n_free > 0 {
             concentration_buf.push(0.0);
