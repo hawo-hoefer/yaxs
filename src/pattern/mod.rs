@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cfg_if::cfg_if;
-use log::warn;
+use log::{debug, warn};
 use ndarray::Array2;
 use rand::Rng;
 
@@ -310,6 +310,8 @@ impl Peak {
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
     ) -> (f32, f32, f32) {
+        debug!("Render Params for peak at {}, {}", self.d_hkl, self.i_hkl);
+
         // bragg condition
         // lambda = 2 d sin(theta)
         // theta = asin(lambda / 2d)
@@ -345,6 +347,7 @@ impl Peak {
         beamline: &Beamline,
     ) -> (f32, f32, f32)
 where {
+        debug!("Render Params for peak at {}, {}", self.d_hkl, self.i_hkl);
         // here, we apply intensity corrections to each peak, and
         // convert positions from d_hkl in Amstrong to energy in keV
         let hc = H_EV_S * C_M_S * 1e7;
