@@ -103,7 +103,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                                 *v,
                                 *w,
                                 ip.mean_ds_nm,
-                                1.0,
+                                emission_line.weight,
                                 0.0,
                                 self.goniometer_radius_mm,
                             );
