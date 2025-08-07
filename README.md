@@ -71,6 +71,8 @@ Further information on the input file structure can be found [here](./inputfile.
 - [x] parallel gpu job generation
 - [x] CI
     - [ ] use caching in CI to improve speed
+- [ ] add mode for only outputting peak positions
+- [ ] mode for adapting existing config to given data, simulation based inference mode
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] EDXRD: deal with filters
 - [ ] peak intensities
