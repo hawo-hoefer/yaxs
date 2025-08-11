@@ -339,6 +339,7 @@ where
     let meta = serde_json::to_string(&SimulationMetadata {
         timestamp_started,
         timestamp_finished,
+        yaxs_version: env!("YAXS_VERSION").to_string(),
         chunked: args.io.chunk_size.is_some(),
         datafiles: output_names.chunk_names,
         input_names: &output_names.data_slot_names,

@@ -77,6 +77,7 @@ pub struct Extra {
 pub struct SimulationMetadata<'a> {
     pub timestamp_started: chrono::DateTime<Utc>,
     pub timestamp_finished: chrono::DateTime<Utc>,
+    pub yaxs_version: String,
     pub datafiles: Option<Vec<String>>,
     pub chunked: bool,
     pub input_names: &'a [String],
