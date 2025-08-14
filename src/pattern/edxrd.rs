@@ -212,40 +212,39 @@ impl Discretizer for DiscretizeEnergyDispersive {
         } = &self.meta;
 
         itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
-            .map(
-                move |(phase_idx, vf, phase_mean_ds_nm)| {
-                    let flat_idx = self.common.idx(phase_idx);
-                    self.common.sim_res.all_simulated_peaks[flat_idx]
-                        .iter()
-                        .map(move |peak: &Peak| {
-                            let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
-                                *theta_rad,
-                                f_lorentz,
-                                *phase_mean_ds_nm,
-                                *vf,
-                                &self.beamline,
-                            );
-                            PeakRenderParams {
-                                pos: e_hkl_kev,
-                                intensity: peak_weight,
-                                fwhm,
-                                eta: *eta as f32,
-                            }
-                        })
-                },
-            )
+            .map(move |(phase_idx, vf, phase_mean_ds_nm)| {
+                let flat_idx = self.common.idx(phase_idx);
+                self.common.sim_res.all_simulated_peaks[flat_idx]
+                    .iter()
+                    .map(move |peak: &Peak| {
+                        let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+                            *theta_rad,
+                            f_lorentz,
+                            *phase_mean_ds_nm,
+                            *vf,
+                            &self.beamline,
+                        );
+                        PeakRenderParams {
+                            pos: e_hkl_kev,
+                            intensity: peak_weight,
+                            fwhm,
+                            eta: *eta as f32,
+                        }
+                    })
+            })
             .flatten()
             .chain(self.common.impurity_peaks.iter().map(move |ip| {
-                let (e_hkl_kev, peak_weight, fwhm) = ip.peak.get_edxrd_render_params(
+                let (e_hkl_kev, _, fwhm) = ip.peak.get_edxrd_render_params(
                     *theta_rad,
                     f_lorentz,
                     ip.mean_ds_nm,
                     1.0,
                     &self.beamline,
                 );
+                let peak_weight = ip.peak.i_hkl;
                 PeakRenderParams {
                     pos: e_hkl_kev,
-                    intensity: peak_weight,
+                    intensity: peak_weight as f32,
                     fwhm,
                     eta: ip.eta as f32,
                 }
@@ -298,8 +297,13 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
                 }
             }
-            ImpurityPresent(dst) => {
-                dst[pat_id] = self.common.impurity_peaks.len() > 0;
+            ImpuritySum(dst) => {
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .sum();
             }
             CagliotiParams(_) => unreachable!("No Caglioti Parameters in EDXRD"),
             MarchParameter(dst) => {
@@ -321,7 +325,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
-            ImpurityPresent(Array1::<bool>::from_elem(n_patterns, false)),
+            ImpuritySum(Array1::<f32>::zeros(n_patterns)),
         ]
     }
 

@@ -46,7 +46,7 @@ pub enum PatternMeta {
     Etas(Array1<f32>),
     MeanDsNm(Array2<f32>),
     CagliotiParams(Array2<f32>),
-    ImpurityPresent(Array1<bool>),
+    ImpuritySum(Array1<f32>),
     MarchParameter(Array2<f32>), // for now, we're only going to allow one march parameter (and orientation) per phase
 }
 
@@ -57,7 +57,7 @@ impl PatternMeta {
             VolumeFractions(_) => "volume_fractions",
             Strains(_) => "strains",
             Etas(_) => "eta",
-            ImpurityPresent(_) => "impurity_present",
+            ImpuritySum(_) => "impurity_sum",
             MeanDsNm(_) => "mean_ds_nm",
             CagliotiParams(_) => "caglioti_params",
             MarchParameter(_) => "march_param_r",
@@ -134,7 +134,7 @@ pub fn write_to_npz(
             MeanDsNm(array_base) => w.add_array(m.name(), array_base),
             CagliotiParams(array_base) => w.add_array(m.name(), array_base),
             MarchParameter(array_base) => w.add_array(m.name(), array_base),
-            ImpurityPresent(array_base) => w.add_array(m.name(), array_base),
+            ImpuritySum(array_base) => w.add_array(m.name(), array_base),
         }
         .map_err(|err| err.to_string())?;
     }

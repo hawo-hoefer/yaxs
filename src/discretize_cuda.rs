@@ -362,7 +362,7 @@ where
         handles.push(handle);
 
         if end >= n_jobs {
-            break
+            break;
         }
     }
 

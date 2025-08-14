@@ -6,6 +6,7 @@ use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::noise::Noise;
 use itertools::Itertools;
+use log::debug;
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,20 +97,20 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .cartesian_product(&self.emission_lines)
                     .map(move |(ip, emission_line)| {
                         let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                        let (two_theta_hkl_deg, peak_weight, fwhm) =
-                            ip.peak.get_adxrd_render_params(
-                                wavelength_nm,
-                                *u,
-                                *v,
-                                *w,
-                                ip.mean_ds_nm,
-                                emission_line.weight,
-                                0.0,
-                                self.goniometer_radius_mm,
-                            );
+                        let (two_theta_hkl_deg, _, fwhm) = ip.peak.get_adxrd_render_params(
+                            wavelength_nm,
+                            *u,
+                            *v,
+                            *w,
+                            ip.mean_ds_nm,
+                            emission_line.weight,
+                            0.0,
+                            self.goniometer_radius_mm,
+                        );
+                        let peak_weight = ip.peak.i_hkl * emission_line.weight;
                         PeakRenderParams {
                             pos: two_theta_hkl_deg,
-                            intensity: peak_weight,
+                            intensity: peak_weight as f32,
                             fwhm,
                             eta: ip.eta as f32,
                         }
@@ -165,8 +166,13 @@ impl Discretizer for DiscretizeAngleDispersive {
                 dst[(pat_id, 1)] = self.meta.v as f32;
                 dst[(pat_id, 2)] = self.meta.w as f32;
             }
-            ImpurityPresent(dst) => {
-                dst[pat_id] = self.common.impurity_peaks.len() > 0;
+            ImpuritySum(dst) => {
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .sum();
             }
             MarchParameter(dst) => {
                 for i in 0..n_phases {
@@ -188,7 +194,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
-            ImpurityPresent(Array1::<bool>::from_elem(n_patterns, false)),
+            ImpuritySum(Array1::<f32>::zeros(n_patterns)),
         ]
     }
 

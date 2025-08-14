@@ -174,7 +174,6 @@ impl CIFContents {
                 .any(|x| x)
         }
 
-
         // we parsed the symops, but still need to remove duplicate sites
         let mut sites = Vec::new();
         for base_site in (0..n).map(site_at_index) {

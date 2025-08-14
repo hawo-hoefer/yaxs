@@ -283,5 +283,4 @@ mod test {
         let s2 = 1.0;
         assert!((Element::Al.scattering_factor(s2) - 2.544) < 0.001)
     }
-
 }
