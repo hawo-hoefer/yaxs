@@ -144,11 +144,19 @@ impl std::fmt::Display for Lattice {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A phase's crystallographic structure
+///
+/// * `lat`: lattice
+/// * `sites`: sites in the structure
+/// * `sg_no`: space group number
+/// * `sg_class`: space group class
+/// * `density`: density of the phase in g/cm3, if present in the cif
 pub struct Structure {
     pub lat: Lattice,
     pub sites: Vec<Site>,
     pub sg_no: u8, // there are 230 space groups, so u8 should be enough
     pub sg_class: SGClass,
+    pub density: Option<f64>,
 }
 
 impl TryFrom<&CIFContents> for Structure {
@@ -158,6 +166,7 @@ impl TryFrom<&CIFContents> for Structure {
         Ok(Structure {
             sites: value.get_sites()?,
             lat: value.get_lattice(),
+            density: value.get_density()?,
             sg_no,
             sg_class,
         })

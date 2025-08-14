@@ -188,6 +188,7 @@ impl Beamline {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EDXRDMeta {
     pub vol_fractions: Box<[f64]>,
+    pub weight_fractions: Option<Box<[f64]>>,
     pub mean_ds_nm: Box<[f64]>,
     pub eta: f64,
     pub theta_rad: f64,
@@ -209,6 +210,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             mean_ds_nm,
             eta,
             theta_rad,
+            weight_fractions: _,
         } = &self.meta;
 
         itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
@@ -313,20 +315,38 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
+            WeightFractions(dst) => {
+                let Some(ref wfs) = self.meta.weight_fractions else {
+                    panic!("Can only call this if weight fractions were computed before.");
+                };
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = wfs[i] as f32;
+                }
+            }
         }
     }
 
-    fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta> {
+    fn init_meta_data(
+        n_patterns: usize,
+        n_phases: usize,
+        with_weight_fractions: bool,
+    ) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
-        vec![
+        let mut v = vec![
             Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
             Etas(Array1::<f32>::zeros(n_patterns)),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
-        ]
+        ];
+        if with_weight_fractions {
+            v.push(WeightFractions(Array2::<f32>::zeros((
+                n_patterns, n_phases,
+            ))))
+        }
+        v
     }
 
     fn seed(&self) -> u64 {
@@ -409,5 +429,12 @@ where
 
     fn abstol(&self) -> f32 {
         self.sim_params.abstol
+    }
+
+    fn with_weight_fractions(&self) -> bool {
+        self.discretize_info
+            .structures
+            .iter()
+            .all(|s| s.density.is_some())
     }
 }

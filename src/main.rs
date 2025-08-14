@@ -11,7 +11,7 @@ use yaxs::cif::CifParser;
 use yaxs::pattern::{adxrd, edxrd};
 use yaxs::structure::Structure;
 
-use log::{error, info};
+use log::{error, info, warn};
 
 use yaxs::cfg::{Config, SimulationKind, StructureDef};
 use yaxs::io::{
@@ -201,22 +201,26 @@ fn main() {
         let _ = reader.read_to_string(&mut cif).unwrap();
         let mut p = CifParser::new(&cif);
 
-        structures.push(
-            Structure::try_from(&p.parse().unwrap_or_else(|err| {
-                error!("Invalid CIF Syntax for '{path}': {err}");
-                std::process::exit(1)
-            }))
-            .unwrap_or_else(|err| {
-                error!("Invalid contents for CIF '{path}': {err}");
-                std::process::exit(1);
-            }),
-        );
+        let structure = Structure::try_from(&p.parse().unwrap_or_else(|err| {
+            error!("Invalid CIF Syntax for '{path}': {err}");
+            std::process::exit(1)
+        }))
+        .unwrap_or_else(|err| {
+            error!("Invalid contents for CIF '{path}': {err}");
+            std::process::exit(1);
+        });
+        if structure.density.is_none() {
+            warn!(
+                "Cannot output weight fractions because density is missing in cif '{p}.",
+                p = struct_path.display()
+            );
+        }
 
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
-
         vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
         pref_o.push(po.clone());
+        structures.push(structure);
     }
 
     let vf_generator = VFGenerator::try_new(vf_constraints)
@@ -304,7 +308,13 @@ where
             jobs.push(job);
         }
         let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(jobs, xs, gen.abstol(), gen.n_phases())?;
+        let (intensities, pattern_metadata) = render_jobs(
+            jobs,
+            xs,
+            gen.abstol(),
+            gen.n_phases(),
+            gen.with_weight_fractions(),
+        )?;
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");

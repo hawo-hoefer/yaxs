@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{ImpurityPeak, Peaks, RenderCommon, VFGenerator};
+use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
@@ -288,6 +288,9 @@ impl ToDiscretize {
         let background = background.generate_bkg(rng);
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
+        let vol_fractions = vf_generator.generate(rng);
+        let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
+
         DiscretizeAngleDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
@@ -303,7 +306,8 @@ impl ToDiscretize {
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
             meta: ADXRDMeta {
-                vol_fractions: vf_generator.generate(rng),
+                vol_fractions,
+                weight_fractions,
                 eta,
                 mean_ds_nm,
                 u,
@@ -329,6 +333,9 @@ impl ToDiscretize {
             struct_ids,
         } = self.sample_parameters.generate(rng);
 
+        let vol_fractions = vf_generator.generate(rng);
+        let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
+
         DiscretizeEnergyDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
@@ -343,7 +350,8 @@ impl ToDiscretize {
             beamline: energy_dispersive.beamline.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
-                vol_fractions: vf_generator.generate(rng),
+                vol_fractions,
+                weight_fractions,
                 eta,
                 mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),

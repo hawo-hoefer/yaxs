@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use cfg_if::cfg_if;
+use itertools::Itertools;
 use log::warn;
 use ndarray::Array2;
 use rand::Rng;
@@ -13,6 +14,7 @@ use crate::math::{
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
 use crate::noise::Noise;
+use crate::structure::Structure;
 
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
@@ -30,6 +32,7 @@ pub trait DiscretizeJobGenerator {
     fn xs(&self) -> &[f32];
     fn n_phases(&self) -> usize;
     fn abstol(&self) -> f32;
+    fn with_weight_fractions(&self) -> bool;
 }
 
 pub struct RenderCommon {
@@ -57,6 +60,36 @@ pub struct VFGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
     pub fractions: Vec<Option<VolumeFraction>>,
+}
+
+pub fn get_weight_fractions(
+    volume_fractions: &[f64],
+    structures: &[Structure],
+) -> Option<Box<[f64]>> {
+    for s in structures.iter() {
+        if s.density.is_none() {
+            return None;
+        }
+    }
+
+    // m = V * density
+    let mut sum = 0.0;
+    let mut weight_fractions = volume_fractions
+        .iter()
+        .zip(structures)
+        .map(|(vf, s)| {
+            let mass = s.density.expect("we check above that all are some") * vf;
+            sum += mass;
+            mass
+        })
+        .collect_vec();
+
+    // normalize again
+    for vf in weight_fractions.iter_mut() {
+        *vf /= sum;
+    }
+
+    Some(weight_fractions.into())
 }
 
 impl VFGenerator {
@@ -201,7 +234,11 @@ pub trait Discretizer {
     }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
-    fn init_meta_data(n_patterns: usize, n_phases: usize) -> Vec<PatternMeta>;
+    fn init_meta_data(
+        n_patterns: usize,
+        n_phases: usize,
+        with_weight_fractions: bool,
+    ) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
         for PeakRenderParams {
@@ -378,12 +415,13 @@ pub fn render_jobs<T>(
     two_thetas: &[f32],
     #[allow(unused)] atol: f32,
     n_phases: usize,
+    with_weight_fractions: bool,
 ) -> Result<(Array2<f32>, Vec<PatternMeta>), String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
     let n = jobs.len();
-    let mut metadata = T::init_meta_data(jobs.len(), n_phases);
+    let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
             job.write_meta_data(m, i)

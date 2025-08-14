@@ -43,6 +43,7 @@ pub struct Opts {
 pub enum PatternMeta {
     Strains(Array3<f32>),
     VolumeFractions(Array2<f32>),
+    WeightFractions(Array2<f32>),
     Etas(Array1<f32>),
     MeanDsNm(Array2<f32>),
     CagliotiParams(Array2<f32>),
@@ -55,6 +56,7 @@ impl PatternMeta {
         use PatternMeta::*;
         match self {
             VolumeFractions(_) => "volume_fractions",
+            WeightFractions(_) => "weight_fractions",
             Strains(_) => "strains",
             Etas(_) => "eta",
             ImpuritySum(_) => "impurity_sum",
@@ -135,6 +137,7 @@ pub fn write_to_npz(
             CagliotiParams(array_base) => w.add_array(m.name(), array_base),
             MarchParameter(array_base) => w.add_array(m.name(), array_base),
             ImpuritySum(array_base) => w.add_array(m.name(), array_base),
+            WeightFractions(array_base) => w.add_array(m.name(), array_base),
         }
         .map_err(|err| err.to_string())?;
     }
@@ -157,12 +160,13 @@ pub fn render_chunk_and_queue_write_in_thread<D, T>(
     send: Sender<Arc<WriteJob<T>>>,
     abstol: f32,
     n_structs: usize,
+    with_weight_fractions: bool
 ) -> Result<(), String>
 where
     T: AsRef<Path> + Send + Sync,
     D: Discretizer + Send + Sync + 'static,
 {
-    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs)?;
+    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs, with_weight_fractions)?;
     send.send(Arc::new(WriteJob::Write {
         intensities,
         meta,
@@ -306,6 +310,7 @@ where
             tx.clone(),
             gen.abstol(),
             gen.n_phases(),
+            gen.with_weight_fractions(),
         )
         .map_err(|err| format!("Could not queue write job: {err}."))?;
 

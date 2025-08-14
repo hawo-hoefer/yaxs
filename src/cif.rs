@@ -11,6 +11,7 @@ use crate::symop::SymOp;
 // TODO: make this case-insensitive
 const DATA_HEADER_START: &str = "data_";
 const LOOP_HEADER_START: &str = "loop_";
+const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SITE_DIST_TOL: f64 = 1e-4;
@@ -224,6 +225,19 @@ impl CIFContents {
 
         let sg_class = SGClass::try_from(sg_no).expect("we test this above");
         Ok((sg_no, sg_class))
+    }
+
+    pub fn get_density(&self) -> Result<Option<f64>, String> {
+        let value = match self.kvs.get(DENSITY_KEY) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match value {
+            Value::Inapplicable | Value::Unknown => Ok(None),
+            Value::Float(v) => Ok(Some(*v)),
+            Value::Int(v) => Ok(Some(*v as f64)),
+            Value::Text(t) => Err(format!("Invalid value of type Text for {DENSITY_KEY} in CIF: '{t}'")),
+        }
     }
 }
 
