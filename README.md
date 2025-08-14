@@ -82,6 +82,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - right now, the cpu backend is single threaded, which is really slow
     - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
     - therefore, this is low priority
+- [ ] find some way to add example cifs into repo that does not infringe on someones copyright
 - [ ] Debye-Waller correction
     - not present in cif
     - in `pymatgen`, they are passed separately
