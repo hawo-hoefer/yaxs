@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::math::{Mat3, Vec3};
+use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
 
 use crate::site::Site;
@@ -113,15 +113,15 @@ impl CIFContents {
         let val = alpha.cos() * beta.cos() - gamma.cos() / (alpha.sin() * beta.sin());
         let val = val.clamp(-1.0, 1.0);
         let gamma_star = val.acos();
-        let va = Vec3::new(a * beta.sin(), 0.0, a * beta.cos());
-        let vb = Vec3::new(
+        let va = [a * beta.sin(), 0.0, a * beta.cos()];
+        let vb = [
             -b * alpha.sin() * gamma_star.cos(),
             b * alpha.sin() * gamma_star.sin(),
             b * alpha.cos(),
-        );
-        let vc = Vec3::new(0.0, 0.0, c);
+        ];
+        let vc = [0.0, 0.0, c];
         Lattice {
-            mat: Mat3::from_columns(&[va, vb, vc]),
+            mat: Mat3::from_cols([va, vb, vc]),
         }
     }
 
@@ -166,11 +166,12 @@ impl CIFContents {
             sites
                 .iter()
                 .map(|ps| {
-                    let delta = site.coords - ps.coords;
-                    delta
+                    let delta = &site.coords - &ps.coords;
+                    let x = delta
+                        .iter_values()
                         .map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
-                        .into_iter()
-                        .all(|x| *x)
+                        .all(|x| x);
+                    x
                 })
                 .any(|x| x)
         }
@@ -187,7 +188,7 @@ impl CIFContents {
 
             for op in symops.iter() {
                 let s = Site {
-                    coords: op.apply(base_site.coords),
+                    coords: op.apply(&base_site.coords),
                     species: base_site.species.clone(),
                     occu: base_site.occu,
                 };
@@ -236,7 +237,9 @@ impl CIFContents {
             Value::Inapplicable | Value::Unknown => Ok(None),
             Value::Float(v) => Ok(Some(*v)),
             Value::Int(v) => Ok(Some(*v as f64)),
-            Value::Text(t) => Err(format!("Invalid value of type Text for {DENSITY_KEY} in CIF: '{t}'")),
+            Value::Text(t) => Err(format!(
+                "Invalid value of type Text for {DENSITY_KEY} in CIF: '{t}'"
+            )),
         }
     }
 }

@@ -14,7 +14,7 @@ use crate::cfg::{apply_strain_cfg, CompactSimResults, SampleParameters, StrainCf
 use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
-use crate::math::{Mat3, Vec3};
+use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::MarchDollase;
 use crate::site::Site;
@@ -106,7 +106,12 @@ impl Lattice {
 
     fn recip_lattice(&self) -> Lattice {
         Self {
-            mat: self.mat.try_inverse().unwrap().transpose() * 2.0 * std::f64::consts::PI,
+            mat: self
+                .mat
+                .try_inverse()
+                .unwrap()
+                .transpose()
+                .scale(2.0 * std::f64::consts::PI),
         }
     }
 
@@ -121,13 +126,8 @@ impl Lattice {
 
     fn abc(&self) -> Vec3<f64> {
         let mut values = [0.0; 3];
-        for (i, v) in self
-            .mat
-            .row_iter()
-            .map(|x| x.into_iter().map(|a| a.powi(2)).sum::<f64>().sqrt())
-            .enumerate()
-        {
-            values[i] = v;
+        for i in 0..self.mat.rows() {
+            values[i] = self.mat.row(i).magnitude();
         }
         Vec3::new(values[0], values[1], values[2])
     }
@@ -136,8 +136,14 @@ impl Lattice {
 impl std::fmt::Display for Lattice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Lattice(")?;
-        for row in self.mat.row_iter() {
-            writeln!(f, "  {:5.2}, {:5.2}, {:5.2}", row[0], row[1], row[2])?;
+        for ri in 0..self.mat.rows() {
+            writeln!(
+                f,
+                "  {:5.2}, {:5.2}, {:5.2}",
+                self.mat[(ri, 0)],
+                self.mat[(ri, 1)],
+                self.mat[(ri, 2)]
+            )?;
         }
         writeln!(f, ")")
     }
@@ -212,7 +218,7 @@ impl Structure {
         let shear_range = -max_strain..=max_strain;
 
         let strain_tensor: Mat3<f64> = match self.sg_class {
-            SGClass::Cubic => Mat3::identity() * rng.random_range(tensile_range),
+            SGClass::Cubic => Mat3::identity().scale(rng.random_range(tensile_range)),
             SGClass::Orthorombic => {
                 // all directions independent for orthorombic
                 let mut m = Mat3::zeros();
@@ -277,7 +283,7 @@ impl Structure {
         };
 
         let mut r = self.clone();
-        r.lat.mat = &r.lat.mat * &strain_tensor;
+        r.lat.mat = r.lat.mat.matmul(&strain_tensor);
 
         (r, Strain::from_mat3(&strain_tensor))
     }
@@ -285,7 +291,7 @@ impl Structure {
     pub fn apply_strain(&self, strain: &Strain) -> Structure {
         let mut ret = self.clone();
 
-        ret.lat.mat = &ret.lat.mat * &strain.to_mat3();
+        ret.lat.mat = ret.lat.mat.matmul(&strain.to_mat3());
 
         ret
     }
@@ -436,19 +442,19 @@ impl<'a> Lattice {
         let recp_len = recip_lat.recip_lattice().abc();
 
         let r_cells = max_r + 1e-8;
-        let r_max =
-            (recp_len * (r_cells + 0.15) / (2.0 * std::f64::consts::PI)).map(|x| x.ceil() as i32);
+        let r_max = (recp_len.scale((r_cells + 0.15) / (2.0 * std::f64::consts::PI)))
+            .map(|x| x.ceil() as i32);
         let global_min = -max_r - RADIUS_TOL;
         let global_max = max_r + RADIUS_TOL;
 
-        let n_min = -r_max;
+        let n_min = -r_max.clone();
         let n_max = r_max;
         (n_min[0]..n_max[0])
             .cartesian_product(n_min[1]..n_max[1])
             .cartesian_product(n_min[2]..n_max[2])
             .filter_map(move |((a, b), c)| -> Option<(Vec3<f64>, f64)> {
                 let hkl = Vec3::new(a as f64, b as f64, c as f64);
-                let pos = recip_lat.mat * hkl;
+                let pos = recip_lat.mat.matmul(&hkl);
                 let g_hkl = pos.magnitude();
 
                 // currently, we produce XRD patterns like pymatgen
@@ -461,7 +467,7 @@ impl<'a> Lattice {
                 if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
                     && g_hkl > 0.0
                     && pos
-                        .into_iter()
+                        .iter_values()
                         .map(|&x| (x > global_min) && (x < global_max))
                         .all(|x| x)
                 {
@@ -729,11 +735,11 @@ mod test {
     #[test]
     #[rustfmt::skip]
     fn iter_hkls() {
-        let mat = Mat3::new(
-            8.08528000e+00, 0.00000000e+00, 4.95080614e-16,
-            1.30021219e-15, 8.08528000e+00, 4.95080614e-16,
-            0.00000000e+00, 0.00000000e+00, 8.08528000e+00,
-        );
+        let mat = Mat3::from_rows([
+            [8.08528000e+00, 0.00000000e+00, 4.95080614e-16],
+            [1.30021219e-15, 8.08528000e+00, 4.95080614e-16],
+            [0.00000000e+00, 0.00000000e+00, 8.08528000e+00],
+        ]);
 
         let lat = Lattice { mat }.recip_lattice_crystallographic();
 
@@ -741,11 +747,11 @@ mod test {
         assert_eq!(hkls, 26);
 
         let mut iter = lat.iter_hkls(0.0, 15.0)
-            .sorted_by_key(|&(hkl, g_hkl)| (
-                NotNan::new(g_hkl).unwrap(),
-                NotNan::new(hkl.x).unwrap(),
-                NotNan::new(hkl.y).unwrap(),
-                NotNan::new(hkl.z).unwrap(),
+            .sorted_by_key(|(hkl, g_hkl)| (
+                NotNan::new(*g_hkl).unwrap(),
+                NotNan::new(hkl[0]).unwrap(),
+                NotNan::new(hkl[1]).unwrap(),
+                NotNan::new(hkl[2]).unwrap(),
             ));
 
         assert_eq!(iter.next(), Some((Vec3::new(-1.,  0.,  0.), 8.08528)));

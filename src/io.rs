@@ -12,7 +12,7 @@ use ndarray_npy::NpzWriter;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
-use crate::math::Vec3;
+use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
@@ -160,13 +160,14 @@ pub fn render_chunk_and_queue_write_in_thread<D, T>(
     send: Sender<Arc<WriteJob<T>>>,
     abstol: f32,
     n_structs: usize,
-    with_weight_fractions: bool
+    with_weight_fractions: bool,
 ) -> Result<(), String>
 where
     T: AsRef<Path> + Send + Sync,
     D: Discretizer + Send + Sync + 'static,
 {
-    let (intensities, meta) = render_jobs(jobs, two_thetas, abstol, n_structs, with_weight_fractions)?;
+    let (intensities, meta) =
+        render_jobs(jobs, two_thetas, abstol, n_structs, with_weight_fractions)?;
     send.send(Arc::new(WriteJob::Write {
         intensities,
         meta,

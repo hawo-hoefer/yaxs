@@ -265,7 +265,7 @@ fn main() {
             .sample_parameters
             .structures
             .iter()
-            .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl))
+            .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl.clone()))
             .collect_vec(),
         cfg: cfg.kind.clone(),
     };

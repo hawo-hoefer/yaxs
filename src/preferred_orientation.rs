@@ -1,10 +1,12 @@
-use crate::math::Vec3;
+use crate::math::linalg::Vec3;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::structure::Lattice;
 
 const HKL_NORM_TOL: f64 = 1e-3;
+
+pub struct BinghamODF {}
 
 #[derive(PartialEq, Debug, Serialize, Clone)]
 pub struct MarchDollase {
@@ -39,8 +41,8 @@ impl MarchDollase {
             return 1.0;
         }
 
-        let hkl_real = lat.mat * hkl;
-        let direction_real = lat.mat * self.hkl;
+        let hkl_real = lat.mat.matmul(hkl);
+        let direction_real = lat.mat.matmul(&self.hkl);
 
         let num = hkl_real.dot(&direction_real);
         let denom = direction_real.magnitude() * hkl_real.magnitude();
