@@ -128,30 +128,6 @@ fn main() {
         }
     };
 
-    prepare_output_directory(&args.io)
-        .map_err(|err| {
-            error!("Could not prepare output directory: {err}");
-            std::process::exit(1);
-        })
-        .expect("error is handled inside");
-
-    let cfg_file_name = args
-        .cfg
-        .file_name()
-        .expect("configuration file was hopefully not moved until now.");
-    let mut copied_cfg_path = args.io.output_path.clone();
-    copied_cfg_path.push(cfg_file_name);
-    let _ = std::fs::copy(&args.cfg, copied_cfg_path)
-        .map_err(|err| {
-            error!(
-            "Could not copy configuration file '{infile}' to output directory '{outdir}': {err}",
-            infile = args.cfg.display(),
-            outdir = args.io.output_path.display()
-        );
-            std::process::exit(1);
-        })
-        .expect("we deal with the error inside");
-
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
         cfg.simulation_parameters.seed.unwrap_or(0),
     );
@@ -249,10 +225,68 @@ fn main() {
 
     let elapsed = begin.elapsed().as_secs_f64();
 
+    if args.io.display_hkls {
+        info!("Displaying HKLs");
+
+        for i in 0..to_discretize.structures.len() {
+            let idx = to_discretize.sim_res.idx(i, 0);
+            info!("======= Structure {} =======", structure_paths[idx]);
+            let max = to_discretize.sim_res.all_simulated_peaks[idx]
+                .iter()
+                .map(|x| x.i_hkl)
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .expect("at least one peak");
+
+            for p in to_discretize.sim_res.all_simulated_peaks[idx].iter() {
+                use std::fmt::Write;
+                let mut hkls = String::new();
+                for hkl in p.hkls.iter() {
+                    write!(
+                        &mut hkls,
+                        "({h:2} {k:2} {l:2}) ",
+                        h = hkl[0],
+                        k = hkl[1],
+                        l = hkl[2]
+                    )
+                    .expect("enough memory");
+                }
+                info!(
+                    "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} | {hkls}",
+                    intensity = p.i_hkl / max,
+                    d_hkl = p.d_hkl,
+                );
+            }
+        }
+        std::process::exit(0);
+    }
+
     info!("Simulating Peak Positions took {elapsed:.2}s");
 
-    let params = cfg.simulation_parameters;
+    prepare_output_directory(&args.io)
+        .map_err(|err| {
+            error!("Could not prepare output directory: {err}");
+            std::process::exit(1);
+        })
+        .expect("error is handled inside");
 
+    let cfg_file_name = args
+        .cfg
+        .file_name()
+        .expect("configuration file was hopefully not moved until now.");
+    let mut copied_cfg_path = args.io.output_path.clone();
+    copied_cfg_path.push(cfg_file_name);
+    let _ = std::fs::copy(&args.cfg, copied_cfg_path)
+        .map_err(|err| {
+            error!(
+                "Could not copy configuration file '{infile}' to output directory '{outdir}': {err}",
+                infile = args.cfg.display(),
+                outdir = args.io.output_path.display()
+            );
+            std::process::exit(1);
+        })
+        .expect("we deal with the error inside");
+
+    let params = cfg.simulation_parameters;
     let extra = io::Extra {
         max_phases: cfg.sample_parameters.structures.len(),
         encoding: cfg

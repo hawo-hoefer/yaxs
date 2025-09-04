@@ -37,6 +37,13 @@ pub struct Opts {
 
     #[arg(long, default_value_t = false, help = "Write to compressed numpy .npz")]
     pub compress: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "show simulated intensities and hkls for each phase and exit"
+    )]
+    pub display_hkls: bool,
 }
 
 #[derive(PartialEq, Clone)]
