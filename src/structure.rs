@@ -325,10 +325,6 @@ impl Structure {
                 // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
                 let g_dot_r: f64 = site.coords.dot(&hkl);
                 for species in &site.species {
-                    // el = site.specie
-                    // coeff = ATOMIC_SCATTERING_PARAMS[el.symbol]
-                    // fs = el.Z - 41.78214 * s2 * sum(
-                    //     [d[0] * exp(-d[1] * s2) for d in coeff])
                     let fs = species.el.scattering_factor(s2);
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)

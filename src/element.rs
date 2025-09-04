@@ -26,6 +26,10 @@ impl Element {
 
     pub fn scattering_factor(&self, s2: f64) -> f64 {
         // TODO: alternate (possibly more correct scattering parameters)
+        // el = site.specie
+        // coeff = ATOMIC_SCATTERING_PARAMS[el.symbol]
+        // fs = el.Z - 41.78214 * s2 * sum(
+        //     [d[0] * exp(-d[1] * s2) for d in coeff])
         let coef = atomic_scattering_params(*self).unwrap();
         let sum: f64 = coef.iter().map(|d| d[0] * (-d[1] * s2).exp()).sum();
         let fs = self.z() as f64 - 41.78213 * s2 * sum;

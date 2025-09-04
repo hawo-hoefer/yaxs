@@ -14,7 +14,7 @@ const LOOP_HEADER_START: &str = "loop_";
 const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
-const SITE_DIST_TOL: f64 = 1e-4;
+const SITE_DIST_TOL: f64 = 1e-8;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
@@ -167,11 +167,13 @@ impl CIFContents {
                 .iter()
                 .map(|ps| {
                     let delta = &site.coords - &ps.coords;
-                    let x = delta
+                    let inside_dist_tol = delta
                         .iter_values()
-                        .map(|x| (x - x.round()).abs() < SITE_DIST_TOL)
-                        .all(|x| x);
-                    x
+                        .map(|x| (x - x.round()).powi(2))
+                        .sum::<f64>()
+                        < SITE_DIST_TOL.powi(2);
+
+                    inside_dist_tol && (ps.species == site.species) && (ps.occu == site.occu)
                 })
                 .any(|x| x)
         }
@@ -486,6 +488,8 @@ impl<'a> CifParser<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::structure::Structure;
+
     use super::*;
 
     #[test]
