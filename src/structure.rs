@@ -726,8 +726,9 @@ pub fn simulate_peaks(
 
 #[cfg(test)]
 mod test {
-    use crate::species::Species;
     use super::*;
+    use crate::cif::CifParser;
+    use crate::species::Species;
 
     #[test]
     #[rustfmt::skip]
@@ -825,8 +826,6 @@ loop_
 
     #[test]
     fn fm3m_simulation_positions() {
-        use crate::cif::CifParser;
-
         let d = CifParser::new(&FM3M_CIF_DATA)
             .parse()
             .expect("valid cif contents");
@@ -848,8 +847,6 @@ loop_
 
     #[test]
     fn fm3m_simulation_intensities() {
-        use crate::cif::CifParser;
-
         let d = CifParser::new(&FM3M_CIF_DATA)
             .parse()
             .expect("valid cif contents");
@@ -880,57 +877,4 @@ loop_
         }
     }
 
-    const CIF_WITH_OCCUPANCY: &'static str = "# generated using pymatgen
-data_sites_with_occupancy
-_symmetry_space_group_name_H-M   'P 1'
-_symmetry_Int_Tables_number 1
-_cell_length_a   2.92800000
-_cell_length_b   2.92800000
-_cell_length_c   11.18000000
-_cell_angle_alpha   90.00000000
-_cell_angle_beta   90.00000000
-_cell_angle_gamma   120.00000000
-_cell_volume   83.00697361
-loop_
- _symmetry_equiv_pos_site_id
- _symmetry_equiv_pos_as_xyz
-  1  'x, y, z'
-loop_
- _atom_site_type_symbol
- _atom_site_label
- _atom_site_symmetry_multiplicity
- _atom_site_fract_x
- _atom_site_fract_y
- _atom_site_fract_z
- _atom_site_occupancy
-  Na+  Na1  1  0.00000000  0.00000000  0.25000000  0.25
-  Fe-  Fe1  1  0.00000000  0.00000000  0.25000000  0.75";
-
-    #[test]
-    fn parse_struct_multiple_frac_occu_site() {
-        use crate::cif::CifParser;
-
-        let d = CifParser::new(CIF_WITH_OCCUPANCY)
-            .parse()
-            .expect("valid cif contents");
-        let s = Structure::try_from(&d).expect("valid cif contents");
-        let mut sites = s.sites.iter();
-        assert_eq!(
-            &Site {
-                coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Na+".parse().unwrap(),
-                occu: 0.25,
-            },
-            sites.next().unwrap()
-        );
-
-        assert_eq!(
-            &Site {
-                coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Fe-".parse().unwrap(),
-                occu: 0.75,
-            },
-            sites.next().unwrap()
-        );
-    }
 }

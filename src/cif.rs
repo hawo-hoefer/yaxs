@@ -14,7 +14,7 @@ const LOOP_HEADER_START: &str = "loop_";
 const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
-const SITE_DIST_TOL: f64 = 1e-8;
+const SITE_DIST_TOL: f64 = 1e-6;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
@@ -817,5 +817,95 @@ Test test; test
         let mut p = CifParser::new("1.23e12(12)");
         p.parse_number()
             .expect_err("scientific number notation with precision parens is illegal");
+    }
+
+    #[test]
+    fn parse_struct_multiple_frac_occu_site() {
+        const CIF_WITH_OCCUPANCY: &'static str = "# generated using pymatgen
+data_sites_with_occupancy
+_symmetry_space_group_name_H-M   'P 1'
+_symmetry_Int_Tables_number 1
+_cell_length_a   2.92800000
+_cell_length_b   2.92800000
+_cell_length_c   11.18000000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   120.00000000
+_cell_volume   83.00697361
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Na+  Na1  1  0.00000000  0.00000000  0.25000000  0.25
+  Fe-  Fe1  1  0.00000000  0.00000000  0.25000000  0.75";
+
+        let d = CifParser::new(CIF_WITH_OCCUPANCY)
+            .parse()
+            .expect("valid cif contents");
+        let s = Structure::try_from(&d).expect("valid cif contents");
+        let mut sites = s.sites.iter();
+        assert_eq!(
+            &Site {
+                coords: Vec3::new(0.0, 0.0, 0.25),
+                species: "Na+".parse().unwrap(),
+                occu: 0.25,
+            },
+            sites.next().unwrap()
+        );
+
+        assert_eq!(
+            &Site {
+                coords: Vec3::new(0.0, 0.0, 0.25),
+                species: "Fe-".parse().unwrap(),
+                occu: 0.75,
+            },
+            sites.next().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_thirds_site_coords() {
+        let input = "data_site_tolerance_thirds
+_chemical_name_mineral 'bug_rock'
+_cell_length_a  2.898009
+_cell_length_b  2.898009
+_cell_length_c  11.1751
+_cell_angle_alpha 90
+_cell_angle_beta  90
+_cell_angle_gamma 120
+_cell_volume 81.27959
+_symmetry_space_group_name_H-M P63/mmc
+_space_group_IT_number 194
+loop_
+_symmetry_equiv_pos_as_xyz
+	 'x, y, z '
+	 '-x, -x+y, z+1/2 '
+	 '-x, -y, z+1/2 '
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_symmetry_multiplicity
+_atom_site_adp_type
+_atom_site_U_iso_or_equiv
+Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
+O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
+        let contents = CifParser::new(input).parse().unwrap();
+        let s = Structure::try_from(&contents).unwrap();
+        for site in s.sites.iter() {
+            println!("{:?}", site);
+        }
+        assert_eq!(s.sites.len(), 4)
     }
 }

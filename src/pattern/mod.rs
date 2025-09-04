@@ -201,7 +201,7 @@ impl VFGenerator {
     }
 }
 
-fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
+pub fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 

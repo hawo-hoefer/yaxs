@@ -8,7 +8,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::pattern::{adxrd, edxrd};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
@@ -231,13 +231,47 @@ fn main() {
         for i in 0..to_discretize.structures.len() {
             let idx = to_discretize.sim_res.idx(i, 0);
             info!("======= Structure {} =======", structure_paths[idx]);
-            let max = to_discretize.sim_res.all_simulated_peaks[idx]
+            let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
-                .map(|x| x.i_hkl)
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .map(|p| match &cfg.kind {
+                    SimulationKind::AngleDispersive(angle_dispersive) => {
+                        let wavelength_ams = angle_dispersive.emission_lines[0].wavelength_ams;
+                        let (pos, intens, _) = p.get_adxrd_render_params(
+                            wavelength_ams / 10.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            100.0,
+                            1.0,
+                            0.0,
+                            angle_dispersive.goniometer_radius_mm,
+                        );
+                        (pos, intens)
+                    }
+                    SimulationKind::EnergyDispersive(energy_dispersive) => {
+                        let theta_rad = energy_dispersive.theta_deg.to_radians();
+                        let f_lorentz = lorentz_polarization_factor(theta_rad);
+                        let (pos, intens, _) = p.get_edxrd_render_params(
+                            theta_rad,
+                            f_lorentz,
+                            100.0,
+                            1.0,
+                            &energy_dispersive.beamline,
+                        );
+                        (pos, intens)
+                    }
+                })
+                .collect_vec();
+
+            let max = *intensities_positions
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
                 .expect("at least one peak");
 
-            for p in to_discretize.sim_res.all_simulated_peaks[idx].iter() {
+            for (p, (pos, i)) in to_discretize.sim_res.all_simulated_peaks[idx]
+                .iter()
+                .zip(intensities_positions)
+            {
                 use std::fmt::Write;
                 let mut hkls = String::new();
                 for hkl in p.hkls.iter() {
@@ -250,10 +284,12 @@ fn main() {
                     )
                     .expect("enough memory");
                 }
+                let intensity = i / max.1;
                 info!(
-                    "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} | {hkls}",
-                    intensity = p.i_hkl / max,
+                    "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} pos: {pos:.4} | {hkls}",
+                    intensity = intensity,
                     d_hkl = p.d_hkl,
+                    pos = pos
                 );
             }
         }
