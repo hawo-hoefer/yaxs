@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
+use log::warn;
 
 use crate::site::Site;
 use crate::species::Species;
@@ -15,6 +16,7 @@ const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SITE_DIST_TOL: f64 = 1e-6;
+const FRAC_TOL_POS_ATOL: f64 = 1e-4;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
@@ -154,6 +156,16 @@ impl CIFContents {
                 site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
+            let important_fracs = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
+            let coords = coords.map(|x| {
+                for frac in important_fracs {
+                    if (x - frac).abs() < FRAC_TOL_POS_ATOL {
+                        warn!("Rounded fractional coordinate {x} to {frac}");
+                        return frac;
+                    }
+                }
+                *x
+            });
             Ok(Site {
                 species: sp,
                 coords,
