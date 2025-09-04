@@ -730,6 +730,7 @@ pub fn simulate_peaks(
 
 #[cfg(test)]
 mod test {
+    use crate::species::Species;
     use super::*;
 
     #[test]
@@ -781,5 +782,159 @@ mod test {
         assert_eq!(iter.next(), Some((Vec3::new( 1.,  1., -1.),  14.004115753420491)));
         assert_eq!(iter.next(), Some((Vec3::new(1., 1., 1.),  14.004115753420491)));
         assert_eq!(iter.next(), None);
+    }
+
+    const ATOL: f32 = 1e-3;
+    const FM3M_CIF_DATA: &'static str = "# generated using pymatgen
+data_test
+_symmetry_space_group_name_H-M   'P 1'
+_cell_length_a   3.59420000
+_cell_length_b   3.59420000
+_cell_length_c   3.59420000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta    90.00000000
+_cell_angle_gamma   90.00000000
+_symmetry_Int_Tables_number   1
+_chemical_formula_structural   Cu
+_chemical_formula_sum   Cu4
+_cell_volume   46.43085912
+_cell_formula_units_Z   4
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_type_symbol
+ _atom_type_oxidation_number
+  Cu0+  0.0
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Cu0+  Cu1  1  0.00000000  0.00000000  0.00000000  1.0
+  Cu0+  Cu1  1  0.00000000  0.50000000  0.50000000  1.0
+  Cu0+  Cu1  1  0.50000000  0.00000000  0.50000000  1.0
+  Cu0+  Cu1  1  0.50000000  0.50000000  0.00000000  1.0";
+
+    const FM3M_EXPECTED: [(f32, f32); 4] = [
+        (19.70066419257163, 1.0),
+        (22.786339661733468, 0.4864883706070105),
+        (32.444550987327624, 0.302926682750686),
+        (38.244378463227896, 0.33030941984707324),
+    ];
+
+    #[test]
+    fn fm3m_simulation_positions() {
+        use crate::cif::CifParser;
+
+        let d = CifParser::new(&FM3M_CIF_DATA)
+            .parse()
+            .expect("valid cif contents");
+        let s = Structure::try_from(&d).expect("valid cif contents");
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let peaks = peaks
+            .iter()
+            .map(|peak| {
+                let (pos, intens, _) =
+                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
+                (pos, intens)
+            })
+            .collect_vec();
+        for ((s_pos, _), (a_pos, _)) in peaks.iter().zip(FM3M_EXPECTED) {
+            let diff = (s_pos - a_pos).abs();
+            assert!(diff < ATOL, "Simulated and actual positions difference exceeds tolerance. Simulated: {s_pos}, actual: {a_pos}. diff: {diff}");
+        }
+    }
+
+    #[test]
+    fn fm3m_simulation_intensities() {
+        use crate::cif::CifParser;
+
+        let d = CifParser::new(&FM3M_CIF_DATA)
+            .parse()
+            .expect("valid cif contents");
+        let s = Structure::try_from(&d).expect("valid cif contents");
+
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let mut peaks = peaks
+            .iter()
+            .map(|peak| {
+                let (pos, intens, _) =
+                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
+                (pos, intens)
+            })
+            .collect_vec();
+        let max_peak = peaks
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .expect("more than one peak")
+            .1;
+
+        for (_, i) in peaks.iter_mut() {
+            *i /= max_peak;
+        }
+
+        for ((s_pos, s_intens), (a_pos, a_intens)) in peaks.iter().zip(FM3M_EXPECTED) {
+            let diff = (s_intens - a_intens).abs();
+            assert!(diff < ATOL, "Simulated and actual intensities difference exceeds tolerance (at position {s_pos}). Simulated: {s_intens}, actual: {a_intens}. diff: {diff}");
+        }
+    }
+
+    const CIF_WITH_OCCUPANCY: &'static str = "# generated using pymatgen
+data_sites_with_occupancy
+_symmetry_space_group_name_H-M   'P 1'
+_symmetry_Int_Tables_number 1
+_cell_length_a   2.92800000
+_cell_length_b   2.92800000
+_cell_length_c   11.18000000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   120.00000000
+_cell_volume   83.00697361
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Na+  Na1  1  0.00000000  0.00000000  0.25000000  0.25
+  Fe-  Fe1  1  0.00000000  0.00000000  0.25000000  0.75";
+
+    #[test]
+    fn parse_struct_multiple_frac_occu_site() {
+        use crate::cif::CifParser;
+
+        let d = CifParser::new(CIF_WITH_OCCUPANCY)
+            .parse()
+            .expect("valid cif contents");
+        let s = Structure::try_from(&d).expect("valid cif contents");
+        let mut sites = s.sites.iter();
+        assert_eq!(
+            &Site {
+                coords: Vec3::new(0.0, 0.0, 0.25),
+                species: "Na+".parse().unwrap(),
+                occu: 0.25,
+            },
+            sites.next().unwrap()
+        );
+
+        assert_eq!(
+            &Site {
+                coords: Vec3::new(0.0, 0.0, 0.25),
+                species: "Fe-".parse().unwrap(),
+                occu: 0.75,
+            },
+            sites.next().unwrap()
+        );
     }
 }
