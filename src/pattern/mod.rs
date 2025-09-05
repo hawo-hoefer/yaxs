@@ -95,6 +95,8 @@ pub fn get_weight_fractions(
 
 /// sample integers uniformly without replacement from the interval [0, max_val)
 ///
+/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
+///
 /// * `n`: number of samples
 /// * `max_val`: upper bound of the
 /// * `rng`: random number generator
