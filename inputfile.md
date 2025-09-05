@@ -113,7 +113,7 @@ sample_parameters:
       preferred_orientation:                            # march parameters for preferred orientation (optional)
         hkl: [1, 1, 1]                                  # axis of preferred orientation
         r: 0.9                                          # march parameter
-      strain: 0.01                                      # optional strain specification
+      strain: !Maximum 0.01                             # optional strain specification
       volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
     - path: phase-3.cif
 ```
