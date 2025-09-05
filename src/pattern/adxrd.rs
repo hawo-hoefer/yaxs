@@ -190,8 +190,8 @@ impl Discretizer for DiscretizeAngleDispersive {
                 for i in 0..n_phases {
                     dst[(pat_id, i)] = wfs[i] as f32;
                 }
-
             }
+            SampleDisplacementMuM(dst) => dst[pat_id] = self.meta.sample_displacement_mu_m as f32,
         }
     }
 
@@ -210,7 +210,9 @@ impl Discretizer for DiscretizeAngleDispersive {
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
+            SampleDisplacementMuM(Array1::<f32>::zeros(n_patterns)),
         ];
+
         if with_weight_fractions {
             v.push(WeightFractions(Array2::<f32>::zeros((
                 n_patterns, n_phases,

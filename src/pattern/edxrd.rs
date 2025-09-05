@@ -307,7 +307,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     .map(|x| x.peak.i_hkl as f32)
                     .sum();
             }
-            CagliotiParams(_) => unreachable!("No Caglioti Parameters in EDXRD"),
+            CagliotiParams(_) => unreachable!("No Caglioti parameters in EDXRD"),
+            SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             MarchParameter(dst) => {
                 for i in 0..n_phases {
                     let flat_idx = self.common.idx(i);

@@ -55,6 +55,7 @@ pub enum PatternMeta {
     MeanDsNm(Array2<f32>),
     CagliotiParams(Array2<f32>),
     ImpuritySum(Array1<f32>),
+    SampleDisplacementMuM(Array1<f32>),
     MarchParameter(Array2<f32>), // for now, we're only going to allow one march parameter (and orientation) per phase
 }
 
@@ -67,6 +68,7 @@ impl PatternMeta {
             Strains(_) => "strains",
             Etas(_) => "eta",
             ImpuritySum(_) => "impurity_sum",
+            SampleDisplacementMuM(_) => "sample_displacement_mu_m",
             MeanDsNm(_) => "mean_ds_nm",
             CagliotiParams(_) => "caglioti_params",
             MarchParameter(_) => "march_param_r",
@@ -145,6 +147,7 @@ pub fn write_to_npz(
             MarchParameter(array_base) => w.add_array(m.name(), array_base),
             ImpuritySum(array_base) => w.add_array(m.name(), array_base),
             WeightFractions(array_base) => w.add_array(m.name(), array_base),
+            SampleDisplacementMuM(array_base) => w.add_array(m.name(), array_base),
         }
         .map_err(|err| err.to_string())?;
     }

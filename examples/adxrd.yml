@@ -9,6 +9,7 @@ kind: !AngleDispersive
   n_steps: 2048 
   two_theta_range: [10.0, 70.0]
   goniometer_radius_mm: 180
+  sample_displacement_mu_m: [-200, 200]
   caglioti:
     u: 0.0
     v: 0.0
