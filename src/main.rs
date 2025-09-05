@@ -201,9 +201,7 @@ fn main() {
 
     let vf_generator = VFGenerator::try_new(
         vf_constraints,
-        cfg.sample_parameters
-            .allow_concentration_subsets
-            .unwrap_or(false),
+        cfg.sample_parameters.max_concentration_subset_dim,
     )
     .map_err(|err| {
         error!("Error: Could not generate volume fractions: '{err}'");
