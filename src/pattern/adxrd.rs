@@ -106,7 +106,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                             *w,
                             ip.mean_ds_nm,
                             emission_line.weight,
-                            0.0,
+                            *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
                         );
                         let peak_weight = ip.peak.i_hkl * emission_line.weight;
