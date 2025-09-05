@@ -193,6 +193,7 @@ pub struct SimulationParameters {
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
+    pub allow_concentration_subsets: Option<bool>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
     pub eta: Parameter<f64>,

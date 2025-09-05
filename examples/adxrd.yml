@@ -37,6 +37,7 @@ kind: !AngleDispersive
 
 sample_parameters:
   eta: 0.5
+  allow_concentration_subsets: true
   impurities:
     - d_hkl_ams: 2
       intensity: 1
@@ -55,8 +56,9 @@ sample_parameters:
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
-    # - path: ./cif/Fe3O4_183969.cif
-    #   strain: !Maximum 0.005
+    - path: ./cif/Si_101017.cif
+      strain: !Maximum 0.005
+      mean_ds_nm: 15
 
 
 simulation_parameters:
@@ -67,5 +69,5 @@ simulation_parameters:
     sigma: 10.0
   normalize: false
   seed: 1234
-  n_patterns: 100
+  n_patterns: 2000
   abstol: 1e-2

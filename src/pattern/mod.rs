@@ -60,6 +60,7 @@ pub struct VFGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
     pub fractions: Vec<Option<VolumeFraction>>,
+    pub allow_subsets: bool,
 }
 
 pub fn get_weight_fractions(
@@ -92,14 +93,43 @@ pub fn get_weight_fractions(
     Some(weight_fractions.into())
 }
 
+/// sample integers uniformly without replacement from the interval [0, max_val)
+///
+/// * `n`: number of samples
+/// * `max_val`: upper bound of the
+/// * `rng`: random number generator
+pub fn uniform_sample_no_replacement_knuth(
+    n: usize,
+    max_val: usize,
+    rng: &mut impl Rng,
+) -> Vec<usize> {
+    // TODO: does this belong in stats?
+    let mut samples = Vec::with_capacity(n);
+    let mut t = 0;
+    while samples.len() < n {
+        let u = rng.random_range(0.0..=1.0);
+        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
+            t += 1;
+        } else {
+            samples.push(t);
+            t += 1;
+        }
+    }
+    samples
+}
+
 impl VFGenerator {
-    pub fn try_new(fractions: Vec<Option<VolumeFraction>>) -> Result<Self, String> {
+    pub fn try_new(
+        fractions: Vec<Option<VolumeFraction>>,
+        allow_subsets: bool,
+    ) -> Result<Self, String> {
         if fractions.len() == 0 {
             // no structures is ok. in that case, no volume fractions will be generated
             return Ok(Self {
                 n_free: 0,
                 fraction_sum: 0.0,
                 fractions,
+                allow_subsets,
             });
         }
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
@@ -125,6 +155,7 @@ impl VFGenerator {
             n_free,
             fraction_sum,
             fractions,
+            allow_subsets,
         })
     }
 
@@ -147,14 +178,25 @@ impl VFGenerator {
         }
 
         let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
-        if self.n_free > 0 {
-            concentration_buf.push(0.0);
-            concentration_buf.extend(
-                (0..self.n_free - 1).map(|_| rng.random_range(0.0..=1.0 - self.fraction_sum)),
-            );
-            concentration_buf.push(1.0 - self.fraction_sum);
 
-            concentration_buf[1..self.n_free]
+        let roll_n = if self.allow_subsets {
+            if self.n_free == 0 {
+                0
+            } else {
+                rng.random_range(1..=self.n_free)
+            }
+        } else {
+            self.n_free
+        };
+
+        if roll_n > 0 {
+            concentration_buf.push(0.0);
+            let free_mass = 1.0 - self.fraction_sum;
+            concentration_buf
+                .extend((0..roll_n - 1).map(|_| rng.random_range(0.0..=free_mass)));
+            concentration_buf.push(free_mass);
+
+            concentration_buf[1..roll_n]
                 .sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
 
             // compute the difference
@@ -164,9 +206,26 @@ impl VFGenerator {
         }
         concentration_buf.resize(concentration_buf.capacity(), 0.0);
 
+        // compute zeroed entries because of allow_subsets
+        // sample n_zeroed indices smaller than self.n_free without replacement
+        let n_zeroed = self.n_free - roll_n;
+        let mut zeroed_indices = uniform_sample_no_replacement_knuth(n_zeroed, self.n_free, rng);
+        zeroed_indices.sort();
+
+        // shift the zeroed indices such that they won't lie on fixed value positions
+        for (pos, f) in self.fractions.iter().enumerate() {
+            if f.is_some() {
+                for s in zeroed_indices.iter_mut() {
+                    if *s >= pos {
+                        *s += 1;
+                    }
+                }
+            }
+        }
+
         // place the fixed numbers at the correct positions
-        if self.n_free < self.fractions.len() {
-            let mut free_idx = self.n_free;
+        if roll_n < self.fractions.len() {
+            let mut free_idx = self.n_free - n_zeroed;
             for (idx, fraction) in self.fractions.iter().enumerate() {
                 if let Some(fraction) = fraction {
                     // before:
@@ -191,6 +250,12 @@ impl VFGenerator {
                     // +---+---+---+---+---+---+---+---+
                     concentration_buf[free_idx] = concentration_buf[idx];
                     concentration_buf[idx] = fraction.0;
+                    free_idx += 1;
+                }
+
+                if zeroed_indices.binary_search(&idx).is_ok() {
+                    concentration_buf[free_idx] = concentration_buf[idx];
+                    concentration_buf[idx] = 0.0;
                     free_idx += 1;
                 }
             }
@@ -457,7 +522,7 @@ mod test {
     fn vf_generation_basic() {
         let n = 5;
         let vfs = (0..n).map(|_| None).collect_vec();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated.len(), n);
@@ -468,7 +533,7 @@ mod test {
     fn vf_generation_single_fixed() {
         let vfs = vec![None, None, Some(VolumeFraction(0.3))];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[2], 0.3);
@@ -485,7 +550,7 @@ mod test {
             Some(VolumeFraction(0.3)),
         ];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -505,7 +570,7 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -520,7 +585,7 @@ mod test {
         let vfs = vec![Some(VolumeFraction(0.2)), Some(VolumeFraction(0.1)), None];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -535,12 +600,41 @@ mod test {
         let vfs = vec![Some(VolumeFraction(0.6)), Some(VolumeFraction(0.4))];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs).unwrap();
+        let gen = VFGenerator::try_new(vfs, false).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.6);
         assert_eq!(generated[1], 0.4);
         assert_eq!(generated.len(), n);
         assert_eq!(generated.iter().sum::<f64>(), 1.0);
+    }
+
+    #[test]
+    fn vf_generation_allow_subsets() {
+        let vfs = vec![
+            None,
+            Some(VolumeFraction(0.3)),
+            None,
+            None,
+            Some(VolumeFraction(0.3)),
+        ];
+
+        let n = vfs.len();
+        let gen = VFGenerator::try_new(vfs, true).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let mut n_zeroed = 0;
+        for _ in 0..1000 {
+            let generated = gen.generate(&mut rng);
+            assert_eq!(generated[1], 0.3);
+            assert_eq!(generated[4], 0.3);
+            assert_eq!(generated.len(), n);
+            assert!((generated.iter().sum::<f64>() - 1.0).abs() < 1e-10);
+            for v in generated.iter() {
+                if *v == 0.0 {
+                    n_zeroed += 1;
+                }
+            }
+        }
+        assert!(n_zeroed > 0)
     }
 }

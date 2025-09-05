@@ -199,12 +199,17 @@ fn main() {
         structures.push(structure);
     }
 
-    let vf_generator = VFGenerator::try_new(vf_constraints)
-        .map_err(|err| {
-            error!("Error: Could not generate volume fractions: '{err}'");
-            std::process::exit(1);
-        })
-        .expect("error is handled inside");
+    let vf_generator = VFGenerator::try_new(
+        vf_constraints,
+        cfg.sample_parameters
+            .allow_concentration_subsets
+            .unwrap_or(false),
+    )
+    .map_err(|err| {
+        error!("Error: Could not generate volume fractions: '{err}'");
+        std::process::exit(1);
+    })
+    .expect("error is handled inside");
 
     let begin = Instant::now();
 
