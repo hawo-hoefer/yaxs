@@ -98,7 +98,7 @@ They are shared for energy- and angle dispersive XRD simulation.
 sample_parameters:
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
-  allow_concentration_subsets: true                     # allow subsampling of the concentration space
+  max_concentration_subset_dim: 4                       # (Optional) subsample the concentration space (all but max_concentration_subset_dim values are zeroed)
   impurities:                                           # (Optional) list of specifications of impurity peaks
     - d_hkl_ams: [2.5, 3.5]                                 # impurity d-hkl in amstrong
       intensity: 1e2                                        # integral over peak
@@ -119,10 +119,12 @@ sample_parameters:
     - path: phase-3.cif
 ```
 ### Subsets
-If `allow_concentration_subsets` is set to true, a random number of composition components will be set
+If `max_concentration_subset_dim` is set to a value, a random number of composition components will be set
 to zero for each XRD pattern. The zeroed components respect fixed volume fractions. This allows sampling 
 of concentration subspaces and is useful for adding XRD patterns with large volume fractions if many 
 components are present in the dataset.
+`max_concentration_subset_dim` may be at most the number of phases. The program will error if it encounters
+larger values.
 
 ### Impurities
 The optional field `impurities` contains a list of impurity peaks. They may be used to specify extra peaks which occur in experimental samples but don't have a particular association with the phases of interest.
