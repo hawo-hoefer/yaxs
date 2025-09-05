@@ -235,7 +235,7 @@ fn main() {
 
         for i in 0..to_discretize.structures.len() {
             let idx = to_discretize.sim_res.idx(i, 0);
-            info!("======= Structure {} =======", structure_paths[idx]);
+            info!("======= Structure {} =======", structure_paths[i]);
             let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
                 .map(|p| match &cfg.kind {
