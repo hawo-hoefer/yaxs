@@ -7,8 +7,13 @@ use std::sync::Arc;
 use chrono::Utc;
 use clap::Args;
 use log::{error, info};
+use ndarray::ArrayBase;
+use ndarray::Data;
+use ndarray::Dimension;
+use ndarray::RawData;
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
+use ndarray_npy::WritableElement;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
@@ -60,18 +65,40 @@ pub enum PatternMeta {
 }
 
 impl PatternMeta {
-    pub fn name(&self) -> &'static str {
+    fn push_arr<T, S, D>(
+        w: &mut NpzWriter<T>,
+        a: &ArrayBase<S, D>,
+        name: &'static str,
+        meta_names: &mut Vec<String>,
+    ) -> Result<(), ndarray_npy::WriteNpzError>
+    where
+        S: Data,
+        <S as RawData>::Elem: WritableElement,
+        D: Dimension,
+        T: std::io::Seek + std::io::Write,
+    {
+        meta_names.push(name.to_string());
+        w.add_array(name, a)
+    }
+
+    pub fn add<T: std::io::Seek + std::io::Write>(
+        &self,
+        w: &mut NpzWriter<T>,
+        meta_names: &mut Vec<String>,
+    ) -> Result<(), ndarray_npy::WriteNpzError> {
         use PatternMeta::*;
         match self {
-            VolumeFractions(_) => "volume_fractions",
-            WeightFractions(_) => "weight_fractions",
-            Strains(_) => "strains",
-            Etas(_) => "eta",
-            ImpuritySum(_) => "impurity_sum",
-            SampleDisplacementMuM(_) => "sample_displacement_mu_m",
-            MeanDsNm(_) => "mean_ds_nm",
-            CagliotiParams(_) => "caglioti_params",
-            MarchParameter(_) => "march_param_r",
+            VolumeFractions(x) => Self::push_arr(w, x, "volume_fractions", meta_names),
+            WeightFractions(x) => Self::push_arr(w, x, "weight_fractions", meta_names),
+            Strains(x) => Self::push_arr(w, x, "strains", meta_names),
+            Etas(x) => Self::push_arr(w, x, "etas", meta_names),
+            ImpuritySum(x) => Self::push_arr(w, x, "impurity_sum", meta_names),
+            SampleDisplacementMuM(x) => {
+                Self::push_arr(w, x, "sample_displacement_mu_m", meta_names)
+            }
+            MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
+            CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
+            MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
         }
     }
 }
@@ -136,20 +163,8 @@ pub fn write_to_npz(
 
     let mut meta_names = Vec::new();
     for m in meta.iter() {
-        use PatternMeta::*;
-        meta_names.push(m.name().to_string());
-        match m {
-            Etas(array_base) => w.add_array(m.name(), array_base),
-            VolumeFractions(array_base) => w.add_array(m.name(), array_base),
-            Strains(array_base) => w.add_array(m.name(), array_base),
-            MeanDsNm(array_base) => w.add_array(m.name(), array_base),
-            CagliotiParams(array_base) => w.add_array(m.name(), array_base),
-            MarchParameter(array_base) => w.add_array(m.name(), array_base),
-            ImpuritySum(array_base) => w.add_array(m.name(), array_base),
-            WeightFractions(array_base) => w.add_array(m.name(), array_base),
-            SampleDisplacementMuM(array_base) => w.add_array(m.name(), array_base),
-        }
-        .map_err(|err| err.to_string())?;
+        m.add(&mut w, &mut meta_names)
+            .map_err(|err| err.to_string())?;
     }
 
     w.add_array("intensities", intensities)
