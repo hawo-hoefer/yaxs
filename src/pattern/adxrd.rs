@@ -176,6 +176,15 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .map(|x| x.peak.i_hkl as f32)
                     .sum();
             }
+            ImpurityMax(dst) => {
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
+                    .unwrap();
+            }
             MarchParameter(dst) => {
                 for i in 0..n_phases {
                     let flat_idx = self.common.idx(i);
@@ -211,6 +220,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
             SampleDisplacementMuM(Array1::<f32>::zeros(n_patterns)),
+            ImpurityMax(Array1::<f32>::zeros(n_patterns)),
         ];
 
         if with_weight_fractions {
