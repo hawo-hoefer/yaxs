@@ -37,7 +37,7 @@ kind: !AngleDispersive
 
 sample_parameters:
   eta: 0.5
-  allow_concentration_subsets: true
+  max_concentration_subset_dim: 2
   impurities:
     - d_hkl_ams: 2
       intensity: 1
