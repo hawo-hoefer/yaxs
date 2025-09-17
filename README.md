@@ -88,3 +88,4 @@ Further information on the input file structure can be found [here](./inputfile.
     - in `pymatgen`, they are passed separately
     - figure out if I want to do that somehow
     - low priority
+- [ ] fix 'invalid resource handle' bug in CUDA when compiling with rustc 1.89
