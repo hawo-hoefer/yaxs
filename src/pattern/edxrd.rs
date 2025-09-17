@@ -307,6 +307,15 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     .map(|x| x.peak.i_hkl as f32)
                     .sum();
             }
+            ImpurityMax(dst) => {
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
+                    .unwrap();
+            }
             CagliotiParams(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             MarchParameter(dst) => {
@@ -341,6 +350,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
+            ImpurityMax(Array1::<f32>::zeros(n_patterns)),
         ];
         if with_weight_fractions {
             v.push(WeightFractions(Array2::<f32>::zeros((
