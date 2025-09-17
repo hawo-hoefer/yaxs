@@ -183,7 +183,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .iter()
                     .map(|x| x.peak.i_hkl as f32)
                     .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
-                    .unwrap();
+                    .unwrap_or(0.0);
             }
             MarchParameter(dst) => {
                 for i in 0..n_phases {
