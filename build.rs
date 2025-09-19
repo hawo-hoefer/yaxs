@@ -20,26 +20,27 @@ fn main() {
     }
 
     let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
+        .args(["describe", "--tags"])
         .output()
         .expect("need git executable and ability to execute process");
-    let git_hash = String::from_utf8(output.stdout).expect("git hash is utf8");
-    let git_hash = git_hash.trim();
+    let git_desc = String::from_utf8(output.stdout).expect("git hash is utf8");
+    let git_desc = git_desc.trim();
+
     let output = Command::new("git")
         .args(["diff", "--quiet"])
         .output()
         .expect("needs to execute git diff");
+
     let version = if output
         .status
         .code()
         .expect("process needs to run successfully")
-        > 0
+        != 0
     {
-        // no unstaged changes not in worktree
-        format!("at commit: {git_hash} (unstaged changes)")
+        // unstaged changes in worktree
+        format!("{git_desc} (uncommitted changes)")
     } else {
-        format!("at commit: {git_hash} (unstaged changes)")
+        format!("{git_desc}")
     };
-    eprintln!("{}", version);
     println!("cargo::rustc-env=YAXS_VERSION={}", version);
 }
