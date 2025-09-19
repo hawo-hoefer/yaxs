@@ -55,7 +55,7 @@ typedef struct {
   NoiseKind kind;
 } Noise;
 
-typedef void (*error_fn)(const char *, int, const char *, const char *);
+typedef void (*error_fn)(const char *, int, const char *, int, const char *);
 typedef void (*info_fn)(const char *);
 typedef void (*debug_fn)(const char *);
 error_fn errf;
@@ -66,7 +66,7 @@ debug_fn debugf;
 #define PI 3.1415926535897932384626433832795028841972f
 #define log_cuda_err(ret, msg)                                                 \
   if (ret != cudaSuccess) {                                                    \
-    errf(__FILE__, __LINE__, msg, cudaGetErrorString(ret));                    \
+    errf(__FILE__, __LINE__, (msg), (int)(ret), cudaGetErrorString((ret)));    \
     fflush(stderr);                                                            \
     return false;                                                              \
   }
@@ -485,6 +485,8 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
   return true;
 }
 
+static char tmp_str_buf[512] = {0};
+
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
                                  float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len, Noise noise,
@@ -503,53 +505,79 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   CUDAPattern *patterns_d;
   bool return_value = true;
 
-  char alloc_calc[256];
-  snprintf(
-      alloc_calc, sizeof(alloc_calc),
-      "Allocating device memory for rendering of %ld peaks in %ld patterns: "
-      "%ld MiB",
-      peaks_soa.n_peaks_tot, n_patterns,
-      (pat_len * sizeof(float) + n_patterns * pat_len * sizeof(float) +
-       n_patterns * sizeof(CUDAPattern) +
-       4 * sizeof(float) * peaks_soa.n_peaks_tot) /
-          1000000);
+  cudaFree(0);
+  int device = 0;
+  cudaError_t ret = cudaGetDevice(&device);
+  log_cuda_err(ret, "getting device");
+  cudaDeviceProp prop;
 
-  debugf(alloc_calc);
+  ret = cudaGetDeviceProperties(&prop, device);
+  log_cuda_err(ret, "getting device properties");
+
+  snprintf(tmp_str_buf, sizeof(tmp_str_buf),
+           "Cuda Device: %s. Avalilable Memory: %.2f GiB", prop.name,
+           (float)prop.totalGlobalMem / 1e9);
+  infof(tmp_str_buf);
+  memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
+
+  snprintf(
+      tmp_str_buf, sizeof(tmp_str_buf),
+      "Allocating device memory for rendering of %ld peaks in %ld patterns: "
+      "%.2f MiB",
+      peaks_soa.n_peaks_tot, n_patterns,
+      (float)(pat_len * sizeof(float) + n_patterns * pat_len * sizeof(float) +
+              n_patterns * sizeof(CUDAPattern) +
+              4 * sizeof(float) * peaks_soa.n_peaks_tot) /
+          1e6);
+
+  debugf(tmp_str_buf);
+  memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
+
   // clang-format off
-  cudaError_t ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
+  ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
   log_cuda_err(ret, "allocating two_thetas buffer");
+
   ret = cudaDeviceSynchronize();
   log_cuda_err(ret, "synchronizing device after allocating two_thetas");
 
   ret = cudaMalloc(&intensities_d, n_patterns * pat_len * sizeof(float));
   log_cuda_err(ret, "allocating intensities buffer");
+
   ret = cudaDeviceSynchronize();
   log_cuda_err(ret, "synchronizing device after allocating intensities");
 
   ret = cudaMalloc(&patterns_d, n_patterns * sizeof(CUDAPattern));
   log_cuda_err(ret, "allocating pattern buffer");
+
   ret = cudaDeviceSynchronize();
   log_cuda_err(ret, "synchronizing device after allocating patterns");
 
   static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
   ret = cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
   log_cuda_err(ret, "allocating peak info buffer");
+
   ret = cudaDeviceSynchronize();
   log_cuda_err(ret, "synchronizing device after allocating peak info");
 
   if (!patterns_d) {
-    errf("", 0, "allocation failed", "device pointer to peak info is null");
+    errf("", 0, "allocation failed", 0, "device pointer to peak info is null");
     return false;
   }
   debugf("Copying data to GPU");
+
+
   ret = cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peak intensities to device");
+
   ret = cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peak positions to device");
+
   ret = cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peak fwhms to device");
+
   ret = cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying peak etas to device");
+
   PeakSOA peak_soa_d = (PeakSOA){
     .intensity = &peaks_d[0 * peaks_soa.n_peaks_tot],
     .pos = &peaks_d[1 * peaks_soa.n_peaks_tot],
@@ -560,6 +588,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
 
   ret = cudaMemcpy(patterns_d, pat_info, n_patterns * sizeof(CUDAPattern), cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying patterns to device");
+
   ret = cudaMemcpy(two_thetas_d, two_thetas, pat_len * sizeof(float), cudaMemcpyHostToDevice);
   log_cuda_err(ret, "copying two_thetas to device");
   // clang-format on
@@ -570,7 +599,8 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   int array_count = n_patterns * pat_len;
   ret = cudaOccupancyMaxPotentialBlockSize(
       &min_grid_size, &block_size, (void *)render_peaks, 0, array_count);
-  log_cuda_err(ret, "finding cuda kernel launch configuration");
+  log_cuda_err(ret, "determining peak rendering kernel launch configuration");
+
   assert(block_size > 0 && "block size must be larger than 0");
   int grid_size = (array_count + block_size - 1) / block_size;
 

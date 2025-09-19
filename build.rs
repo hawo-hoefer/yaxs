@@ -14,6 +14,7 @@ fn main() {
             .flag("--generate-line-info")
             .flag("-gencode").flag("arch=compute_80,code=sm_80")
             .flag("-gencode").flag("arch=compute_86,code=sm_86")
+            .flag("-t0")
             .file("./src/discretize_cuda.cu")
             .compile("discretize_cuda");
     }

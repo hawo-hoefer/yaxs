@@ -34,6 +34,7 @@ mod ffi {
                 file: *const c_char,
                 line: c_int,
                 msg: *const c_char,
+                cuda_err_code: c_int,
                 cuda_err: *const c_char,
             ),
             info_print_handle: extern "C" fn(msg: *const c_char),
@@ -161,12 +162,14 @@ extern "C" fn c_error_handler(
     _file: *const c_char,
     _line: c_int,
     msg: *const c_char,
+    cuda_err_code: c_int,
     cuda_err: *const c_char,
 ) {
     let msg = unsafe { CStr::from_ptr(msg) };
     let cuda_err = unsafe { CStr::from_ptr(cuda_err) };
     error!(
-        "CUDA Error while {}: {}",
+        "CUDA Error {} while {}: {}",
+        cuda_err_code,
         msg.to_str().expect("valid utf-8"),
         cuda_err.to_str().expect("valid utf-8")
     );
