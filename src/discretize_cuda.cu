@@ -64,20 +64,18 @@ debug_fn debugf;
 
 #define TAU 3.1415926535897932384626433832795028841972f * 2.0f
 #define PI 3.1415926535897932384626433832795028841972f
-#define log_cuda_err(ret, msg)                                                 \
-  if (ret != cudaSuccess) {                                                    \
-    errf(__FILE__, __LINE__, (msg), (int)(ret), cudaGetErrorString((ret)));    \
-    fflush(stderr);                                                            \
-    return false;                                                              \
+#define cu_lerr(ret, msg)                                                                                              \
+  if (ret != cudaSuccess) {                                                                                            \
+    errf(__FILE__, __LINE__, (msg), (int)(ret), cudaGetErrorString((ret)));                                            \
+    fflush(stderr);                                                                                                    \
+    return false;                                                                                                      \
   }
 
 typedef struct {
   uint64_t s[4];
 } Xoshiro256PlusPlus;
 
-__device__ uint64_t rotl(const uint64_t x, int k) {
-  return (x << k) | (x >> (64 - k));
-}
+__device__ uint64_t rotl(const uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
 
 /* Generate the next random float in the range [0, 1] using the Xoshiro256++
  * rng  as implemented by David Blackman and Sebastiano Vigna
@@ -109,8 +107,7 @@ __device__ double xoshiro256_plus_plus_next_double01(Xoshiro256PlusPlus *rng) {
  * which are then used in the box-muller transform to generate a values
  * distributed according to the standard normal distribution.
  */
-__device__ double
-xoshiro256_plus_plus_box_muller_gaussian(Xoshiro256PlusPlus *rng) {
+__device__ double xoshiro256_plus_plus_box_muller_gaussian(Xoshiro256PlusPlus *rng) {
   const float u1 = xoshiro256_plus_plus_next_double01(rng);
   const float u2 = xoshiro256_plus_plus_next_double01(rng);
   return sqrt(-2.0 * log(u1)) * cos(TAU * u2);
@@ -120,9 +117,7 @@ __device__ float gauss(float dx, float sigma) {
   return expf(-0.5f * powf(dx / sigma, 2.0f)) / sqrtf(TAU * powf(sigma, 2.0f));
 }
 
-__device__ float lorentz(float dx, float gamma) {
-  return 1.0f / fma(powf(dx / gamma, 2.0f), PI * gamma, 1.0f);
-}
+__device__ float lorentz(float dx, float gamma) { return 1.0f / fma(powf(dx / gamma, 2.0f), PI * gamma, 1.0f); }
 
 __device__ float pseudo_voigt(float dx, float eta, float fwhm) {
   float two_sqrt_ln_2 = 2.0f * sqrtf(logf(2.0f) * 2.0f);
@@ -131,8 +126,7 @@ __device__ float pseudo_voigt(float dx, float eta, float fwhm) {
   return eta * lorentz(dx, gamma) + (1.0f - eta) * gauss(dx, sigma);
 }
 
-__global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info,
-                             float *intensities, float *two_thetas,
+__global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
                              size_t n_patterns, size_t pat_len) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= n_patterns * pat_len)
@@ -142,8 +136,7 @@ __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info,
   float pat_pos = two_thetas[tid - pattern_idx * pat_len];
 
   float delta_intens = 0.0;
-  for (size_t peak_index = pat.start_idx;
-       peak_index < pat.n_peaks + pat.start_idx; ++peak_index) {
+  for (size_t peak_index = pat.start_idx; peak_index < pat.n_peaks + pat.start_idx; ++peak_index) {
     float dx = pat_pos - soa.pos[peak_index];
     float pv = pseudo_voigt(dx, soa.eta[peak_index], soa.fwhm[peak_index]);
     delta_intens += soa.intensity[peak_index] * pv;
@@ -152,8 +145,7 @@ __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info,
   intensities[tid] = delta_intens;
 }
 
-__global__ void render_exp_bkg(float *intensities, float *two_thetas,
-                               float *bkg_slope, float *scales, size_t pat_len,
+__global__ void render_exp_bkg(float *intensities, float *two_thetas, float *bkg_slope, float *scales, size_t pat_len,
                                size_t n_patterns) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= pat_len * n_patterns)
@@ -166,15 +158,13 @@ __global__ void render_exp_bkg(float *intensities, float *two_thetas,
   intensities[tid] += scales[pattern_idx] * expf(pat_pos * slope);
 }
 
-__global__ void render_poly_bkg(float *intensities, float *two_thetas,
-                                float *coef, float *scales, size_t pat_len,
+__global__ void render_poly_bkg(float *intensities, float *two_thetas, float *coef, float *scales, size_t pat_len,
                                 size_t n_patterns, size_t degree) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= pat_len * n_patterns)
     return;
   size_t pattern_idx = tid / pat_len;
-  float pat_pos =
-      (float)(tid - pattern_idx * pat_len) / (float)pat_len * 2.0f - 1.0;
+  float pat_pos = (float)(tid - pattern_idx * pat_len) / (float)pat_len * 2.0f - 1.0;
   float *local_coef = &coef[pattern_idx * degree];
 
   float di = 0.0f;
@@ -190,8 +180,7 @@ typedef struct {
   double *max;
 } UniformBounds;
 
-__global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
-                                     Xoshiro256PlusPlus *rng_state,
+__global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds, Xoshiro256PlusPlus *rng_state,
                                      size_t pat_len, size_t n_patterns) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid > n_patterns)
@@ -202,8 +191,7 @@ __global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
   Xoshiro256PlusPlus *rng = &rng_state[tid];
 
   for (size_t i = tid * pat_len; i < (tid + 1) * pat_len; ++i) {
-    float noise =
-        (float)(xoshiro256_plus_plus_next_double01(rng) * (hi - lo) + lo);
+    float noise = (float)(xoshiro256_plus_plus_next_double01(rng) * (hi - lo) + lo);
     if (tid == 0) {
       printf("%.2f\n", noise);
     }
@@ -211,8 +199,7 @@ __global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
   }
 }
 
-__global__ void render_gaussian_noise(float *intensities_d, double *sigmas,
-                                      Xoshiro256PlusPlus *rng_state,
+__global__ void render_gaussian_noise(float *intensities_d, double *sigmas, Xoshiro256PlusPlus *rng_state,
                                       size_t pat_len, size_t n_patterns) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid > n_patterns)
@@ -225,8 +212,7 @@ __global__ void render_gaussian_noise(float *intensities_d, double *sigmas,
   }
 }
 
-bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
-                  size_t pat_len, size_t n_patterns) {
+bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state, size_t pat_len, size_t n_patterns) {
   if (noise.kind == NoiseNone) {
     assert(rng_state == NULL);
     assert(noise.v.none == NULL);
@@ -245,15 +231,12 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
   debugf("Allocating noise RNG state");
   uint64_t *rng_state_d;
   double *noise_data_d;
-  cudaError_t ret =
-      cudaMalloc(&rng_state_d, sizeof(Xoshiro256PlusPlus) * n_patterns);
-  log_cuda_err(ret, "allocating random state for noise generation");
+  cu_lerr(cudaMalloc(&rng_state_d, sizeof(Xoshiro256PlusPlus) * n_patterns),
+          "allocating random state for noise generation");
 
   debugf("Initializing noise RNG state");
-  ret = cudaMemcpy(rng_state_d, rng_state,
-                   sizeof(Xoshiro256PlusPlus) * n_patterns,
-                   cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying rng state to gpu during noise generation");
+  cu_lerr(cudaMemcpy(rng_state_d, rng_state, sizeof(Xoshiro256PlusPlus) * n_patterns, cudaMemcpyHostToDevice),
+          "copying rng state to gpu during noise generation");
 
   switch (noise.kind) {
   case NoiseNone:
@@ -262,46 +245,41 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
     infof("rendering gaussian noise");
     // for gaussian noise, we only have standard deviations
     debugf("Allocating memory for standard deviations");
-    ret = cudaMalloc(&noise_data_d, sizeof(double) * n_patterns);
-    log_cuda_err(ret, "allocating device memory for gaussian noise sigmas");
+    cu_lerr(cudaMalloc(&noise_data_d, sizeof(double) * n_patterns),
+            "allocating device memory for gaussian noise sigmas");
 
     debugf("Initializing standard deviations");
-    ret = cudaMemcpy(noise_data_d, noise.v.gaussian,
-                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying gaussian noise standard deviations to device");
+    cu_lerr(cudaMemcpy(noise_data_d, noise.v.gaussian, n_patterns * sizeof(double), cudaMemcpyHostToDevice),
+            "copying gaussian noise standard deviations to device");
 
     debugf("Determining gaussian noise kernel launch parameters");
-    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                             (void *)render_gaussian_noise, 0,
-                                             array_count);
-    log_cuda_err(ret, "finding cuda kernel launch configuration");
+    cu_lerr(
+        cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)render_gaussian_noise, 0, array_count),
+        "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     debugf("Launching gaussian noise kernel");
-    render_gaussian_noise<<<grid_size, block_size>>>(
-        intensities_d, noise_data_d, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
-        n_patterns);
+    render_gaussian_noise<<<grid_size, block_size>>>(intensities_d, noise_data_d, (Xoshiro256PlusPlus *)rng_state_d,
+                                                     pat_len, n_patterns);
   } break;
   case Uniform: {
     infof("Rendering uniform noise");
     debugf("Allocating memory for noise limits");
-    ret = cudaMalloc(&noise_data_d, 2 * sizeof(double) * n_patterns);
-    log_cuda_err(
-        ret, "allocating device memory for uniform noise distribution limits");
+    cu_lerr(cudaMalloc(&noise_data_d, 2 * sizeof(double) * n_patterns),
+            "allocating device memory for uniform noise distribution limits");
 
     debugf("Initializing noise limits");
-    ret = cudaMemcpy(noise_data_d, noise.v.uniform.min,
-                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
+    cu_lerr(cudaMemcpy(noise_data_d, noise.v.uniform.min, n_patterns * sizeof(double), cudaMemcpyHostToDevice),
+            "copying uniform minima to device");
 
-    ret = cudaMemcpy(&noise_data_d[n_patterns], noise.v.uniform.max,
-                     n_patterns * sizeof(double), cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying uniform maxima deviations to device");
+    cu_lerr(
+        cudaMemcpy(&noise_data_d[n_patterns], noise.v.uniform.max, n_patterns * sizeof(double), cudaMemcpyHostToDevice),
+        "copying uniform maxima device");
 
     debugf("Determining uniform noise kernel launch parameters");
-    ret = cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size,
-                                             (void *)render_uniform_noise, 0,
-                                             array_count);
-    log_cuda_err(ret, "finding cuda kernel launch configuration");
+    cu_lerr(
+        cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)render_uniform_noise, 0, array_count),
+        "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
     // bounds are stored the following way: all minima, then all maxima.
     UniformBounds bounds = {
@@ -309,9 +287,8 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
         .max = &noise_data_d[n_patterns],
     };
     debugf("Launching uniform noise kernel");
-    render_uniform_noise<<<grid_size, block_size>>>(
-        intensities_d, bounds, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
-        n_patterns);
+    render_uniform_noise<<<grid_size, block_size>>>(intensities_d, bounds, (Xoshiro256PlusPlus *)rng_state_d, pat_len,
+                                                    n_patterns);
   } break;
   default:
     assert(false && "unreachable: corrupted noise_kind");
@@ -320,18 +297,14 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state,
   cudaFree(noise_data_d);
   cudaFree(rng_state_d);
 
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after noise");
+  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after noise");
 
   return true;
 }
 
-bool render_backgrounds(float *intensities_d, float *two_thetas_d,
-                        BkgKind background_kind, float *bkg_data,
-                        size_t bkg_degree_if_poly,
-                        float *bkg_scales_if_not_none, size_t n_patterns,
-                        size_t pat_len, int grid_size, int block_size) {
-  cudaError_t ret;
+bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind background_kind, float *bkg_data,
+                        size_t bkg_degree_if_poly, float *bkg_scales_if_not_none, size_t n_patterns, size_t pat_len,
+                        int grid_size, int block_size) {
   switch (background_kind) {
   case BkgNone:
     debugf("No background specified");
@@ -342,23 +315,18 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
     infof("Rendering exponential background");
     debugf("Allocating memory for exponential background parameters");
     float *bkg_slope_d, *bkg_scales_d;
-    ret = cudaMalloc(&bkg_slope_d, sizeof(float) * n_patterns);
-    log_cuda_err(ret, "allocating background info buffer");
-    ret = cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns);
-    log_cuda_err(ret, "allocating background scale buffer");
+    cu_lerr(cudaMalloc(&bkg_slope_d, sizeof(float) * n_patterns), "allocating background info buffer");
+    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
 
     debugf("Initializing exponential background parameters");
-    ret = cudaMemcpy(bkg_slope_d, bkg_data, sizeof(float) * n_patterns,
-                     cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying background info to device");
-    ret = cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none,
-                     sizeof(float) * n_patterns, cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying background scales to device");
+    cu_lerr(cudaMemcpy(bkg_slope_d, bkg_data, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background info to device");
+    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background scales to device");
 
     debugf("Launching exponential background kernel");
-    render_exp_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d,
-                                              bkg_slope_d, bkg_scales_d,
-                                              pat_len, n_patterns);
+    render_exp_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_slope_d, bkg_scales_d, pat_len,
+                                              n_patterns);
 
     cudaFree(bkg_slope_d);
     cudaFree(bkg_scales_d);
@@ -369,29 +337,21 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
     infof("Rendering polynomial background");
     debugf("Allocating memory for polynomial background parameters");
     float *bkg_coefs_d, *bkg_scales_d;
-    ret = cudaMalloc(&bkg_coefs_d,
-                     sizeof(float) * n_patterns * bkg_degree_if_poly);
-    log_cuda_err(ret, "allocating background info buffer");
-    // FIX: for some reason, we break here at 100 patterns
-    ret = cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns);
-    log_cuda_err(ret, "allocating background scale buffer");
+    cu_lerr(cudaMalloc(&bkg_coefs_d, sizeof(float) * n_patterns * bkg_degree_if_poly),
+            "allocating background info buffer");
+    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
 
     debugf("initializing polynomial background parameters");
-    ret = cudaMemcpy(bkg_coefs_d, bkg_data,
-                     sizeof(float) * n_patterns * bkg_degree_if_poly,
-                     cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying background info to device");
-    ret = cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none,
-                     sizeof(float) * n_patterns, cudaMemcpyHostToDevice);
-    log_cuda_err(ret, "copying background scales to device");
+    cu_lerr(cudaMemcpy(bkg_coefs_d, bkg_data, sizeof(float) * n_patterns * bkg_degree_if_poly, cudaMemcpyHostToDevice),
+            "copying background info to device");
+    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background scales to device");
 
     debugf("Launching polynomial background kernel");
-    render_poly_bkg<<<grid_size, block_size>>>(
-        intensities_d, two_thetas_d, bkg_coefs_d, bkg_scales_d, pat_len,
-        n_patterns, bkg_degree_if_poly);
+    render_poly_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_coefs_d, bkg_scales_d, pat_len,
+                                               n_patterns, bkg_degree_if_poly);
 
-    ret = cudaPeekAtLastError();
-    log_cuda_err(ret, "Error in dispatch or execution of render_poly_bkg");
+    cu_lerr(cudaPeekAtLastError(), "Error in dispatch or execution of render_poly_bkg");
 
     cudaFree(bkg_coefs_d);
     break;
@@ -406,15 +366,13 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d,
   }
   }
 
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after background");
+  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after background");
   return true;
 }
 
 // TODO: find a more efficient way to do this!
 //       maybe a fancy reduction kernel is in better, but this works for now
-__global__ void get_extrema(float *intensities, size_t n_patterns,
-                            size_t pat_len, float *all_minima,
+__global__ void get_extrema(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima,
                             float *all_maxima) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= n_patterns)
@@ -431,15 +389,13 @@ __global__ void get_extrema(float *intensities, size_t n_patterns,
   all_maxima[tid] = vmax;
 }
 
-__global__ void normalize(float *intensities, size_t n_patterns, size_t pat_len,
-                          float *all_minima, float *all_maxima) {
+__global__ void normalize(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima, float *all_maxima) {
 
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= n_patterns * pat_len)
     return;
   size_t pattern_idx = tid / pat_len;
-  intensities[tid] = (intensities[tid] - all_minima[pattern_idx]) /
-                     (all_maxima[pattern_idx] - all_minima[pattern_idx]);
+  intensities[tid] = (intensities[tid] - all_minima[pattern_idx]) / (all_maxima[pattern_idx] - all_minima[pattern_idx]);
 }
 
 bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
@@ -447,8 +403,7 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
 
   debugf("Allocating memory for extrema");
   float *all_minima, *all_maxima;
-  cudaError_t ret = cudaMalloc(&all_minima, 2 * n_patterns * sizeof(float));
-  log_cuda_err(ret, "allocating extrema buffer for normalization");
+  cu_lerr(cudaMalloc(&all_minima, 2 * n_patterns * sizeof(float)), "allocating extrema buffer for normalization");
   all_maxima = &all_minima[n_patterns];
 
   {
@@ -456,14 +411,12 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns;
-    cudaError_t ret = cudaOccupancyMaxPotentialBlockSize(
-        &min_grid_size, &block_size, (void *)get_extrema, 0, array_count);
-    log_cuda_err(ret, "finding cuda kernel launch configuration");
+    cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)get_extrema, 0, array_count),
+            "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     debugf("launching get_extrema kernel");
-    get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
-                                           all_minima, all_maxima);
+    get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
   }
 
   {
@@ -471,14 +424,12 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns * pat_len;
-    cudaError_t ret = cudaOccupancyMaxPotentialBlockSize(
-        &min_grid_size, &block_size, (void *)normalize, 0, array_count);
-    log_cuda_err(ret, "finding cuda kernel launch configuration");
+    cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)normalize, 0, array_count),
+            "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     debugf("launching normalization kernel");
-    normalize<<<grid_size, block_size>>>(intensities, n_patterns, pat_len,
-                                         all_minima, all_maxima);
+    normalize<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
   }
 
   cudaFree(all_minima);
@@ -487,13 +438,10 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
 
 static char tmp_str_buf[512] = {0};
 
-bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
-                                 float *intensities, float *two_thetas,
-                                 size_t n_patterns, size_t pat_len, Noise noise,
-                                 uint64_t *rng_state, BkgKind background_kind,
-                                 float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none, bool normalize,
-                                 error_fn errfn, info_fn infofn,
+bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
+                                 size_t n_patterns, size_t pat_len, Noise noise, uint64_t *rng_state,
+                                 BkgKind background_kind, float *bkg_data, size_t bkg_degree_if_poly,
+                                 float *bkg_scales_if_not_none, bool normalize, error_fn errfn, info_fn infofn,
                                  debug_fn debugfn) {
   errf = errfn;
   infof = infofn;
@@ -505,59 +453,52 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   CUDAPattern *patterns_d;
   bool return_value = true;
 
-  cudaFree(0);
   int device = 0;
-  cudaError_t ret = cudaGetDevice(&device);
-  log_cuda_err(ret, "getting device");
+  cu_lerr(cudaGetDevice(&device), "getting cuda device");
+
   cudaDeviceProp prop;
+  cu_lerr(cudaGetDeviceProperties(&prop, device), "getting cuda device properties");
 
-  ret = cudaGetDeviceProperties(&prop, device);
-  log_cuda_err(ret, "getting device properties");
+  int rt_version;
+  cu_lerr(cudaRuntimeGetVersion(&rt_version), "getting cuda runtime version");
 
+  int api_version;
+  cu_lerr(cudaDriverGetVersion(&api_version), "getting cuda api version");
+
+  // clang-format off
   snprintf(tmp_str_buf, sizeof(tmp_str_buf),
-           "Cuda Device: %s. Avalilable Memory: %.2f GiB", prop.name,
-           (float)prop.totalGlobalMem / 1e9);
-  infof(tmp_str_buf);
+           "General Info\n"
+           "Device:            %s.\n"
+           "Avalilable Memory: %.2f GiB\n"
+           "API Version:       %d\n"
+           "Runtime Version:   %d",
+           prop.name, (float)prop.totalGlobalMem / 1e9,
+           api_version, rt_version);
+  // clang-format on
+
+  debugf(tmp_str_buf);
   memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
 
-  snprintf(
-      tmp_str_buf, sizeof(tmp_str_buf),
-      "Allocating device memory for rendering of %ld peaks in %ld patterns: "
-      "%.2f MiB",
-      peaks_soa.n_peaks_tot, n_patterns,
-      (float)(pat_len * sizeof(float) + n_patterns * pat_len * sizeof(float) +
-              n_patterns * sizeof(CUDAPattern) +
-              4 * sizeof(float) * peaks_soa.n_peaks_tot) /
-          1e6);
+  snprintf(tmp_str_buf, sizeof(tmp_str_buf),
+           "Allocating device memory for rendering of %ld peaks in %ld patterns: "
+           "%.2f MiB",
+           peaks_soa.n_peaks_tot, n_patterns,
+           (float)(pat_len * sizeof(float) + n_patterns * pat_len * sizeof(float) + n_patterns * sizeof(CUDAPattern) +
+                   4 * sizeof(float) * peaks_soa.n_peaks_tot) /
+               1e6);
 
   debugf(tmp_str_buf);
   memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
 
   // clang-format off
-  ret = cudaMalloc(&two_thetas_d, pat_len * sizeof(float));
-  log_cuda_err(ret, "allocating two_thetas buffer");
+  cu_lerr(cudaMalloc( &two_thetas_d,              pat_len * sizeof(float)), "allocating two_thetas_buffer");
+  cu_lerr(cudaMalloc(&intensities_d, n_patterns * pat_len * sizeof(float)), "allocating intensities buffer");
+  cu_lerr(cudaMalloc(   &patterns_d,     n_patterns * sizeof(CUDAPattern)), "allocating pattern buffer");
 
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after allocating two_thetas");
-
-  ret = cudaMalloc(&intensities_d, n_patterns * pat_len * sizeof(float));
-  log_cuda_err(ret, "allocating intensities buffer");
-
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after allocating intensities");
-
-  ret = cudaMalloc(&patterns_d, n_patterns * sizeof(CUDAPattern));
-  log_cuda_err(ret, "allocating pattern buffer");
-
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after allocating patterns");
+  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after allocating patterns");
 
   static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
-  ret = cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot);
-  log_cuda_err(ret, "allocating peak info buffer");
-
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after allocating peak info");
+  cu_lerr(cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot), "allocating peak info buffer");
 
   if (!patterns_d) {
     errf("", 0, "allocation failed", 0, "device pointer to peak info is null");
@@ -566,17 +507,10 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
   debugf("Copying data to GPU");
 
 
-  ret = cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peak intensities to device");
-
-  ret = cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peak positions to device");
-
-  ret = cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peak fwhms to device");
-
-  ret = cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying peak etas to device");
+  cu_lerr(cudaMemcpy(&peaks_d[0 * peaks_soa.n_peaks_tot], peaks_soa.intensity, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice), "copying peak intensities to device");
+  cu_lerr(cudaMemcpy(&peaks_d[1 * peaks_soa.n_peaks_tot],       peaks_soa.pos, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice), "copying peak positions to device");
+  cu_lerr(cudaMemcpy(&peaks_d[2 * peaks_soa.n_peaks_tot],      peaks_soa.fwhm, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice), "copying peak fwhms to device");
+  cu_lerr(cudaMemcpy(&peaks_d[3 * peaks_soa.n_peaks_tot],       peaks_soa.eta, sizeof(float) * peaks_soa.n_peaks_tot, cudaMemcpyHostToDevice), "copying peak etas to device");
 
   PeakSOA peak_soa_d = (PeakSOA){
     .intensity = &peaks_d[0 * peaks_soa.n_peaks_tot],
@@ -586,41 +520,31 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
     .n_peaks_tot = peaks_soa.n_peaks_tot,
   };
 
-  ret = cudaMemcpy(patterns_d, pat_info, n_patterns * sizeof(CUDAPattern), cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying patterns to device");
-
-  ret = cudaMemcpy(two_thetas_d, two_thetas, pat_len * sizeof(float), cudaMemcpyHostToDevice);
-  log_cuda_err(ret, "copying two_thetas to device");
+  cu_lerr(cudaMemcpy(  patterns_d,   pat_info, n_patterns * sizeof(CUDAPattern), cudaMemcpyHostToDevice), "copying patterns to device");
+  cu_lerr(cudaMemcpy(two_thetas_d, two_thetas,          pat_len * sizeof(float), cudaMemcpyHostToDevice), "copying two_thetas to device");
   // clang-format on
 
   debugf("Determining peak rendering kernel launch parameters");
   int block_size = 0;
   int min_grid_size = 0;
   int array_count = n_patterns * pat_len;
-  ret = cudaOccupancyMaxPotentialBlockSize(
-      &min_grid_size, &block_size, (void *)render_peaks, 0, array_count);
-  log_cuda_err(ret, "determining peak rendering kernel launch configuration");
+  cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)render_peaks, 0, array_count),
+          "determining peak rendering kernel launch configuration");
 
   assert(block_size > 0 && "block size must be larger than 0");
   int grid_size = (array_count + block_size - 1) / block_size;
 
   infof("Rendering peaks");
-  render_peaks<<<grid_size, block_size>>>(peak_soa_d, patterns_d, intensities_d,
-                                          two_thetas_d, n_patterns, pat_len);
-
-  ret = cudaPeekAtLastError();
-  log_cuda_err(ret, "launching discretization kernel");
-
-  ret = cudaDeviceSynchronize();
-  log_cuda_err(ret, "synchronizing device after peak rendering");
+  render_peaks<<<grid_size, block_size>>>(peak_soa_d, patterns_d, intensities_d, two_thetas_d, n_patterns, pat_len);
+  cu_lerr(cudaPeekAtLastError(), "launching discretization kernel");
+  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after peak rendering");
 
   if (!render_noise(intensities_d, noise, rng_state, pat_len, n_patterns)) {
     return false;
   }
 
-  if (!render_backgrounds(intensities_d, two_thetas_d, background_kind,
-                          bkg_data, bkg_degree_if_poly, bkg_scales_if_not_none,
-                          n_patterns, pat_len, grid_size, block_size)) {
+  if (!render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data, bkg_degree_if_poly,
+                          bkg_scales_if_not_none, n_patterns, pat_len, grid_size, block_size)) {
     return false;
   }
 
@@ -629,16 +553,12 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info,
       return false;
     }
 
-    ret = cudaDeviceSynchronize();
-    log_cuda_err(ret, "synchronizing device after normalization");
+    cu_lerr(cudaDeviceSynchronize(), "synchronizing device after normalization");
   }
 
   infof("Copying patterns from GPU to CPU");
-  ret =
-      cudaMemcpy(intensities, intensities_d,
-                 n_patterns * pat_len * sizeof(float), cudaMemcpyDeviceToHost);
-  log_cuda_err(ret, "copying intensities from "
-                    "device to host");
+  cu_lerr(cudaMemcpy(intensities, intensities_d, n_patterns * pat_len * sizeof(float), cudaMemcpyDeviceToHost),
+          "copying intensities from device to host");
 
   cudaFree(peaks_d);
   cudaFree(patterns_d);
