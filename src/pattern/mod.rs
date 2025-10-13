@@ -136,19 +136,32 @@ impl VFGenerator {
         }
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
+        const ATOL: f64 = 1e-5;
 
-        if fraction_sum > 1.0 {
+        if fraction_sum > 1.0 + ATOL {
             return Err(format!(
-                "Specified fractions need to sum to less than or equal to 1.0. Got sum: {}",
+                "Specified fractions must to sum to less than or equal to 1.0. Got sum: {}",
                 fraction_sum
             ));
+        }
+        if fraction_sum > 1.0 {
+            // ignore the extra volume fraction < ATOL
+            warn!("Fraction sum is larger than 1.0 but inside the tolerance: {fraction_sum}. Reducing each set phase equally");
+            let delta = fraction_sum - 1.0;
+            let n_set = fractions.len() - n_free;
+            for fraction in fractions.iter_mut().filter_map(|x| match x {
+                Some(v) => Some(v),
+                None => None,
+            }) {
+                fraction.0 -= delta / n_set as f64;
+            }
         }
 
         if fraction_sum > 0.99 && n_free > 0 {
             warn!("Fraction sum ({fraction_sum:.3}) is close to 1. There are {n_free} non-fixed volume fractions which are strongly constrained because of this.");
         }
 
-        if n_free == 0 && fraction_sum < 1.0 - 1e-5 {
+        if n_free == 0 && fraction_sum < 1.0 - ATOL {
             // no free parameters and fraction sum smaller than 1
             return Err(format!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum));
         }
