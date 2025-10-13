@@ -122,7 +122,7 @@ pub fn uniform_sample_no_replacement_knuth(
 
 impl VFGenerator {
     pub fn try_new(
-        fractions: Vec<Option<VolumeFraction>>,
+        mut fractions: Vec<Option<VolumeFraction>>,
         max_subset_dim: Option<usize>,
     ) -> Result<Self, String> {
         if fractions.len() == 0 {
