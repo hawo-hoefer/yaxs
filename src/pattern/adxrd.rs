@@ -6,7 +6,6 @@ use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::noise::Noise;
 use itertools::Itertools;
-use log::debug;
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
