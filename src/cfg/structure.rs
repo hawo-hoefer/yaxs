@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::structure::{Strain, Structure};
 
-use super::{MarchDollaseCfg, Parameter, VolumeFraction};
+use super::{POCfg, Parameter, VolumeFraction};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum StrainCfg {
@@ -47,7 +47,7 @@ pub fn apply_strain_cfg(
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
-    pub preferred_orientation: Option<MarchDollaseCfg>,
+    pub preferred_orientation: Option<POCfg>,
     pub strain: Option<StrainCfg>,
     pub volume_fraction: Option<VolumeFraction>,
     pub mean_ds_nm: Parameter<f64>,

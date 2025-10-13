@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub};
 
 use serde::de::{self, Visitor};
 use serde::ser::SerializeSeq;
@@ -111,6 +111,23 @@ impl<T> Mat<T, 3, 3> {
 
         Some(self.adjugate().scale(T::one() / det))
     }
+
+    pub fn extend_to_homog(&self) -> Mat4<T>
+    where
+        T: Clone + Copy + Zero + One,
+    {
+        let mut ret = Mat4::zeros();
+
+        for row in 0..3 {
+            for col in 0..3 {
+                ret[(row, col)] = self[(row, col)];
+            }
+        }
+
+        ret[(3, 3)] = T::one();
+
+        ret
+    }
 }
 
 impl<T, const ROWS: usize> std::ops::IndexMut<usize> for ColVec<T, ROWS> {
@@ -168,11 +185,49 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
         }
         sum.sqrt()
     }
+
+    pub fn zip<'a, S>(
+        &'a self,
+        other: &'a ColVec<S, ROWS>,
+    ) -> impl Iterator<Item = (&'a T, &'a S)> {
+        self.iter_values().zip(other.iter_values())
+    }
+
+    pub fn zip_mut<'a>(
+        &'a mut self,
+        other: &'a mut Self,
+    ) -> impl Iterator<Item = (&'a mut T, &'a mut T)> {
+        self.iter_values_mut().zip(other.iter_values_mut())
+    }
+}
+
+impl<T, const ROWS: usize> ColVec<T, ROWS> {
+    pub fn from_col(values: [T; ROWS]) -> Self {
+        Mat::from_cols([values])
+    }
 }
 
 impl<T> Vec3<T> {
     pub fn new(x: T, y: T, z: T) -> Self {
         Mat::from_rows([[x], [y], [z]])
+    }
+
+    /// extend self by putting v in the last position of self
+    ///
+    /// * `v`: value to extend by
+    ///
+    /// ```
+    /// use yaxs::math::linalg::{Vec3, Vec4};
+    ///
+    /// let v = Vec3::new(1, 2, 3);
+    ///
+    /// assert_eq!(v.extend(4), Vec4::new(1, 2, 3, 4));
+    /// ```
+    pub fn extend(&self, v: T) -> Vec4<T>
+    where
+        T: Clone,
+    {
+        Vec4::new(self[0].clone(), self[1].clone(), self[2].clone(), v)
     }
 
     /// Compute the cross product with rhs
@@ -229,6 +284,26 @@ impl<T> Vec4<T> {
         conjug
     }
 
+    // TODO: test this
+    pub fn quaternion_multiplication(&self, rhs: &Self) -> Self
+    where
+        T: Float + AddAssign<T>,
+    {
+        // x | 1   i   j   k
+        // --+--------------
+        // 1 | 1   i   j   k
+        // i | i  -1   k  -j
+        // j | j  -k  -1   i
+        // k | k   j  -i  -1
+        let mat = self.matmul(&rhs.transpose());
+        let x = mat[(0, 0)] - mat[(1, 1)] - mat[(2, 2)] - mat[(3, 3)];
+        let y = mat[(0, 1)] + mat[(1, 0)] + mat[(2, 3)] - mat[(3, 2)];
+        let z = mat[(0, 2)] + mat[(2, 0)] - mat[(1, 3)] + mat[(3, 1)];
+        let w = mat[(0, 4)] + mat[(4, 0)] + mat[(1, 2)] - mat[(2, 1)];
+
+        Self::new(x, y, z, w)
+    }
+
     /// interpreting self as a quaternion, rotate v
     ///
     /// $$v' = q v q^{-1}$$
@@ -275,6 +350,34 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     {
         // SAFETY: we set the elements right after
         let mut ret: ColVec<_, COLS> = unsafe { MaybeUninit::uninit().assume_init() };
+
+        for t in 0..COLS {
+            ret[(t, 0)] = self[(idx, t)];
+        }
+
+        ret
+    }
+
+    /// Get a copy of a column
+    ///
+    /// * `idx`: row index
+    /// ```
+    /// use yaxs::math::linalg::{Mat, ColVec};
+    ///
+    /// let m = Mat::from_rows([
+    ///     [1, 2, 3],
+    ///     [3, 4, 5],
+    /// ]);
+    ///
+    /// assert_eq!(m.row(0), ColVec::from_cols([[1, 2, 3]]));
+    /// assert_eq!(m.row(1), ColVec::from_cols([[3, 4, 5]]));
+    /// ```
+    pub fn col(&self, idx: usize) -> ColVec<T, ROWS>
+    where
+        T: Copy,
+    {
+        // SAFETY: we set the elements right after
+        let mut ret: Mat<_, ROWS, 1> = unsafe { MaybeUninit::uninit().assume_init() };
 
         for t in 0..COLS {
             ret[t] = self[(idx, t)];
@@ -325,7 +428,7 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// assert_eq!(mapped[(1, 1)], true);
     /// assert_eq!(mapped[(1, 2)], true);
     /// ```
-    pub fn map<V>(&self, p: impl Fn(&T) -> V) -> Mat<V, ROWS, COLS>
+    pub fn map<V>(&self, mut p: impl FnMut(&T) -> V) -> Mat<V, ROWS, COLS>
     where
         T: Clone + Copy,
     {
@@ -336,6 +439,21 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         }
 
         ret
+    }
+
+    /// return whether all elements of self satisfy some condition p
+    ///
+    /// * `p`: condition to be evaluated on each element individually
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let v = Mat::from_rows([[8, 10, 12], [2, 4, 6]]);
+    ///
+    /// assert!(v.all(|&x| x % 2 == 0));
+    /// ```
+    pub fn all(&self, p: impl Fn(&T) -> bool) -> bool {
+        self.iter_values().all(p)
     }
 
     /// return the number of rows
@@ -608,9 +726,20 @@ impl<T, const N: usize> Mat<T, N, N> {
     }
 }
 
+impl<T, const ROWS: usize, const COLS: usize> std::ops::AddAssign for Mat<T, ROWS, COLS>
+where
+    T: AddAssign<T> + Clone + Copy,
+{
+    fn add_assign(&mut self, rhs: Self) {
+        for (v, r) in self.iter_values_mut().zip(rhs.iter_values()) {
+            *v += *r;
+        }
+    }
+}
+
 impl<T, const ROWS: usize, const COLS: usize> std::ops::Add for Mat<T, ROWS, COLS>
 where
-    T: Clone + Add<T, Output = T> + Copy,
+    T: Add<T, Output = T> + Clone + Copy,
 {
     type Output = Mat<T, ROWS, COLS>;
 
@@ -619,6 +748,108 @@ where
 
         for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
             *r = *r + *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Add for &Mat<T, ROWS, COLS>
+where
+    T: Add<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut ret = rhs.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
+            *r = *r + *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul for Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let mut ret = rhs.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
+            *r = *r * *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul<T> for Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        let mut ret = self.clone();
+
+        for r in ret.iter_values_mut() {
+            *r = *r * rhs
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> Div for Mat<T, ROWS, COLS>
+where
+    T: Div<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        let mut ret = self.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(rhs.iter_values()) {
+            *r = *r / *v
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> Div for &Mat<T, ROWS, COLS>
+where
+    T: Div<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        let mut ret = self.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(rhs.iter_values()) {
+            *r = *r / *v
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> Div<T> for Mat<T, ROWS, COLS>
+where
+    T: Div<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn div(self, rhs: T) -> Self::Output {
+        let mut ret = self.clone();
+
+        for r in ret.iter_values_mut() {
+            *r = *r / rhs
         }
 
         ret
@@ -676,6 +907,28 @@ where
     }
 }
 
+impl<T, V, const N: usize, const M: usize> Sub<Self> for Mat<T, M, N>
+where
+    for<'a> &'a T: Sub<Output = V>,
+{
+    type Output = Mat<V, M, N>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        // SAFETY: this is ok because we set every value
+        let mut ret: Mat<_, M, N> = unsafe { MaybeUninit::uninit().assume_init() };
+
+        for ((retv, sv), rhsv) in ret
+            .iter_values_mut()
+            .zip(self.iter_values())
+            .zip(rhs.iter_values())
+        {
+            *retv = sv - rhsv;
+        }
+
+        ret
+    }
+}
+
 impl<T, V, const N: usize, const M: usize> Sub<Self> for &Mat<T, M, N>
 where
     for<'a> &'a T: Sub<Output = V>,
@@ -711,6 +964,38 @@ where
             seq.serialize_element(v)?;
         }
         seq.end()
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::fmt::Display for Mat<T, ROWS, COLS>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Mat<{ROWS}, {COLS}>([")?;
+        let not_1d = ROWS > 1 && COLS > 1;
+
+        if not_1d {
+            write!(f, "\n")?;
+        }
+        for row in 0..ROWS {
+            if not_1d {
+                write!(f, "    ")?;
+            }
+            write!(f, "[")?;
+            for col in 0..COLS {
+                write!(f, "{}", self[(row, col)])?;
+                if col != COLS - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            write!(f, "]")?;
+            if not_1d {
+                write!(f, "\n")?;
+            }
+        }
+        write!(f, "])")?;
+        Ok(())
     }
 }
 

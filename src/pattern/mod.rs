@@ -120,6 +120,36 @@ pub fn uniform_sample_no_replacement_knuth(
     samples
 }
 
+/// sample integers uniformly without replacement from the interval [0, max_val)
+///
+/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
+///
+/// * `n`: number of samples
+/// * `max_val`: upper bound of the sampling range
+/// * `rng`: random number generator
+pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
+    max_val: usize,
+    rng: &mut impl Rng,
+) -> [usize; N] {
+    // TODO: does this belong in stats?
+    let mut samples = [0; N];
+    let mut t = 0;
+
+    let mut n = 0;
+    while n < N {
+        let u = rng.random_range(0.0..=1.0);
+        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
+            t += 1;
+        } else {
+            samples[n] = t;
+            n += 1;
+            t += 1;
+        }
+    }
+
+    samples
+}
+
 impl VFGenerator {
     pub fn try_new(
         fractions: Vec<Option<VolumeFraction>>,

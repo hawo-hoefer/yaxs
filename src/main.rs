@@ -8,12 +8,14 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
+use yaxs::math::linalg::{ColVec, Mat4};
+use yaxs::math::stats::BinghamDistribution;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
 
-use yaxs::cfg::{Config, SimulationKind, StructureDef};
+use yaxs::cfg::{Config, POCfg, SimulationKind, StructureDef};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,
@@ -92,6 +94,39 @@ impl CologStyle for CustomPrefix {
 }
 
 fn main() {
+    let mut args = std::env::args();
+
+    let program = args.next().unwrap();
+
+    let N: usize = args.next().unwrap().parse().unwrap();
+    let k_max: f64 = args.next().unwrap().parse().unwrap();
+    let s0: f64 = args.next().unwrap().parse().unwrap();
+    let s1: f64 = args.next().unwrap().parse().unwrap();
+
+    let only_ks = std::env::args().find(|x| x == "a").is_some();
+    let show_strength = std::env::args().find(|x| x == "b").is_some();
+
+    let po = POCfg::FullEpitaxialGrowth {
+        k_max,
+        strength: yaxs::cfg::Parameter::Range(s0, s1),
+    };
+
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(123123);
+    let mut gen = po.try_into_generator(&mut rng).unwrap();
+    for _ in 0..N {
+        let odf = gen.sample(&mut rng);
+
+        // println!("{:.4}, {:.4}, {:.4}, {:.4}", s[0], s[1], s[2], s[3]);
+
+        for _ in 0..1000 {
+            let q = odf.sample(&mut rng);
+            println!("{}, {}, {}, {}", q[0], q[1], q[2], q[3]);
+        }
+        println!("---");
+    }
+}
+
+fn main2() {
     colog::basic_builder()
         .filter_level(log::LevelFilter::Info)
         .format(colog::formatter(CustomPrefix))
@@ -333,12 +368,6 @@ fn main() {
             .structures
             .iter()
             .map(|StructureDef { path, .. }| path.to_string())
-            .collect_vec(),
-        preferred_orientation_hkl: cfg
-            .sample_parameters
-            .structures
-            .iter()
-            .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl.clone()))
             .collect_vec(),
         cfg: cfg.kind.clone(),
     };

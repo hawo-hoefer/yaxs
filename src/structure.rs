@@ -10,13 +10,14 @@ use std::sync::Arc;
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 
-use crate::cfg::{apply_strain_cfg, CompactSimResults, SampleParameters, StrainCfg};
-use crate::cfg::{MarchDollaseCfg, ToDiscretize};
+use crate::cfg::{
+    apply_strain_cfg, CompactSimResults, POCfg, SampleParameters, StrainCfg, ToDiscretize,
+};
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::MarchDollase;
+use crate::preferred_orientation::BinghamODF;
 use crate::site::Site;
 use crate::uninit_vec;
 
@@ -302,12 +303,15 @@ impl Structure {
     ///
     /// * `min_r`: minimum d-spacing to consider
     /// * `max_r`: maximum d-spacing to consider
-    /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_d_spacings_intensities(
+    /// * `po`: optional preferred orientation as Bingham Orientation distribution function
+    ///         relative to the beam direction
+    /// * `chi`: goniometer chi
+    /// * `phi`: goniometer phi
+    pub fn get_d_spacings_intensities<'a>(
         &self,
         min_r: f64,
         max_r: f64,
-        po: Option<&MarchDollase>,
+        alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
@@ -338,8 +342,8 @@ impl Structure {
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
 
-            if let Some(po) = po {
-                let w = po.weight(&hkl, &self.lat);
+            if let Some(Alignment { po, phi, chi }) = alignment {
+                let w = po.weight(&hkl, &self.lat, phi, chi);
                 i_hkl *= w;
             }
             let d_hkl = 1.0 / g_hkl;
@@ -392,16 +396,19 @@ impl Structure {
     /// * `wavelength_ams`: wavelength for peaks in Amstrong
     /// * `two_theta_range`: two theta range to search for peaks in degrees
     /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_adxrd_peaks(
+    /// * `goniometer_pos`: goniometer angles phi and chi in radians
+    ///    chi is the angle of rotation around the beam, and
+    ///    phi is the angle of rotation around the axis vertical to the beam
+    pub fn get_adxrd_peaks<'a>(
         &self,
         wavelength_ams: f64,
         two_theta_range: &(f64, f64),
-        po: Option<&MarchDollase>,
+        alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po)
+        self.get_d_spacings_intensities(min_r, max_r, alignment)
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -409,11 +416,11 @@ impl Structure {
     /// * `theta_deg`: fixed angle of sample to beam
     /// * `energy_kev_range`: energy range in keV to consider for d-spacings
     /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_edxrd_peaks(
+    pub fn get_edxrd_peaks<'a>(
         &self,
         theta_deg: f64,
         energy_kev_range: &(f64, f64),
-        po: Option<&MarchDollase>,
+        alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
@@ -423,7 +430,7 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po)
+        self.get_d_spacings_intensities(min_r, max_r, alignment)
     }
 }
 
@@ -477,7 +484,7 @@ impl<'a> Lattice {
 
 struct PeakSimResult {
     strain: Strain,
-    po: Option<MarchDollase>,
+    po: Option<BinghamODF>,
     peaks: Peaks,
     struct_id: usize,
     permutation_id: usize,
@@ -489,7 +496,7 @@ struct WriteCtx {
 
 struct Inner {
     strain: Vec<Strain>,
-    pos: Vec<Option<MarchDollase>>,
+    pos: Vec<Option<BinghamODF>>,
     peaks: Vec<MaybeUninit<Peaks>>,
     ok: Vec<bool>,
     n_permutations: usize,
@@ -559,6 +566,12 @@ impl WriteCtx {
     }
 }
 
+struct Alignment<'a> {
+    po: &'a BinghamODF,
+    phi: f64,
+    chi: f64,
+}
+
 /// Generate Peaks for the input structures and their physical parameters.
 ///
 /// * `sample_params`: physical parameter ranges for the structures
@@ -575,7 +588,7 @@ pub fn simulate_peaks(
     (min_r, max_r): (f64, f64),
     sample_parameters: SampleParameters,
     structures: Box<[Structure]>,
-    structure_po_configs: Box<[Option<MarchDollaseCfg>]>,
+    structure_po_configs: Box<[Option<POCfg>]>,
     structure_strain_configs: Box<[Option<StrainCfg>]>,
     structure_files: Box<[String]>,
     rng: &mut impl Rng,
@@ -590,7 +603,7 @@ pub fn simulate_peaks(
 
     struct RunCtx {
         structs: Arc<[Structure]>,
-        po_cfgs: Box<[Option<MarchDollaseCfg>]>,
+        po_cfgs: Box<[Option<POCfg>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_files: Box<[String]>,
     }
@@ -606,9 +619,13 @@ pub fn simulate_peaks(
                 return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]));
             };
             let po_cfg = &self.po_cfgs[job.structure];
-            let po = po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
+            let po = po_cfg.as_ref().map(|cfg| todo!());
             let peaks = perm_s
-                .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref())
+                .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref().map(|odf| Alignment {
+                    po: odf,
+                    phi: todo!(),
+                    chi: todo!(),
+                }))
                 .into_boxed_slice();
 
             Ok(PeakSimResult {
@@ -876,5 +893,4 @@ loop_
             assert!(diff < ATOL, "Simulated and actual intensities difference exceeds tolerance (at position {s_pos}). Simulated: {s_intens}, actual: {a_intens}. diff: {diff}");
         }
     }
-
 }

@@ -21,6 +21,7 @@ use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
+use crate::preferred_orientation::BinghamODF;
 
 #[derive(Args, Clone)]
 pub struct Opts {
@@ -61,7 +62,10 @@ pub enum PatternMeta {
     CagliotiParams(Array2<f32>),
     ImpuritySum(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
-    MarchParameter(Array2<f32>), // for now, we're only going to allow one march parameter (and orientation) per phase
+    BinghamODFParams { // patterns, phases, parameter dim
+        orientations: Array3<f32>,
+        k: Array3<f32>,
+    }, // for now, we're only going to allow one march parameter (and orientation) per phase
 }
 
 impl PatternMeta {
@@ -98,7 +102,10 @@ impl PatternMeta {
             }
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
             CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
-            MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
+            BinghamODFParams { orientations, k } => {
+                Self::push_arr(w, orientations, "bingham_odf_orientations", meta_names)?;
+                Self::push_arr(w, k, "bingham_odf_k", meta_names)
+            }
         }
     }
 }
@@ -108,7 +115,6 @@ pub struct Extra {
     pub cfg: SimulationKind,
     pub max_phases: usize,
     pub encoding: Vec<String>,
-    pub preferred_orientation_hkl: Vec<Option<Vec3<f64>>>,
 }
 
 #[derive(Serialize)]

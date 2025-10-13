@@ -12,11 +12,11 @@ use std::sync::Arc;
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::{debug, info};
-use parameter::Parameter;
+pub use parameter::Parameter;
 use probability::Probability;
 
 pub use noise::NoiseSpec;
-pub use preferred_orientation::MarchDollaseCfg;
+pub use preferred_orientation::POCfg;
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
 
@@ -28,7 +28,7 @@ use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
-use crate::preferred_orientation::MarchDollase;
+use crate::preferred_orientation::BinghamODF;
 use crate::structure::{Strain, Structure};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -98,7 +98,7 @@ impl SimulationKind {
     pub fn simulate_peaks(
         &self,
         structures: Box<[Structure]>,
-        pref_o: Box<[Option<MarchDollaseCfg>]>,
+        pref_o: Box<[Option<POCfg>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
@@ -180,11 +180,20 @@ pub struct EnergyDispersive {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TextureMeasurement {
+    pub phi_range: (f64, f64),
+    pub chi_range: (f64, f64),
+    pub phi_steps: usize,
+    pub chi_steps: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
     pub noise: Option<NoiseSpec>,
+    pub texture_measurement: Option<TextureMeasurement>,
 
     pub abstol: f32,
 }
@@ -241,7 +250,7 @@ impl SampleParameters {
 pub struct CompactSimResults {
     pub all_simulated_peaks: Box<[Peaks]>,
     pub all_strains: Box<[Strain]>,
-    pub all_preferred_orientations: Box<[Option<MarchDollase>]>,
+    pub all_preferred_orientations: Box<[Option<BinghamODF>]>,
     pub n_permutations: usize,
 }
 
@@ -349,6 +358,7 @@ impl ToDiscretize {
                 random_seed: rng.random(),
             },
             beamline: energy_dispersive.beamline.clone(),
+            texture: simulation_parameters.texture_measurement.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions,

@@ -176,11 +176,12 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .map(|x| x.peak.i_hkl as f32)
                     .sum();
             }
-            MarchParameter(dst) => {
+            BinghamODFParams { orientations, k } => {
                 for i in 0..n_phases {
                     let flat_idx = self.common.idx(i);
                     let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
-                    dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
+                    todo!()
+                    // dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
                 }
             }
             WeightFractions(dst) => {
@@ -208,7 +209,10 @@ impl Discretizer for DiscretizeAngleDispersive {
             CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
+            BinghamODFParams {
+                orientations: Array3::<f32>::zeros((n_patterns, n_phases, 4)),
+                k: Array3::<f32>::zeros((n_patterns, n_phases, 4)),
+            },
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
             SampleDisplacementMuM(Array1::<f32>::zeros(n_patterns)),
         ];

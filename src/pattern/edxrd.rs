@@ -4,11 +4,12 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
+use crate::cfg::{EnergyDispersive, SimulationParameters, TextureMeasurement, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
 use crate::pattern::lorentz_polarization_factor;
+use crate::preferred_orientation::BinghamODF;
 
 use super::{
     DiscretizeJobGenerator, Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator,
@@ -197,6 +198,7 @@ pub struct EDXRDMeta {
 pub struct DiscretizeEnergyDispersive {
     pub common: RenderCommon,
     pub beamline: Beamline,
+    pub texture: Option<TextureMeasurement>,
     pub normalize: bool,
     pub meta: EDXRDMeta,
 }
@@ -309,11 +311,16 @@ impl Discretizer for DiscretizeEnergyDispersive {
             }
             CagliotiParams(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
-            MarchParameter(dst) => {
+            BinghamODFParams { orientations, k } => {
                 for i in 0..n_phases {
                     let flat_idx = self.common.idx(i);
-                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
-                    dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
+                    todo!()
+                    // let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
+                    // if let Some(po) = po.as_ref() {
+                    //     orientations[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
+                    // } else {
+                    //     dst[(pat)]
+                    // }
                 }
             }
             WeightFractions(dst) => {
@@ -339,7 +346,10 @@ impl Discretizer for DiscretizeEnergyDispersive {
             Etas(Array1::<f32>::zeros(n_patterns)),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
+            BinghamODFParams {
+                orientations: Array3::<f32>::zeros((n_patterns, n_phases, 4)),
+                k: Array3::<f32>::zeros((n_patterns, n_phases, 4)),
+            },
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
         ];
         if with_weight_fractions {
