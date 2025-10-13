@@ -994,4 +994,51 @@ O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
         }
         assert_eq!(s.sites.len(), 4)
     }
+
+    #[test]
+    fn test_t_direction_space_group_symop_operation() {
+        let input = "#======================================================================
+# CRYSTAL DATA
+#----------------------------------------------------------------------
+data_VESTA_phase_2
+
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2t'
+   'x, -y, z+1/2t'
+   'x+1/2t, y+1/2t, z'
+   '-x+1/2t, -y+1/2t, -z'
+   '-x+1/2t, y+1/2t, -z+1/2t'
+   'x+1/2t, -y+1/2t, z+1/2t'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("in symop t should be treated as constant and not throw error");
+    }
 }
