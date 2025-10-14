@@ -728,7 +728,6 @@ pub fn simulate_peaks(
 mod test {
     use super::*;
     use crate::cif::CifParser;
-    use crate::species::Species;
 
     #[test]
     #[rustfmt::skip]
@@ -871,7 +870,7 @@ loop_
             *i /= max_peak;
         }
 
-        for ((s_pos, s_intens), (a_pos, a_intens)) in peaks.iter().zip(FM3M_EXPECTED) {
+        for ((s_pos, s_intens), (_, a_intens)) in peaks.iter().zip(FM3M_EXPECTED) {
             let diff = (s_intens - a_intens).abs();
             assert!(diff < ATOL, "Simulated and actual intensities difference exceeds tolerance (at position {s_pos}). Simulated: {s_intens}, actual: {a_intens}. diff: {diff}");
         }
