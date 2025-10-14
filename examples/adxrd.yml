@@ -72,3 +72,6 @@ simulation_parameters:
   seed: 1234
   n_patterns: 2000
   abstol: 1e-2
+  randomly_scale_peaks:
+    scale: [0.5, 1.5]
+    probability: 0.5

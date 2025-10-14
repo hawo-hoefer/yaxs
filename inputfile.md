@@ -185,4 +185,16 @@ simulation_parameters:
   seed: 1234
   n_patterns: 10000
   abstol: 1e-2
+  randomly_scale_peaks:
+    scale: [0.5, 1.5]
+    probability: 0.5
 ```
+
+### Randomly Scale Peak Intensities
+Use the key `randomly_scale_peaks` to randomly scale peaks after structure simulation.
+Each for each structure, every peak will be scaled by the specified scale with 
+the specified probability. This will produce peaks which are not physically accuracte,
+but that may be beneficial for neural network training. This form of augmentation may
+make training for quantification more robust, as the network should in theory be pushed
+towards considering all peaks instead of only the largest few. Excessive (and non-balanced)
+scaling may also cause problems, so use at your own risk.

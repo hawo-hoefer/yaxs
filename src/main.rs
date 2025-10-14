@@ -211,7 +211,7 @@ fn main() {
 
     let begin = Instant::now();
 
-    let to_discretize = cfg
+    let mut to_discretize = cfg
         .kind
         .simulate_peaks(
             structures.into(),
@@ -306,6 +306,18 @@ fn main() {
     }
 
     info!("Simulating Peak Positions took {elapsed:.2}s");
+
+    if let Some(ref rand_scale) = cfg.simulation_parameters.randomly_scale_peaks {
+        let v = std::sync::Arc::get_mut(&mut to_discretize.sim_res)
+            .expect("no other references to sim_res should exist at this point");
+        for phase_peaks in v.all_simulated_peaks.iter_mut() {
+            for peak in phase_peaks.iter_mut() {
+                peak.i_hkl = rand_scale.scale_peak(peak.i_hkl, &mut rng);
+            }
+        }
+    }
+
+    // IOption<RandomlyScalePeaks>,
 
     prepare_output_directory(&args.io)
         .map_err(|err| {

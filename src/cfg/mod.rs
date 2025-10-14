@@ -185,8 +185,25 @@ pub struct SimulationParameters {
     pub seed: Option<u64>,
     pub n_patterns: usize,
     pub noise: Option<NoiseSpec>,
+    pub randomly_scale_peaks: Option<RandomlyScalePeaks>,
 
     pub abstol: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RandomlyScalePeaks {
+    pub scale: Parameter<f64>,
+    pub probability: Probability,
+}
+
+impl RandomlyScalePeaks {
+    pub fn scale_peak(&self, peak_weight: f64, rng: &mut impl Rng) -> f64 {
+        if self.probability.generate_bool(rng) {
+            peak_weight * self.scale.generate(rng)
+        } else {
+            peak_weight
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
