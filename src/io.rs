@@ -1,6 +1,7 @@
 use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
@@ -21,6 +22,26 @@ use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HKLDisplayMode {
+    Unnormalized,
+    Normalized,
+}
+
+impl FromStr for HKLDisplayMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Unnormalized" => Ok(HKLDisplayMode::Unnormalized),
+            "Normalized" => Ok(HKLDisplayMode::Normalized),
+            _ => Err(format!(
+                "Invalid Mode: {s}. Expected 'Normalized' or 'Unnormalized'"
+            )),
+        }
+    }
+}
 
 #[derive(Args, Clone)]
 pub struct Opts {
@@ -45,10 +66,10 @@ pub struct Opts {
 
     #[arg(
         long,
-        default_value_t = false,
-        help = "show simulated intensities and hkls for each phase and exit"
+        default_value = None,
+        help = "show simulated intensities and hkls for each phase and exit. Either 'Unnormalized' or 'Normalized'"
     )]
-    pub display_hkls: bool,
+    pub display_hkls: Option<HKLDisplayMode>,
 }
 
 #[derive(PartialEq, Clone)]

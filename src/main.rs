@@ -228,7 +228,7 @@ fn main() {
 
     let elapsed = begin.elapsed().as_secs_f64();
 
-    if args.io.display_hkls {
+    if let Some(mode) = args.io.display_hkls {
         info!("Displaying HKLs");
 
         for i in 0..to_discretize.structures.len() {
@@ -266,10 +266,16 @@ fn main() {
                 })
                 .collect_vec();
 
-            let max = *intensities_positions
-                .iter()
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                .expect("at least one peak");
+            let scale = match mode {
+                io::HKLDisplayMode::Unnormalized => 1.0,
+                io::HKLDisplayMode::Normalized => {
+                    intensities_positions
+                        .iter()
+                        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                        .expect("at least one peak")
+                        .1
+                }
+            };
 
             for (p, (pos, i)) in to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
@@ -287,7 +293,7 @@ fn main() {
                     )
                     .expect("enough memory");
                 }
-                let intensity = i / max.1;
+                let intensity = i / scale;
                 info!(
                     "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} pos: {pos:.4} | {hkls}",
                     intensity = intensity,
