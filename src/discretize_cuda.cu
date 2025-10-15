@@ -164,7 +164,7 @@ __global__ void render_poly_bkg(float *intensities, float *two_thetas, float *co
     return;
   size_t pattern_idx = tid / pat_len;
   // polynomial backgrounds are assumed to be for x in [-1, 1] 
-  float pat_pos = (float)(tid - pattern_idx * pat_len) / (float)pat_len * 2.0f - 1.0;
+  float pat_pos = (float)(tid - pattern_idx * pat_len) / (float)(pat_len - 1) * 2.0f - 1.0;
   float *local_coef = &coef[pattern_idx * degree];
 
   float di = 0.0f;

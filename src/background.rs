@@ -64,12 +64,10 @@ impl Background {
         match self {
             Background::None => (),
             Background::Polynomial { poly_coef, scale } => {
-                let p0 = positions.first().expect("more than one position");
-                let p1 = positions.last().expect("more than one position");
                 let mut d_max = std::f32::MIN;
                 let mut d_min = std::f32::MAX;
-                for (intensity, pos) in iterator {
-                    let p = ((*pos - p0) / (p1 - p0) - 0.5) * 2.0;
+                for (i, (intensity, _)) in iterator.enumerate() {
+                    let p = (i as f32 / (positions.len() - 1) as f32 - 0.5) * 2.0;
                     // map to [-1, 1]
                     let d = polynomial_at(poly_coef, p);
 
