@@ -326,6 +326,10 @@ pub trait Discretizer {
     ) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
+        // rendering the backgrounds first allows for background scaling without fancy
+        // math or extra memory allocation
+        self.bkg().render(intensities, positions);
+
         for PeakRenderParams {
             pos,
             intensity,
@@ -336,7 +340,6 @@ pub trait Discretizer {
             render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
         }
 
-        self.bkg().render(intensities, positions);
         if let Some(noise) = self.noise() {
             noise.apply(intensities, self.seed());
         }

@@ -58,18 +58,43 @@ fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
 }
 impl Background {
     pub fn render(&self, intensities: &mut [f32], positions: &[f32]) {
+        // assume that intensities is zeroed
         let iterator = intensities.iter_mut().zip(positions);
 
         match self {
             Background::None => (),
             Background::Polynomial { poly_coef, scale } => {
+                let p0 = positions.first().expect("more than one position");
+                let p1 = positions.last().expect("more than one position");
+                let mut d_max = std::f32::MIN;
+                let mut d_min = std::f32::MAX;
                 for (intensity, pos) in iterator {
-                    *intensity += scale * polynomial_at(poly_coef, *pos);
+                    let p = ((*pos - p0) / (p1 - p0) - 0.5) * 2.0;
+                    // map to [-1, 1]
+                    let d = polynomial_at(poly_coef, p);
+
+                    d_max = d_max.max(d);
+                    d_min = d_min.min(d);
+
+                    *intensity += d;
+                }
+
+                for i in intensities.iter_mut() {
+                    *i = (*i - d_min) / (d_max - d_min) * scale;
                 }
             }
             Background::Exponential { slope, scale } => {
+                let mut d_max = std::f32::MIN;
+                let mut d_min = std::f32::MAX;
                 for (intensity, pos) in iterator {
-                    *intensity += scale * exp_at(*slope, *pos);
+                    let d = exp_at(*slope, *pos);
+                    d_max = d_max.max(d);
+                    d_min = d_min.min(d);
+                    *intensity += d;
+                }
+
+                for i in intensities.iter_mut() {
+                    *i = (*i - d_min) / (d_max - d_min) * scale;
                 }
             }
         }

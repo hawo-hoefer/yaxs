@@ -142,28 +142,28 @@ __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info, float *intensit
     delta_intens += soa.intensity[peak_index] * pv;
   }
 
-  intensities[tid] = delta_intens;
+  intensities[tid] += delta_intens;
 }
 
-__global__ void render_exp_bkg(float *intensities, float *two_thetas, float *bkg_slope, float *scales, size_t pat_len,
+__global__ void render_exp_bkg(float *intensities, float *two_thetas, float *bkg_slope, size_t pat_len,
                                size_t n_patterns) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= pat_len * n_patterns)
     return;
   size_t pattern_idx = tid / pat_len;
   float pat_pos = two_thetas[tid - pattern_idx * pat_len];
-
   float slope = bkg_slope[pattern_idx];
 
-  intensities[tid] += scales[pattern_idx] * expf(pat_pos * slope);
+  intensities[tid] += expf(pat_pos * slope);
 }
 
-__global__ void render_poly_bkg(float *intensities, float *two_thetas, float *coef, float *scales, size_t pat_len,
-                                size_t n_patterns, size_t degree) {
+__global__ void render_poly_bkg(float *intensities, float *two_thetas, float *coef, size_t pat_len, size_t n_patterns,
+                                size_t degree) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= pat_len * n_patterns)
     return;
   size_t pattern_idx = tid / pat_len;
+  // polynomial backgrounds are assumed to be for x in [-1, 1] 
   float pat_pos = (float)(tid - pattern_idx * pat_len) / (float)pat_len * 2.0f - 1.0;
   float *local_coef = &coef[pattern_idx * degree];
 
@@ -172,7 +172,7 @@ __global__ void render_poly_bkg(float *intensities, float *two_thetas, float *co
     di += local_coef[power] * powf(pat_pos, power);
   }
 
-  intensities[tid] += di * scales[pattern_idx];
+  intensities[tid] += di;
 }
 
 typedef struct {
@@ -302,74 +302,6 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state, size_t
   return true;
 }
 
-bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind background_kind, float *bkg_data,
-                        size_t bkg_degree_if_poly, float *bkg_scales_if_not_none, size_t n_patterns, size_t pat_len,
-                        int grid_size, int block_size) {
-  switch (background_kind) {
-  case BkgNone:
-    debugf("No background specified");
-    // all good, do nothing
-    break;
-
-  case Exponential: {
-    infof("Rendering exponential background");
-    debugf("Allocating memory for exponential background parameters");
-    float *bkg_slope_d, *bkg_scales_d;
-    cu_lerr(cudaMalloc(&bkg_slope_d, sizeof(float) * n_patterns), "allocating background info buffer");
-    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
-
-    debugf("Initializing exponential background parameters");
-    cu_lerr(cudaMemcpy(bkg_slope_d, bkg_data, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
-            "copying background info to device");
-    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
-            "copying background scales to device");
-
-    debugf("Launching exponential background kernel");
-    render_exp_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_slope_d, bkg_scales_d, pat_len,
-                                              n_patterns);
-
-    cudaFree(bkg_slope_d);
-    cudaFree(bkg_scales_d);
-    break;
-  }
-
-  case Polynomial: {
-    infof("Rendering polynomial background");
-    debugf("Allocating memory for polynomial background parameters");
-    float *bkg_coefs_d, *bkg_scales_d;
-    cu_lerr(cudaMalloc(&bkg_coefs_d, sizeof(float) * n_patterns * bkg_degree_if_poly),
-            "allocating background info buffer");
-    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
-
-    debugf("initializing polynomial background parameters");
-    cu_lerr(cudaMemcpy(bkg_coefs_d, bkg_data, sizeof(float) * n_patterns * bkg_degree_if_poly, cudaMemcpyHostToDevice),
-            "copying background info to device");
-    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
-            "copying background scales to device");
-
-    debugf("Launching polynomial background kernel");
-    render_poly_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_coefs_d, bkg_scales_d, pat_len,
-                                               n_patterns, bkg_degree_if_poly);
-
-    cu_lerr(cudaPeekAtLastError(), "Error in dispatch or execution of render_poly_bkg");
-
-    cudaFree(bkg_coefs_d);
-    break;
-  }
-
-  default: {
-    fprintf(stderr,
-            "Error rendering background via CUDA backend. Unknown background "
-            "kind: %d\n. Crashing...\n",
-            background_kind);
-    break;
-  }
-  }
-
-  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after background");
-  return true;
-}
-
 // TODO: find a more efficient way to do this!
 //       maybe a fancy reduction kernel is in better, but this works for now
 __global__ void get_extrema(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima,
@@ -417,6 +349,8 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
 
     debugf("launching get_extrema kernel");
     get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
+    cudaError_t ret = cudaPeekAtLastError();
+    cu_lerr(ret, "launching get_extrema kernel");
   }
 
   {
@@ -430,9 +364,139 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
 
     debugf("launching normalization kernel");
     normalize<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
+    cudaError_t ret = cudaPeekAtLastError();
+    cu_lerr(ret, "launching normalization kernel");
   }
 
   cudaFree(all_minima);
+  return true;
+}
+
+__global__ void scale(float *intensities, float *fac, size_t n_patterns, size_t pat_len) {
+  size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+  if (tid >= n_patterns * pat_len)
+    return;
+  size_t pattern_idx = tid / pat_len;
+
+  intensities[tid] *= fac[pattern_idx];
+}
+
+bool scale_patterns(float *intensities_d, float *fac, size_t n_patterns, size_t pat_len) {
+  debugf("scaling backgrounds");
+  int block_size = 0;
+  int min_grid_size = 0;
+  int array_count = n_patterns * pat_len;
+  cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)scale, 0, array_count),
+          "finding cuda kernel launch configuration");
+  int grid_size = (array_count + block_size - 1) / block_size;
+
+  scale<<<grid_size, block_size>>>(intensities_d, fac, n_patterns, pat_len);
+  cudaError_t ret = cudaPeekAtLastError();
+  cu_lerr(ret, "launching scaling kernel");
+
+  return true;
+}
+
+bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind background_kind, float *bkg_data,
+                        size_t bkg_degree_if_poly, float *bkg_scales_if_not_none, size_t n_patterns, size_t pat_len) {
+  switch (background_kind) {
+  case BkgNone:
+    debugf("No background specified");
+    // all good, do nothing
+    break;
+
+  case Exponential: {
+    infof("Rendering exponential background");
+    debugf("Allocating memory for exponential background parameters");
+    float *bkg_slope_d, *bkg_scales_d;
+    cu_lerr(cudaMalloc(&bkg_slope_d, sizeof(float) * n_patterns), "allocating background info buffer");
+    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
+
+    debugf("Initializing exponential background parameters");
+    cu_lerr(cudaMemcpy(bkg_slope_d, bkg_data, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background info to device");
+    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background scales to device");
+
+    debugf("Launching exponential background kernel");
+    {
+      int block_size = 0;
+      int min_grid_size = 0;
+      int array_count = n_patterns * pat_len;
+      cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)render_exp_bkg, 0, array_count),
+              "finding cuda kernel launch configuration");
+      int grid_size = (array_count + block_size - 1) / block_size;
+
+      render_exp_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_slope_d, pat_len, n_patterns);
+      cudaError_t ret = cudaPeekAtLastError();
+      cu_lerr(ret, "launching exponential background kernel");
+    }
+
+    if (!normalize_patterns(intensities_d, n_patterns, pat_len)) {
+      return false;
+    }
+    if (!scale_patterns(intensities_d, bkg_scales_d, n_patterns, pat_len)) {
+      return false;
+    }
+
+    cudaFree(bkg_slope_d);
+    cudaFree(bkg_scales_d);
+    break;
+  }
+
+  case Polynomial: {
+    infof("Rendering polynomial background");
+    debugf("Allocating memory for polynomial background parameters");
+    float *bkg_coefs_d, *bkg_scales_d;
+    cu_lerr(cudaMalloc(&bkg_coefs_d, sizeof(float) * n_patterns * bkg_degree_if_poly),
+            "allocating background info buffer");
+    cu_lerr(cudaMalloc(&bkg_scales_d, sizeof(float) * n_patterns), "allocating background scale buffer");
+
+    debugf("initializing polynomial background parameters");
+    cu_lerr(cudaMemcpy(bkg_coefs_d, bkg_data, sizeof(float) * n_patterns * bkg_degree_if_poly, cudaMemcpyHostToDevice),
+            "copying background info to device");
+    cu_lerr(cudaMemcpy(bkg_scales_d, bkg_scales_if_not_none, sizeof(float) * n_patterns, cudaMemcpyHostToDevice),
+            "copying background scales to device");
+
+    debugf("Launching polynomial background kernel");
+
+    {
+      int block_size = 0;
+      int min_grid_size = 0;
+      int array_count = n_patterns * pat_len;
+      cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)render_poly_bkg, 0, array_count),
+              "finding cuda kernel launch configuration");
+      int grid_size = (array_count + block_size - 1) / block_size;
+
+      render_poly_bkg<<<grid_size, block_size>>>(intensities_d, two_thetas_d, bkg_coefs_d, pat_len, n_patterns,
+                                                 bkg_degree_if_poly);
+      cudaError_t ret = cudaPeekAtLastError();
+      cu_lerr(ret, "launching polynomial background kernel");
+    }
+
+    if (!normalize_patterns(intensities_d, n_patterns, pat_len)) {
+      return false;
+    }
+    if (!scale_patterns(intensities_d, bkg_scales_d, n_patterns, pat_len)) {
+      return false;
+    }
+
+    cu_lerr(cudaPeekAtLastError(), "Error in dispatch or execution of render_poly_bkg");
+
+    cudaFree(bkg_coefs_d);
+    break;
+  }
+
+  default: {
+    fprintf(stderr,
+            "Error rendering background via CUDA backend. Unknown background "
+            "kind: %d\n. Crashing...\n",
+            background_kind);
+    break;
+  }
+  }
+
+  cu_lerr(cudaDeviceSynchronize(), "synchronizing device after background");
   return true;
 }
 
@@ -524,6 +588,13 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float
   cu_lerr(cudaMemcpy(two_thetas_d, two_thetas,          pat_len * sizeof(float), cudaMemcpyHostToDevice), "copying two_thetas to device");
   // clang-format on
 
+  // if we render backgrounds first, we can properly normalize the background height without needing extra memory
+  // or fancy math
+  if (!render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data, bkg_degree_if_poly,
+                          bkg_scales_if_not_none, n_patterns, pat_len)) {
+    return false;
+  }
+
   debugf("Determining peak rendering kernel launch parameters");
   int block_size = 0;
   int min_grid_size = 0;
@@ -540,11 +611,6 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float
   cu_lerr(cudaDeviceSynchronize(), "synchronizing device after peak rendering");
 
   if (!render_noise(intensities_d, noise, rng_state, pat_len, n_patterns)) {
-    return false;
-  }
-
-  if (!render_backgrounds(intensities_d, two_thetas_d, background_kind, bkg_data, bkg_degree_if_poly,
-                          bkg_scales_if_not_none, n_patterns, pat_len, grid_size, block_size)) {
     return false;
   }
 
