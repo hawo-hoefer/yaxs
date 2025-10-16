@@ -203,10 +203,10 @@ impl Discretizer for DiscretizeAngleDispersive {
             BackgroundParameters(dst) => {
                 match &self.meta.background {
                     Background::None => unreachable!("all patterns must have the same background type. Background::None does not initialize the background output."),
-                    Background::Polynomial { poly_coef, scale } => {
+                    Background::Chebyshev { coef, scale } => {
                         dst[(pat_id, 0)] = *scale;
-                        for (poly_idx, p) in poly_coef.iter().enumerate() {
-                            dst[(pat_id, poly_idx + 1)] = *p;
+                        for (coef_idx, c) in coef.iter().enumerate() {
+                            dst[(pat_id, coef_idx + 1)] = *c;
                         }
                     },
                     Background::Exponential { slope, scale } => {

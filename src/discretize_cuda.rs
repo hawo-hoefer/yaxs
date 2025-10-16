@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use log::{debug, error, info};
 
+use crate::background::cheb2poly;
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{Discretizer, PeakRenderParams};
@@ -218,13 +219,11 @@ where
         let fjob = jobs.first().expect("at least one discretization job");
         let soa = match fjob.bkg() {
             Background::None => BkgSOA::None,
-            Background::Polynomial {
-                poly_coef: ref coef,
-                ..
-            } => {
+            Background::Chebyshev { ref coef, .. } => {
                 bkg_scales.reserve_exact(jobs.len());
+                let poly = cheb2poly(coef);
                 BkgSOA::Polynomial {
-                    degree: coef.len(),
+                    degree: poly.len(),
                     all_coef: Vec::with_capacity(coef.len() * jobs.len()),
                 }
             }
@@ -242,12 +241,14 @@ where
         match (job.bkg(), &mut bkg_soa) {
             (Background::None, BkgSOA::None) => (),
             (
-                Background::Polynomial { poly_coef, scale },
+                Background::Chebyshev { coef, scale },
                 BkgSOA::Polynomial {
                     degree,
                     ref mut all_coef,
                 },
-            ) if *degree == poly_coef.len() => {
+            ) => {
+                let poly_coef = cheb2poly(coef);
+                // TODO: check for scale matching
                 bkg_scales.push(*scale);
                 all_coef.extend(poly_coef);
             }
