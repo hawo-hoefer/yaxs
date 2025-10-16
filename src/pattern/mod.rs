@@ -323,6 +323,7 @@ pub trait Discretizer {
         n_patterns: usize,
         n_phases: usize,
         with_weight_fractions: bool,
+        bkg_params: Option<usize>,
     ) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
@@ -509,7 +510,12 @@ where
     T: Discretizer + Send + Sync + 'static,
 {
     let n = jobs.len();
-    let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions);
+    let j = jobs.first().expect("at least one job");
+
+    // NOTE: currently, we are only able to render one kind of background per simulation
+    // should this ever change, we need to adapt this implementation
+    let n_bkg_params = j.bkg().bkg_coefs();
+    let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions, n_bkg_params);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
             job.write_meta_data(m, i)

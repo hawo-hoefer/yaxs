@@ -200,6 +200,21 @@ impl Discretizer for DiscretizeAngleDispersive {
                 }
             }
             SampleDisplacementMuM(dst) => dst[pat_id] = self.meta.sample_displacement_mu_m as f32,
+            BackgroundParameters(dst) => {
+                match &self.meta.background {
+                    Background::None => unreachable!("all patterns must have the same background type. Background::None does not initialize the background output."),
+                    Background::Polynomial { poly_coef, scale } => {
+                        dst[(pat_id, 0)] = *scale;
+                        for (poly_idx, p) in poly_coef.iter().enumerate() {
+                            dst[(pat_id, poly_idx + 1)] = *p;
+                        }
+                    },
+                    Background::Exponential { slope, scale } => {
+                        dst[(pat_id, 0)] = *scale;
+                        dst[(pat_id, 1)] = *slope;
+                    },
+                }
+            }
         }
     }
 
@@ -207,6 +222,7 @@ impl Discretizer for DiscretizeAngleDispersive {
         n_patterns: usize,
         n_phases: usize,
         with_weight_fractions: bool,
+        bkg_params: Option<usize>,
     ) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
@@ -225,7 +241,13 @@ impl Discretizer for DiscretizeAngleDispersive {
         if with_weight_fractions {
             v.push(WeightFractions(Array2::<f32>::zeros((
                 n_patterns, n_phases,
-            ))))
+            ))));
+        }
+
+        if let Some(bkg_params) = bkg_params {
+            v.push(BackgroundParameters(Array2::<f32>::zeros((
+                n_patterns, bkg_params,
+            ))));
         }
         v
     }

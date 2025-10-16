@@ -83,6 +83,7 @@ pub enum PatternMeta {
     ImpuritySum(Array1<f32>),
     ImpurityMax(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
+    BackgroundParameters(Array2<f32>),
     MarchParameter(Array2<f32>), // for now, we're only going to allow one march parameter (and orientation) per phase
 }
 
@@ -122,6 +123,7 @@ impl PatternMeta {
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
             CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
             MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
+            BackgroundParameters(x) => Self::push_arr(w, x, "background_parameters", meta_names),
         }
     }
 }

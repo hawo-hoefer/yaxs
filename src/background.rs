@@ -56,6 +56,7 @@ fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
     }
     poly_coef
 }
+
 impl Background {
     pub fn render(&self, intensities: &mut [f32], positions: &[f32]) {
         // assume that intensities is zeroed
@@ -106,6 +107,14 @@ impl Background {
         Self::Polynomial {
             poly_coef: cheb2poly(chebyshev_coefs),
             scale,
+        }
+    }
+
+    pub fn bkg_coefs(&self) -> Option<usize> {
+        match self {
+            Background::None => None,
+            Background::Polynomial { poly_coef, .. } => Some(poly_coef.len() + 1),
+            Background::Exponential { .. } => Some(2),
         }
     }
 }

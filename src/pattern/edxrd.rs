@@ -333,6 +333,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     dst[(pat_id, i)] = wfs[i] as f32;
                 }
             }
+            BackgroundParameters(_) => {
+                unreachable!("EDXRD measurements are currently implemented without background")
+            }
         }
     }
 
@@ -340,6 +343,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         n_patterns: usize,
         n_phases: usize,
         with_weight_fractions: bool,
+        bkg_params: Option<usize>,
     ) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
@@ -352,10 +356,21 @@ impl Discretizer for DiscretizeEnergyDispersive {
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),
             ImpurityMax(Array1::<f32>::zeros(n_patterns)),
         ];
+
         if with_weight_fractions {
             v.push(WeightFractions(Array2::<f32>::zeros((
                 n_patterns, n_phases,
             ))))
+        }
+
+        if with_weight_fractions {
+            v.push(WeightFractions(Array2::<f32>::zeros((
+                n_patterns, n_phases,
+            ))));
+        }
+
+        if let Some(bkg_params) = bkg_params {
+            unreachable!("EDXRD simulation is implemented without background")
         }
         v
     }
