@@ -3,7 +3,7 @@ use std::sync::Arc;
 use cfg_if::cfg_if;
 use itertools::Itertools;
 use log::warn;
-use ndarray::Array2;
+use ndarray::{Array2, Array3, Array4};
 use rand::Rng;
 
 use crate::background::Background;
@@ -19,7 +19,7 @@ use crate::structure::Structure;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
-use crate::cfg::{CompactSimResults, VolumeFraction};
+use crate::cfg::{CompactSimResults, TextureMeasurement, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
@@ -30,13 +30,20 @@ pub trait DiscretizeJobGenerator {
     fn next(&mut self) -> Option<Self::Item>;
     fn remaining(&self) -> usize;
     fn xs(&self) -> &[f32];
-    fn n_phases(&self) -> usize;
-    fn abstol(&self) -> f32;
-    fn with_weight_fractions(&self) -> bool;
+    fn get_job_params(&self) -> JobParams;
 }
 
+/// rendering resources for a single phase. these are essentially indices into
+/// long vectors of all simulated data
+///
+/// * `sim_res`:
+/// * `indices`:
+/// * `impurity_peaks`:
+/// * `random_seed`:
+/// * `noise`:
+#[derive(Clone)]
 pub struct RenderCommon {
-    // all simulated peaks for all phases in order [structure, structure permutations]
+    // all simulated peaks for all phases in order [structure, structure permutations, (texture_measurement_idx)]
     pub sim_res: Arc<CompactSimResults>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
@@ -311,6 +318,14 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
     (theta_rad * 2.0).cos().powi(2)
 }
 
+pub struct JobParams {
+    pub abstol: f32,
+    pub n_phases: usize,
+    pub has_weight_fracs: bool,
+    pub textured_phases: Option<usize>,
+    pub texture_measurement: Option<TextureMeasurement>,
+}
+
 pub struct PeakRenderParams {
     pub pos: f32,
     pub intensity: f32,
@@ -336,11 +351,7 @@ pub trait Discretizer {
     }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
-    fn init_meta_data(
-        n_patterns: usize,
-        n_phases: usize,
-        with_weight_fractions: bool,
-    ) -> Vec<PatternMeta>;
+    fn init_meta_data(n_patterns: usize, p: &JobParams) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
         for PeakRenderParams {
@@ -512,18 +523,26 @@ where {
     }
 }
 
+pub enum Intensities {
+    /// One sample is just a single XRD measurement. the dimensions are
+    /// therefore [n_samples, pattern_steps]
+    Standard(Array2<f32>),
+    /// For Texture Measurements, one sample is represented by n * m
+    /// Xrd patterns, where n and m are the resolution in phi and chi, respectively
+    /// therefore, the resolution must be [n_samples, phi_steps, chi_steps, pattern_steps]
+    TextureMeasurement(Array4<f32>),
+}
+
 pub fn render_jobs<T>(
     jobs: Vec<T>,
-    two_thetas: &[f32],
-    #[allow(unused)] atol: f32,
-    n_phases: usize,
-    with_weight_fractions: bool,
-) -> Result<(Array2<f32>, Vec<PatternMeta>), String>
+    xs: &[f32],
+    p: &JobParams,
+) -> Result<(Intensities, Vec<PatternMeta>), String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
     let n = jobs.len();
-    let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions);
+    let mut metadata = T::init_meta_data(jobs.len(), p);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
             job.write_meta_data(m, i)
@@ -533,16 +552,31 @@ where
     // actual rendering of the patterns
     cfg_if! {
         if #[cfg(feature = "cpu-only")] {
-            let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
+            let mut intensities = Array2::<f32>::zeros((n, xs.len()));
             for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
-                job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+                job.discretize_into(pattern.as_slice_mut().unwrap(), &xs, p.abstol);
             }
         } else {
             use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, two_thetas)?;
-            let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
+            let intensities = discretize_peaks_cuda(jobs, xs)?;
+            let intensities = ndarray::Array2::from_shape_vec((n, xs.len()), intensities)
                 .expect("sizes must match");
         }
+    };
+
+    let intensities = if let Some(t) = p.texture_measurement {
+        let stride = t.stride();
+        let n_samples = n / stride;
+        println!("{} {} {}", stride, n_samples, n);
+        assert_eq!(n % stride, 0);
+        // TODO: ensure this from the chunking algorithm
+        Intensities::TextureMeasurement(
+            intensities
+                .into_shape_with_order((n_samples, t.phi.steps, t.chi.steps, xs.len()))
+                .expect("shapes match"),
+        )
+    } else {
+        Intensities::Standard(intensities)
     };
 
     Ok((intensities, metadata))

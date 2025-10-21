@@ -230,6 +230,24 @@ impl<T> Vec3<T> {
         Vec4::new(self[0].clone(), self[1].clone(), self[2].clone(), v)
     }
 
+    /// extend self by putting v in the last position of self
+    ///
+    /// * `v`: value to extend by
+    ///
+    /// ```
+    /// use yaxs::math::linalg::{Vec3, Vec4};
+    ///
+    /// let v = Vec3::new(1, 2, 3);
+    ///
+    /// assert_eq!(v.extend_front(4), Vec4::new(4, 1, 2, 3));
+    /// ```
+    pub fn extend_front(&self, v: T) -> Vec4<T>
+    where
+        T: Clone,
+    {
+        Vec4::new(v, self[0].clone(), self[1].clone(), self[2].clone())
+    }
+
     /// Compute the cross product with rhs
     ///
     /// * `rhs`: rhs of cross product
@@ -248,6 +266,22 @@ impl<T> Vec3<T> {
 impl<T> Vec4<T> {
     pub fn new(x: T, y: T, z: T, w: T) -> Self {
         Mat::from_cols([[x, y, z, w]])
+    }
+
+    pub fn quat_from_angle_axis(x: T, y: T, z: T, alpha: T) -> Self
+    where
+        T: Float,
+    {
+        let v = Vec3::new(x, y, z).normalize();
+
+        let alpha_half_sin = (alpha / (T::one() + T::one())).sin();
+
+        Self::new(
+            (alpha / (T::one() + T::one())).cos(),
+            v[0] * alpha_half_sin,
+            v[1] * alpha_half_sin,
+            v[2] * alpha_half_sin,
+        )
     }
 
     /// treating self as a quaternion, compute the hamiltonian product
@@ -299,7 +333,7 @@ impl<T> Vec4<T> {
         let x = mat[(0, 0)] - mat[(1, 1)] - mat[(2, 2)] - mat[(3, 3)];
         let y = mat[(0, 1)] + mat[(1, 0)] + mat[(2, 3)] - mat[(3, 2)];
         let z = mat[(0, 2)] + mat[(2, 0)] - mat[(1, 3)] + mat[(3, 1)];
-        let w = mat[(0, 4)] + mat[(4, 0)] + mat[(1, 2)] - mat[(2, 1)];
+        let w = mat[(0, 3)] + mat[(3, 0)] + mat[(1, 2)] - mat[(2, 1)];
 
         Self::new(x, y, z, w)
     }

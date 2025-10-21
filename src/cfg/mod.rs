@@ -16,7 +16,7 @@ pub use parameter::Parameter;
 use probability::Probability;
 
 pub use noise::NoiseSpec;
-pub use preferred_orientation::POCfg;
+pub use preferred_orientation::{POCfg, POGenerator};
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
 
@@ -28,7 +28,7 @@ use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
-use crate::preferred_orientation::BinghamODF;
+use crate::preferred_orientation::{BinghamODF, BinghamParams};
 use crate::structure::{Strain, Structure};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -98,10 +98,11 @@ impl SimulationKind {
     pub fn simulate_peaks(
         &self,
         structures: Box<[Structure]>,
-        pref_o: Box<[Option<POCfg>]>,
+        pref_o: Box<[Option<POGenerator>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
+        texture_measurement: Option<TextureMeasurement>,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = self.get_r_range();
@@ -146,6 +147,7 @@ impl SimulationKind {
             pref_o,
             strain_cfgs,
             structure_paths,
+            texture_measurement,
             rng,
         )
     }
@@ -179,12 +181,64 @@ pub struct EnergyDispersive {
     pub beamline: Beamline,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Copy)]
+pub struct Linspace {
+    pub range: (f64, f64),
+    pub steps: usize,
+}
+
+#[derive(Clone)]
+pub struct LinspaceIter {
+    inner: Linspace,
+    pos: usize,
+}
+
+impl Iterator for LinspaceIter {
+    type Item = f64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.inner.steps {
+            return None;
+        }
+
+        if self.inner.steps == 1 {
+            self.pos += 1;
+            return Some(self.inner.range.0);
+        }
+
+        let ret = (self.inner.range.1 - self.inner.range.0) * self.pos as f64
+            / (self.inner.steps - 1) as f64
+            + self.inner.range.0;
+
+        self.pos += 1;
+
+        Some(ret)
+    }
+}
+
+impl IntoIterator for Linspace {
+    type Item = f64;
+
+    type IntoIter = LinspaceIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LinspaceIter {
+            inner: self,
+            pos: 0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Copy)]
 pub struct TextureMeasurement {
-    pub phi_range: (f64, f64),
-    pub chi_range: (f64, f64),
-    pub phi_steps: usize,
-    pub chi_steps: usize,
+    pub phi: Linspace,
+    pub chi: Linspace,
+}
+
+impl TextureMeasurement {
+    pub fn stride(&self) -> usize {
+        self.chi.steps * self.phi.steps
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -247,11 +301,19 @@ impl SampleParameters {
     }
 }
 
+/// A structure of arrays containing simulated peak positions and corresponding simulation
+/// parameters      
+///
+/// * `all_simulated_peaks`:
+/// * `all_strains`:
+/// * `all_preferred_orientations`:
+/// * `n_permutations`:
 pub struct CompactSimResults {
     pub all_simulated_peaks: Box<[Peaks]>,
     pub all_strains: Box<[Strain]>,
-    pub all_preferred_orientations: Box<[Option<BinghamODF>]>,
+    pub all_preferred_orientations: Box<[Option<BinghamParams>]>,
     pub n_permutations: usize,
+    pub texture_measurement: Option<TextureMeasurement>,
 }
 
 impl CompactSimResults {

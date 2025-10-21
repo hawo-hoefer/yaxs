@@ -21,6 +21,8 @@ use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
+use crate::pattern::Intensities;
+use crate::pattern::JobParams;
 use crate::preferred_orientation::BinghamODF;
 
 #[derive(Args, Clone)]
@@ -62,10 +64,12 @@ pub enum PatternMeta {
     CagliotiParams(Array2<f32>),
     ImpuritySum(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
-    BinghamODFParams { // patterns, phases, parameter dim
+    BinghamODFParams {
+        // patterns, active phases, quaternion
         orientations: Array3<f32>,
-        k: Array3<f32>,
-    }, // for now, we're only going to allow one march parameter (and orientation) per phase
+        // patterns, active phases, 4 ks
+        ks: Array3<f32>,
+    },
 }
 
 impl PatternMeta {
@@ -102,9 +106,9 @@ impl PatternMeta {
             }
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
             CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
-            BinghamODFParams { orientations, k } => {
+            BinghamODFParams { orientations, ks } => {
                 Self::push_arr(w, orientations, "bingham_odf_orientations", meta_names)?;
-                Self::push_arr(w, k, "bingham_odf_k", meta_names)
+                Self::push_arr(w, ks, "bingham_odf_ks", meta_names)
             }
         }
     }
@@ -134,7 +138,7 @@ where
     T: AsRef<Path>,
 {
     Write {
-        intensities: Array2<f32>,
+        intensities: Intensities,
         meta: Vec<PatternMeta>,
         path: T,
     },
@@ -143,7 +147,7 @@ where
 
 pub fn write_to_npz(
     path: impl AsRef<Path>,
-    intensities: &Array2<f32>,
+    intensities: &Intensities,
     meta: &[PatternMeta],
     compress: bool,
     progress: usize,
@@ -173,8 +177,16 @@ pub fn write_to_npz(
             .map_err(|err| err.to_string())?;
     }
 
-    w.add_array("intensities", intensities)
-        .map_err(|err| err.to_string())?;
+    match intensities {
+        Intensities::Standard(intensities) => {
+            w.add_array("intensities", intensities)
+                .map_err(|err| err.to_string())?;
+        }
+        Intensities::TextureMeasurement(intensities) => {
+            w.add_array("intensities", intensities)
+                .map_err(|err| err.to_string())?;
+        }
+    }
     let data_names = vec!["intensities".to_string()];
     Ok((data_names, meta_names))
 }
@@ -189,16 +201,13 @@ pub fn render_chunk_and_queue_write_in_thread<D, T>(
     two_thetas: &[f32],
     path: T,
     send: Sender<Arc<WriteJob<T>>>,
-    abstol: f32,
-    n_structs: usize,
-    with_weight_fractions: bool,
+    p: JobParams,
 ) -> Result<(), String>
 where
     T: AsRef<Path> + Send + Sync,
     D: Discretizer + Send + Sync + 'static,
 {
-    let (intensities, meta) =
-        render_jobs(jobs, two_thetas, abstol, n_structs, with_weight_fractions)?;
+    let (intensities, meta) = render_jobs(jobs, two_thetas, &p)?;
     send.send(Arc::new(WriteJob::Write {
         intensities,
         meta,
@@ -340,9 +349,7 @@ where
             gen.xs(),
             chunk_path,
             tx.clone(),
-            gen.abstol(),
-            gen.n_phases(),
-            gen.with_weight_fractions(),
+            gen.get_job_params(),
         )
         .map_err(|err| format!("Could not queue write job: {err}."))?;
 

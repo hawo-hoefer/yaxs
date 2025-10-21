@@ -94,39 +94,6 @@ impl CologStyle for CustomPrefix {
 }
 
 fn main() {
-    let mut args = std::env::args();
-
-    let program = args.next().unwrap();
-
-    let N: usize = args.next().unwrap().parse().unwrap();
-    let k_max: f64 = args.next().unwrap().parse().unwrap();
-    let s0: f64 = args.next().unwrap().parse().unwrap();
-    let s1: f64 = args.next().unwrap().parse().unwrap();
-
-    let only_ks = std::env::args().find(|x| x == "a").is_some();
-    let show_strength = std::env::args().find(|x| x == "b").is_some();
-
-    let po = POCfg::FullEpitaxialGrowth {
-        k_max,
-        strength: yaxs::cfg::Parameter::Range(s0, s1),
-    };
-
-    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(123123);
-    let mut gen = po.try_into_generator(&mut rng).unwrap();
-    for _ in 0..N {
-        let odf = gen.sample(&mut rng);
-
-        // println!("{:.4}, {:.4}, {:.4}, {:.4}", s[0], s[1], s[2], s[3]);
-
-        for _ in 0..1000 {
-            let q = odf.sample(&mut rng);
-            println!("{}, {}, {}, {}", q[0], q[1], q[2], q[3]);
-        }
-        println!("---");
-    }
-}
-
-fn main2() {
     colog::basic_builder()
         .filter_level(log::LevelFilter::Info)
         .format(colog::formatter(CustomPrefix))
@@ -230,7 +197,16 @@ fn main2() {
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
         vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
-        pref_o.push(po.clone());
+        let po_gen = po.as_ref().map(|x| {
+            x.try_into_generator(&mut rng).unwrap_or_else(|x| {
+                error!(
+                    "Could not get preferred orientation generator for {p}: {x}",
+                    p = struct_path.display()
+                );
+                std::process::exit(1);
+            })
+        });
+        pref_o.push(po_gen);
         structures.push(structure);
     }
 
@@ -254,12 +230,15 @@ fn main2() {
             strain_cfgs.into(),
             structure_paths.clone().into(),
             cfg.sample_parameters.clone(),
+            cfg.simulation_parameters.texture_measurement,
             &mut rng,
         )
         .unwrap_or_else(|err| {
             error!("Could not simulate peaks: {err}");
             std::process::exit(1);
         });
+
+    println!("ToDiscretize: {}", to_discretize.sim_res.all_simulated_peaks.len());
 
     let elapsed = begin.elapsed().as_secs_f64();
 
@@ -410,13 +389,7 @@ where
             jobs.push(job);
         }
         let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(
-            jobs,
-            xs,
-            gen.abstol(),
-            gen.n_phases(),
-            gen.with_weight_fractions(),
-        )?;
+        let (intensities, pattern_metadata) = render_jobs(jobs, xs, &gen.get_job_params())?;
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");

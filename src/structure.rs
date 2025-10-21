@@ -11,13 +11,14 @@ use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 
 use crate::cfg::{
-    apply_strain_cfg, CompactSimResults, POCfg, SampleParameters, StrainCfg, ToDiscretize,
+    apply_strain_cfg, CompactSimResults, POGenerator, SampleParameters, StrainCfg,
+    TextureMeasurement, ToDiscretize,
 };
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::BinghamODF;
+use crate::preferred_orientation::{BinghamODF, BinghamParams};
 use crate::site::Site;
 use crate::uninit_vec;
 
@@ -297,16 +298,16 @@ impl Structure {
         ret
     }
 
+    pub fn get_hkl_intensities() {}
+
     /// scan lattice for crystallographic planes with given d-spacings
     /// compute peak intensities and d-spacings corresponding to the lattice planes
     /// miller indices are **not** returned
     ///
     /// * `min_r`: minimum d-spacing to consider
     /// * `max_r`: maximum d-spacing to consider
-    /// * `po`: optional preferred orientation as Bingham Orientation distribution function
+    /// * `alignment`: optional preferred orientation as Bingham Orientation distribution function
     ///         relative to the beam direction
-    /// * `chi`: goniometer chi
-    /// * `phi`: goniometer phi
     pub fn get_d_spacings_intensities<'a>(
         &self,
         min_r: f64,
@@ -488,6 +489,7 @@ struct PeakSimResult {
     peaks: Peaks,
     struct_id: usize,
     permutation_id: usize,
+    measurement_id: usize,
 }
 
 struct WriteCtx {
@@ -496,23 +498,27 @@ struct WriteCtx {
 
 struct Inner {
     strain: Vec<Strain>,
-    pos: Vec<Option<BinghamODF>>,
+    pos: Vec<Option<BinghamParams>>,
     peaks: Vec<MaybeUninit<Peaks>>,
     ok: Vec<bool>,
+    n_measurements: usize,
     n_permutations: usize,
 }
 
 unsafe impl Sync for WriteCtx {}
 
 impl WriteCtx {
-    pub fn new(n_structs: usize, n_permutations: usize) -> Self {
+    pub fn new(n_structs: usize, n_measurements: usize, n_permutations: usize) -> Self {
+        let n_peak_sets = n_structs * n_permutations * n_measurements;
+
         Self {
             inner: UnsafeCell::new(Inner {
-                strain: unsafe { uninit_vec(n_structs * n_permutations) },
-                pos: unsafe { uninit_vec(n_structs * n_permutations) },
-                peaks: unsafe { uninit_vec(n_structs * n_permutations) },
-                ok: unsafe { uninit_vec(n_structs * n_permutations) },
+                strain: unsafe { uninit_vec(n_peak_sets) },
+                pos: unsafe { uninit_vec(n_peak_sets) },
+                peaks: unsafe { uninit_vec(n_peak_sets) },
+                ok: unsafe { uninit_vec(n_peak_sets) },
                 n_permutations,
+                n_measurements,
             }),
         }
     }
@@ -524,12 +530,16 @@ impl WriteCtx {
             peaks,
             ok,
             n_permutations,
+            n_measurements,
         } = unsafe { &mut *(self.inner.get()) };
 
-        let idx = p.struct_id * (*n_permutations) + p.permutation_id;
+        // index is [structure_id, permutation_id, texture_measurment_id]
+        let idx = p.struct_id * (*n_measurements * *n_permutations)
+            + p.permutation_id * *n_measurements
+            + p.measurement_id;
 
+        pos[idx] = p.po.map(|x| x.params);
         strain[idx] = p.strain;
-        pos[idx] = p.po;
         peaks[idx] = MaybeUninit::new(p.peaks);
         ok[idx] = true
     }
@@ -538,6 +548,7 @@ impl WriteCtx {
         self,
         structures: Arc<[Structure]>,
         sample_parameters: SampleParameters,
+        texture_measurement: Option<TextureMeasurement>,
     ) -> ToDiscretize {
         let Inner {
             strain,
@@ -545,6 +556,7 @@ impl WriteCtx {
             mut peaks,
             ok,
             n_permutations,
+            n_measurements: _,
         } = self.inner.into_inner();
 
         // TODO: make this return a result instead so we can error gracefully
@@ -561,15 +573,16 @@ impl WriteCtx {
                 all_strains: strain.into(),
                 all_preferred_orientations: pos.into(),
                 n_permutations,
+                texture_measurement,
             }),
         }
     }
 }
 
-struct Alignment<'a> {
-    po: &'a BinghamODF,
-    phi: f64,
-    chi: f64,
+pub struct Alignment<'a> {
+    pub po: &'a BinghamODF,
+    pub phi: f64,
+    pub chi: f64,
 }
 
 /// Generate Peaks for the input structures and their physical parameters.
@@ -588,28 +601,33 @@ pub fn simulate_peaks(
     (min_r, max_r): (f64, f64),
     sample_parameters: SampleParameters,
     structures: Box<[Structure]>,
-    structure_po_configs: Box<[Option<POCfg>]>,
+    structure_po_configs: Box<[Option<POGenerator>]>,
     structure_strain_configs: Box<[Option<StrainCfg>]>,
     structure_files: Box<[String]>,
+    texture_measurement: Option<TextureMeasurement>,
     rng: &mut impl Rng,
 ) -> Result<ToDiscretize, String> {
     struct PeakSim {
         structure: usize,
         permutation: usize,
+        measurement: usize,
         seed: u64,
         min_r: f64,
         max_r: f64,
+        phi: f64,
+        chi: f64,
     }
 
+    #[derive(Clone)]
     struct RunCtx {
-        structs: Arc<[Structure]>,
-        po_cfgs: Box<[Option<POCfg>]>,
+        structs: Box<[Structure]>,
+        po_gens: Box<[Option<POGenerator>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_files: Box<[String]>,
     }
 
     impl RunCtx {
-        fn run(&self, job: PeakSim) -> Result<PeakSimResult, String> {
+        fn run(&mut self, job: PeakSim) -> Result<PeakSimResult, String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
             let Some((perm_s, strain)) = apply_strain_cfg(
                 &self.strain_cfgs[job.structure],
@@ -618,64 +636,104 @@ pub fn simulate_peaks(
             ) else {
                 return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]));
             };
-            let po_cfg = &self.po_cfgs[job.structure];
-            let po = po_cfg.as_ref().map(|cfg| todo!());
+            let po = self.po_gens[job.structure]
+                .as_mut()
+                .map(|x| x.sample(&mut rng));
+
             let peaks = perm_s
-                .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref().map(|odf| Alignment {
-                    po: odf,
-                    phi: todo!(),
-                    chi: todo!(),
-                }))
+                .get_d_spacings_intensities(
+                    job.min_r,
+                    job.max_r,
+                    po.as_ref().map(|po| Alignment {
+                        po: &po,
+                        phi: job.phi,
+                        chi: job.chi,
+                    }),
+                )
                 .into_boxed_slice();
 
             Ok(PeakSimResult {
                 strain,
-                po,
+                po: po.clone(),
                 peaks,
                 struct_id: job.structure,
                 permutation_id: job.permutation,
+                measurement_id: job.measurement,
             })
         }
     }
 
     let n_structs = structures.len();
     let n_permutations = sample_parameters.structure_permutations;
+    let n_texture_measurements = texture_measurement
+        .map(|t| t.stride())
+        .unwrap_or(1);
 
     enum Task {
         Job(PeakSim),
         Stop,
     }
 
-    let ctx = Arc::new(RunCtx {
-        structs: structures.into(),
-        po_cfgs: structure_po_configs,
-        strain_cfgs: structure_strain_configs,
-        structure_files,
-    });
-
-    let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
-
     let mut n_threads: usize = std::thread::available_parallelism()
         .map(|x| x.into())
         .unwrap_or(1);
 
-    if n_structs * n_permutations < 50 {
+    if n_structs * n_permutations * n_texture_measurements < 50 {
         info!("Small number of simulations. Using single-threaded mode.");
         n_threads = 1;
     }
 
+    let mut ctx = RunCtx {
+        structs: structures.into(),
+        po_gens: structure_po_configs,
+        strain_cfgs: structure_strain_configs,
+        structure_files,
+    };
+
+    let results = Arc::new(WriteCtx::new(
+        n_structs,
+        n_texture_measurements,
+        n_permutations,
+    ));
+
     if n_threads == 1 {
         info!("Running single-threaded peak simulation");
+
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
-            let job = PeakSim {
-                structure: struct_id,
-                permutation: permutation_id,
-                seed: rng.random(),
-                min_r,
-                max_r,
-            };
-            let p = ctx.run(job)?;
-            unsafe { results.add(p) };
+            if let Some(t) = texture_measurement {
+                for (i, (phi, chi)) in t
+                    .chi
+                    .into_iter()
+                    .cartesian_product(t.phi.into_iter())
+                    .enumerate()
+                {
+                    let job = PeakSim {
+                        structure: struct_id,
+                        permutation: permutation_id,
+                        seed: rng.random(),
+                        min_r,
+                        max_r,
+                        chi,
+                        phi,
+                        measurement: i,
+                    };
+                    let p = ctx.run(job)?;
+                    unsafe { results.add(p) };
+                }
+            } else {
+                let job = PeakSim {
+                    structure: struct_id,
+                    permutation: permutation_id,
+                    seed: rng.random(),
+                    min_r,
+                    max_r,
+                    chi: 0.0,
+                    phi: 0.0,
+                    measurement: 0,
+                };
+                let p = ctx.run(job)?;
+                unsafe { results.add(p) };
+            }
         }
     } else {
         let (job_sender, job_receiver) = crossbeam_channel::unbounded();
@@ -683,9 +741,17 @@ pub fn simulate_peaks(
 
         let handles = (0..n_threads)
             .map(|i| {
-                let ctx = Arc::clone(&ctx);
                 let results = Arc::clone(&results);
                 let job_receiver = job_receiver.clone();
+
+                let mut ctx = ctx.clone();
+                for po_gen in ctx.po_gens.iter_mut().filter_map(|x| x.as_mut()) {
+                    // just to pull n_thinning samples out of the po_gen internal Hit and Run sampler
+                    // this is hopefully enough to make the samplers of every thread independent
+                    let mut rng = Xoshiro256PlusPlus::seed_from_u64(rng.random());
+                    _ = po_gen.sample(&mut rng);
+                }
+
                 std::thread::spawn(move || -> Result<(), String> {
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
@@ -707,17 +773,39 @@ pub fn simulate_peaks(
             })
             .collect_vec();
 
-        for (struct_id, permutation_id) in
-            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
-        {
-            let job = PeakSim {
-                structure: struct_id,
-                permutation: permutation_id,
-                seed: rng.random(),
-                min_r,
-                max_r,
-            };
-            let _ = job_sender.send(Task::Job(job));
+        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
+            if let Some(t) = texture_measurement {
+                for (i, (phi, chi)) in t
+                    .chi
+                    .into_iter()
+                    .cartesian_product(t.phi.into_iter())
+                    .enumerate()
+                {
+                    let job = PeakSim {
+                        structure: struct_id,
+                        permutation: permutation_id,
+                        seed: rng.random(),
+                        min_r,
+                        max_r,
+                        chi,
+                        phi,
+                        measurement: i,
+                    };
+                    let _ = job_sender.send(Task::Job(job));
+                }
+            } else {
+                let job = PeakSim {
+                    structure: struct_id,
+                    permutation: permutation_id,
+                    seed: rng.random(),
+                    min_r,
+                    max_r,
+                    chi: 0.0,
+                    phi: 0.0,
+                    measurement: 0,
+                };
+                let _ = job_sender.send(Task::Job(job));
+            }
         }
 
         debug!("Sending stop signal to peak simulation threads");
@@ -737,15 +825,13 @@ pub fn simulate_peaks(
     }
 
     let results = Arc::into_inner(results).expect("no more references to write context");
-    let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
-    Ok(results.make_to_discretize(ctx.structs, sample_parameters))
+    Ok(results.make_to_discretize(ctx.structs.into(), sample_parameters, texture_measurement))
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::cif::CifParser;
-    use crate::species::Species;
 
     #[test]
     #[rustfmt::skip]
@@ -888,7 +974,7 @@ loop_
             *i /= max_peak;
         }
 
-        for ((s_pos, s_intens), (a_pos, a_intens)) in peaks.iter().zip(FM3M_EXPECTED) {
+        for ((s_pos, s_intens), (_, a_intens)) in peaks.iter().zip(FM3M_EXPECTED) {
             let diff = (s_intens - a_intens).abs();
             assert!(diff < ATOL, "Simulated and actual intensities difference exceeds tolerance (at position {s_pos}). Simulated: {s_intens}, actual: {a_intens}. diff: {diff}");
         }

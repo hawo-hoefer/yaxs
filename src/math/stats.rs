@@ -61,6 +61,7 @@ pub fn std_normal_box_muller_tf(rng: &mut impl Rng) -> f64 {
 #[derive(PartialEq, Debug, Clone, Serialize)]
 pub struct BinghamDistribution<const N: usize> {
     a: Mat<f64, N, N>,
+    k: ColVec<f64, N>,
     acg_envelope: ACGDistribution<N>,
 }
 
@@ -133,7 +134,11 @@ impl<const N: usize> BinghamDistribution<N> {
         let omega = Mat::<f64, N, N>::identity() + a.scale(2.0f64);
         let acg_envelope = ACGDistribution::new(omega)?;
 
-        Ok(BinghamDistribution { a, acg_envelope })
+        Ok(BinghamDistribution { a, acg_envelope, k })
+    }
+
+    pub fn ks(&self) -> &ColVec<f64, N> {
+        &self.k
     }
 
     /// compute the logarithm of the unnormalized probability density function
@@ -180,6 +185,7 @@ impl<const N: usize> BinghamDistribution<N> {
     }
 }
 
+#[derive(Clone)]
 pub struct HitAndRunPolytopeSampler<const N: usize, const M: usize> {
     a: Mat<f64, N, M>,
     b: ColVec<f64, N>,

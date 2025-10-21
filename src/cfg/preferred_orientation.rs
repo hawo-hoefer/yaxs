@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ use crate::math::stats::{
     sample_unit_quaternion_subgroup_algorithm, BinghamDistribution, HitAndRunPolytopeSampler,
 };
 use crate::pattern::{uniform_sample_no_replacement_knuth, uniform_sample_no_replacement_knuth_arr};
-use crate::preferred_orientation::BinghamODF;
+use crate::preferred_orientation::{BinghamODF, BinghamParams, N_SAMPLES};
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub enum POCfg {
@@ -21,6 +22,7 @@ pub enum POCfg {
     },
 }
 
+#[derive(Clone)]
 pub enum POGenerator {
     FullEpitaxialGrowth {
         sampler: HitAndRunPolytopeSampler<13, 4>
@@ -42,11 +44,22 @@ impl POGenerator {
         };
 
         let orientation = sample_unit_quaternion_subgroup_algorithm(rng);
-        let [i1, i2, i3, i4] = uniform_sample_no_replacement_knuth_arr(3, rng);
+        let mut indices = [0, 1, 2, 3];
+        indices.shuffle(rng);
+        let [i1, i2, i3, i4] = indices;
 
         let k = Vec4::new(k[i1], k[i2], k[i3], k[i4]);
 
-        BinghamODF { orientation, axis_aligned_bingham_dist: BinghamDistribution::try_new(k, Mat4::identity()).expect("identity matrix is OK") }
+        let bingham_dist = BinghamDistribution::try_new(k.clone(), Mat4::identity()).expect("identity matrix is OK");
+        let mut bingham_samples = Vec::with_capacity(N_SAMPLES);
+        for _ in 0..bingham_samples.capacity() {
+            bingham_samples.push(bingham_dist.sample(rng));
+        }
+
+        BinghamODF { params: BinghamParams {
+            orientation,
+            ks: k,
+        }, axis_aligned_bingham_dist_samples: bingham_samples}
     }
 }
 

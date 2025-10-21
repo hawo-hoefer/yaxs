@@ -1,34 +1,36 @@
 use crate::math::linalg::{Mat3, Vec3, Vec4};
 use rand::Rng;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Serialize};
 
-use crate::math::stats::BinghamDistribution;
 use crate::structure::Lattice;
 
-const HKL_NORM_TOL: f64 = 1e-3;
+#[derive(Clone, Debug)]
+pub struct BinghamParams {
+    pub orientation: Vec4<f64>,
+    pub ks: Vec4<f64>,
+}
 
 /// orientation distribution for perferred orientation in sample coordinates
 ///
 /// * `orientation`: orientation of the distribution
 /// * `axis_aligned_bingham_dist`: axis aligned bingham distribution
+pub const N_SAMPLES: usize = 2 << 16;
+#[derive(Clone, Debug)]
 pub struct BinghamODF {
-    pub orientation: Vec4<f64>,
-    pub axis_aligned_bingham_dist: BinghamDistribution<4>,
+    pub params: BinghamParams,
+    pub axis_aligned_bingham_dist_samples: Vec<Vec4<f64>>,
 }
 
 impl BinghamODF {
-    pub fn weight_crystallographic(
-        &self,
-        hkl: &Vec3<f64>,
-        lat: &Lattice,
-        chi: f64,
-        phi: f64,
-        rng: &mut impl Rng,
-    ) -> f64 {
+    /// compute the weight scaling of a hkl peak according to the domain orientation
+    /// distribution described by this bingham ODF
+    ///
+    /// * `hkl`: hkl vector
+    /// * `lat`: lattice for hkl vector
+    /// * `chi`: goniometer chi in degrees
+    /// * `phi`: goniometer phi in degrees
+    /// * `rng`: random number generator
+    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice, chi: f64, phi: f64) -> f64 {
         // how do we rotate around chi and phi
-        let hkl_lattice = lat.mat.matmul(&hkl);
-
         // for edxrd ?
         // how about adxrd -> is that even a thing?
         //
@@ -55,52 +57,41 @@ impl BinghamODF {
         //
         // XRD methods measure d-spacings in the direction of the Beam Z-Axis
 
-        todo!("transform to quaternion");
-        #[rustfmt::skip]
-        let rot_z = Mat3::from_rows([
-            [chi.cos(), -chi.sin(), 0.0],
-            [chi.sin(),  chi.cos(), 0.0],
-            [      0.0,        0.0, 1.0],
-        ]);
+        let rot_z = Vec4::quat_from_angle_axis(0.0, 0.0, 1.0, chi.to_radians());
+        let rot_y = Vec4::quat_from_angle_axis(0.0, 1.0, 0.0, phi.to_radians());
 
-        #[rustfmt::skip]
-        let rot_y = Mat3::from_rows([
-            [ phi.cos(), 0.0, phi.sin()],
-            [       0.0, 1.0,       0.0],
-            [-phi.sin(), 0.0, phi.cos()],
-        ]);
-
-        let beam_to_sample = rot_z.matmul(&rot_y);
-        let sample_to_beam = beam_to_sample
-            .try_inverse()
-            .expect("rotation matrix must be invertible")
-            .extend_to_homog();
+        let beam_to_sample = rot_z.quaternion_multiplication(&rot_y);
+        let sample_to_beam = beam_to_sample.quaternion_reciprocal();
 
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
 
-        let bingham_alignment_in_beam = sample_to_beam.matmul(&self.orientation);
+        let bingham_alignment_in_beam =
+            sample_to_beam.quaternion_multiplication(&self.params.orientation);
 
         let hkl_in_domain_coords = lat.mat.matmul(&hkl);
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
-        // just sample many orientations (in beamline coordinates) and compute 
+        // just sample many orientations (in beamline coordinates) and compute
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
         let mut weight = 0.0;
-        for _ in 0..N_SAMPLES {
-            let domain_orientation_sample_coords = self.axis_aligned_bingham_dist.sample(rng);
-            let domain_orientation_beam_coords = bingham_alignment_in_beam.quaternion_multiplication();
-            todo!("transform the hkl");
-            todo!("perform the dot product");
-            todo!("compute the average");
+        for domain_orientation_sample_coords in self.axis_aligned_bingham_dist_samples.iter() {
+            let domain_orientation_beam_coords = bingham_alignment_in_beam
+                .quaternion_multiplication(&domain_orientation_sample_coords);
+            let hkl_in_beam_coords =
+                domain_orientation_beam_coords.quaternion_transform(&hkl_in_domain_coords);
+            let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
+            let angle = dot_with_beam_z.acos();
+            // weight += dot_with_beam_z.abs();
+            weight += if angle < 0.5f64.to_radians() { 1.0 } else { 0.0 };
         }
+        weight /= N_SAMPLES as f64;
+        println!("{}", weight);
 
         weight
     }
-
-    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice, chi: f64, phi: f64) -> f64 {}
 }
