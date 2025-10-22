@@ -79,7 +79,7 @@ impl BinghamODF {
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
-        let kappa = 10.0f64;
+        let kappa = 20.0f64;
         let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
 
         let mut weight = 0.0;
