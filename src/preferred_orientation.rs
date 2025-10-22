@@ -9,11 +9,12 @@ pub struct BinghamParams {
     pub ks: Vec4<f64>,
 }
 
+pub const N_SAMPLES: usize = 32768;
+
 /// orientation distribution for perferred orientation in sample coordinates
 ///
 /// * `orientation`: orientation of the distribution
 /// * `axis_aligned_bingham_dist`: axis aligned bingham distribution
-pub const N_SAMPLES: usize = 2 << 16;
 #[derive(Clone, Debug)]
 pub struct BinghamODF {
     pub params: BinghamParams,
@@ -78,19 +79,28 @@ impl BinghamODF {
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
+        let kappa = 10.0f64;
+        let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
+
         let mut weight = 0.0;
+
         for domain_orientation_sample_coords in self.axis_aligned_bingham_dist_samples.iter() {
             let domain_orientation_beam_coords = bingham_alignment_in_beam
                 .quaternion_multiplication(&domain_orientation_sample_coords);
             let hkl_in_beam_coords =
                 domain_orientation_beam_coords.quaternion_transform(&hkl_in_domain_coords);
             let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
-            let angle = dot_with_beam_z.acos();
-            // weight += dot_with_beam_z.abs();
-            weight += if angle < 0.5f64.to_radians() { 1.0 } else { 0.0 };
+            // ad-hoc kernel density estimation
+
+            // kernel density estimation using the von Mises-Fisher distribution
+            // but without the scaling factor
+            //
+            // for testing it should be fine, but ideally we would want to scale
+            // it properly, so XRD patterns produced using PO weighting
+            // are compatible with Non preferred orientation ones
+            weight += (kappa * dot_with_beam_z).exp() * norm_constant;
         }
         weight /= N_SAMPLES as f64;
-        println!("{}", weight);
 
         weight
     }

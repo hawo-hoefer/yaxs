@@ -16,7 +16,7 @@ use crate::cfg::{
 };
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
-use crate::math::linalg::{Mat3, Vec3};
+use crate::math::linalg::{Mat, Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::{BinghamODF, BinghamParams};
 use crate::site::Site;
@@ -298,7 +298,46 @@ impl Structure {
         ret
     }
 
-    pub fn get_hkl_intensities() {}
+    pub fn get_hkl_intensities_spacings(
+        &self,
+        min_r: f64,
+        max_r: f64,
+    ) -> Vec<(Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
+        let mut agg = Vec::new();
+        for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let s = g_hkl / 2.0;
+            let s2 = s.powi(2);
+
+            let mut f_hkl = Complex::new(0.0, 0.0);
+            // TODO: Debye-Waller Correction
+            // (we ignore it for now, in the test data we don't have DW-factors)
+            // dw_correction = np.exp(-dw_factors * s2)
+            let dw_correction = 1.0;
+
+            for site in &self.sites {
+                // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
+                let g_dot_r: f64 = site.coords.dot(&hkl);
+                for species in &site.species {
+                    let fs = species.el.scattering_factor(s2);
+
+                    // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
+                    let f_part =
+                        fs * site.occu * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
+                    f_hkl += f_part;
+                }
+            }
+            f_hkl *= dw_correction;
+
+            // # Intensity for hkl is modulus square of structure factor
+            let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
+
+            let d_hkl = 1.0 / g_hkl;
+            let d_spacing = NotNan::new(d_hkl).expect("not nan");
+            agg.push((hkl, i_hkl, d_spacing));
+        }
+
+        agg
+    }
 
     /// scan lattice for crystallographic planes with given d-spacings
     /// compute peak intensities and d-spacings corresponding to the lattice planes
@@ -314,9 +353,11 @@ impl Structure {
         max_r: f64,
         alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
+        // let intens = self.get_hkl_intensities_spacings(min_r, max_r);
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let hkl = hkl.map(|x| *x as f64);
             let s = g_hkl / 2.0;
             let s2 = s.powi(2);
 
@@ -456,7 +497,7 @@ impl<'a> Lattice {
         (n_min[0]..n_max[0])
             .cartesian_product(n_min[1]..n_max[1])
             .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(move |((a, b), c)| -> Option<(Vec3<f64>, f64)> {
+            .filter_map(move |((a, b), c)| -> Option<_> {
                 let hkl = Vec3::new(a as f64, b as f64, c as f64);
                 let pos = recip_lat.mat.matmul(&hkl);
                 let g_hkl = pos.magnitude();
@@ -665,9 +706,7 @@ pub fn simulate_peaks(
 
     let n_structs = structures.len();
     let n_permutations = sample_parameters.structure_permutations;
-    let n_texture_measurements = texture_measurement
-        .map(|t| t.stride())
-        .unwrap_or(1);
+    let n_texture_measurements = texture_measurement.map(|t| t.stride()).unwrap_or(1);
 
     enum Task {
         Job(PeakSim),

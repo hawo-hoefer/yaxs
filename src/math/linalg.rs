@@ -1,3 +1,4 @@
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub};
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use num_traits::{Float, One, Zero};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 #[repr(C)]
 pub struct Mat<T, const ROWS: usize, const COLS: usize> {
     v: [[T; COLS]; ROWS],

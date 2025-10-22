@@ -567,7 +567,7 @@ where
     let intensities = if let Some(t) = p.texture_measurement {
         let stride = t.stride();
         let n_samples = n / stride;
-        println!("{} {} {}", stride, n_samples, n);
+        // println!("{} {} {}", stride, n_samples, n);
         assert_eq!(n % stride, 0);
         // TODO: ensure this from the chunking algorithm
         Intensities::TextureMeasurement(
