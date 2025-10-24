@@ -420,7 +420,6 @@ impl ToDiscretize {
                 random_seed: rng.random(),
             },
             beamline: energy_dispersive.beamline.clone(),
-            texture: simulation_parameters.texture_measurement.clone(),
             normalize: simulation_parameters.normalize,
             meta: EDXRDMeta {
                 vol_fractions,

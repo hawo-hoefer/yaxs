@@ -339,6 +339,72 @@ impl Structure {
         agg
     }
 
+    pub fn apply_alignment_to_hkls_intensities<'a>(
+        &self,
+        input: &[(Vec3<f64>, NotNan<f64>, NotNan<f64>)],
+        alignment: Option<Alignment<'a>>,
+    ) -> Vec<Peak> {
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+
+        for (hkl, i_hkl, d_hkl) in input {
+            let mut i_hkl = *i_hkl;
+
+            if let Some(Alignment { po, phi, chi }) = alignment {
+                let w =
+                    NotNan::new(po.weight(&hkl, &self.lat, phi, chi)).expect("weight is not nan");
+                i_hkl = i_hkl * w;
+            }
+
+            let (ref mut i_hkl_map, ref mut hkls_map) = agg
+                .entry(*d_hkl)
+                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
+            *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
+            hkls_map.push(hkl.map(|x| *x as i16))
+        }
+
+        self.compress_aggregated_hkls(agg)
+    }
+
+    pub fn compress_aggregated_hkls(
+        &self,
+        agg: HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
+    ) -> Vec<Peak> {
+        let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
+            return Vec::new();
+        };
+
+        let mut agg = agg
+            .iter()
+            .sorted_unstable_by_key(|&(a, _)| -a)
+            .map(|(d_hkl, (i_hkl, hkls))| (f64::from(*d_hkl), f64::from(*i_hkl), hkls))
+            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
+            .collect_vec();
+
+        let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
+        for (d_hkl, i_hkl, hkls) in agg.drain(..) {
+            match compressed.last_mut() {
+                Some(Peak {
+                    d_hkl: last_d_hkl,
+                    i_hkl: last_i_hkl,
+                    hkls: last_hkls,
+                }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
+                    *last_i_hkl += i_hkl;
+                    last_hkls.extend(hkls.clone())
+                }
+                None | Some(&mut Peak { .. }) => compressed.push(Peak {
+                    d_hkl,
+                    i_hkl,
+                    hkls: hkls.clone(),
+                }),
+            }
+        }
+        let volume = self.lat.volume();
+        for peak in compressed.iter_mut() {
+            peak.i_hkl /= volume.powi(2);
+        }
+        compressed
+    }
+
     /// scan lattice for crystallographic planes with given d-spacings
     /// compute peak intensities and d-spacings corresponding to the lattice planes
     /// miller indices are **not** returned
@@ -353,7 +419,6 @@ impl Structure {
         max_r: f64,
         alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
-        // let intens = self.get_hkl_intensities_spacings(min_r, max_r);
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
@@ -397,40 +462,7 @@ impl Structure {
             hkls_map.push(hkl.map(|x| *x as i16))
         }
 
-        let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
-            return Vec::new();
-        };
-
-        let mut agg = agg
-            .iter()
-            .sorted_unstable_by_key(|&(a, _)| -a)
-            .map(|(d_hkl, (i_hkl, hkls))| (f64::from(*d_hkl), f64::from(*i_hkl), hkls))
-            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
-            .collect_vec();
-
-        let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
-        for (d_hkl, i_hkl, hkls) in agg.drain(..) {
-            match compressed.last_mut() {
-                Some(Peak {
-                    d_hkl: last_d_hkl,
-                    i_hkl: last_i_hkl,
-                    hkls: last_hkls,
-                }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
-                    *last_i_hkl += i_hkl;
-                    last_hkls.extend(hkls.clone())
-                }
-                None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    d_hkl,
-                    i_hkl,
-                    hkls: hkls.clone(),
-                }),
-            }
-        }
-        let volume = self.lat.volume();
-        for peak in compressed.iter_mut() {
-            peak.i_hkl /= volume.powi(2);
-        }
-        compressed
+        self.compress_aggregated_hkls(agg)
     }
 
     /// compute peak positions and intensities for angle dispersive XRD
@@ -524,13 +556,17 @@ impl<'a> Lattice {
     }
 }
 
+enum PossiblyTextureMeasurementPeaks {
+    NoTexture(Peaks),
+    Texture(Vec<Peaks>),
+}
+
 struct PeakSimResult {
     strain: Strain,
     po: Option<BinghamODF>,
-    peaks: Peaks,
+    peaks: PossiblyTextureMeasurementPeaks,
     struct_id: usize,
     permutation_id: usize,
-    measurement_id: usize,
 }
 
 struct WriteCtx {
@@ -551,13 +587,14 @@ unsafe impl Sync for WriteCtx {}
 impl WriteCtx {
     pub fn new(n_structs: usize, n_measurements: usize, n_permutations: usize) -> Self {
         let n_peak_sets = n_structs * n_permutations * n_measurements;
+        let n_simulations = n_structs * n_permutations;
 
         Self {
             inner: UnsafeCell::new(Inner {
-                strain: unsafe { uninit_vec(n_peak_sets) },
-                pos: unsafe { uninit_vec(n_peak_sets) },
                 peaks: unsafe { uninit_vec(n_peak_sets) },
-                ok: unsafe { uninit_vec(n_peak_sets) },
+                strain: unsafe { uninit_vec(n_simulations) },
+                pos: unsafe { uninit_vec(n_simulations) },
+                ok: unsafe { uninit_vec(n_simulations) },
                 n_permutations,
                 n_measurements,
             }),
@@ -574,15 +611,32 @@ impl WriteCtx {
             n_measurements,
         } = unsafe { &mut *(self.inner.get()) };
 
-        // index is [structure_id, permutation_id, texture_measurment_id]
-        let idx = p.struct_id * (*n_measurements * *n_permutations)
-            + p.permutation_id * *n_measurements
-            + p.measurement_id;
+        let sample_idx = p.struct_id * *n_permutations + p.permutation_id;
+        match p.peaks {
+            PossiblyTextureMeasurementPeaks::NoTexture(res) => {
+                assert_eq!(*n_measurements, 1, "n_measurements needs to be 1 if no texture measurement is done. this is likely a bug in yaxs.");
 
-        pos[idx] = p.po.map(|x| x.params);
-        strain[idx] = p.strain;
-        peaks[idx] = MaybeUninit::new(p.peaks);
-        ok[idx] = true
+                pos[sample_idx] = p.po.map(|x| x.params);
+                strain[sample_idx] = p.strain;
+                ok[sample_idx] = true;
+
+                peaks[sample_idx] = MaybeUninit::new(res);
+            }
+            PossiblyTextureMeasurementPeaks::Texture(mut texture_measurement_peaks) => {
+                assert_eq!(texture_measurement_peaks.len(), *n_measurements, "number of peak sets must match number of simulated peaks. this is likely a bug in yaxs.");
+                let sample_idx = p.struct_id * *n_permutations + p.permutation_id;
+                // index is [structure_id, permutation_id, texture_measurment_id]
+                for (measurement_id, res) in texture_measurement_peaks.drain(..).enumerate() {
+                    let idx = sample_idx * *n_measurements + measurement_id;
+
+                    peaks[idx] = MaybeUninit::new(res);
+                }
+
+                pos[sample_idx] = p.po.as_ref().map(|x| x.params.clone());
+                strain[sample_idx] = p.strain.clone();
+                ok[sample_idx] = true;
+            }
+        }
     }
 
     pub fn make_to_discretize(
@@ -651,12 +705,10 @@ pub fn simulate_peaks(
     struct PeakSim {
         structure: usize,
         permutation: usize,
-        measurement: usize,
         seed: u64,
         min_r: f64,
         max_r: f64,
-        phi: f64,
-        chi: f64,
+        t: Option<TextureMeasurement>,
     }
 
     #[derive(Clone)]
@@ -681,17 +733,30 @@ pub fn simulate_peaks(
                 .as_mut()
                 .map(|x| x.sample(&mut rng));
 
-            let peaks = perm_s
-                .get_d_spacings_intensities(
-                    job.min_r,
-                    job.max_r,
-                    po.as_ref().map(|po| Alignment {
-                        po: &po,
-                        phi: job.phi,
-                        chi: job.chi,
-                    }),
-                )
-                .into_boxed_slice();
+            let peaks = if let Some(t) = job.t {
+                let hkls_intensities_spacings = perm_s
+                    .get_hkl_intensities_spacings(job.min_r, job.max_r)
+                    .into_boxed_slice();
+                let mut peaks = Vec::new();
+                for (_, (phi, chi)) in t
+                    .chi
+                    .into_iter()
+                    .cartesian_product(t.phi.into_iter())
+                    .enumerate()
+                {
+                    let p = perm_s.apply_alignment_to_hkls_intensities(
+                        &hkls_intensities_spacings,
+                        po.as_ref().map(|x| Alignment { po: x, chi, phi }),
+                    );
+                    peaks.push(p.into_boxed_slice());
+                }
+                PossiblyTextureMeasurementPeaks::Texture(peaks)
+            } else {
+                let peaks = perm_s
+                    .get_d_spacings_intensities(job.min_r, job.max_r, None)
+                    .into_boxed_slice();
+                PossiblyTextureMeasurementPeaks::NoTexture(peaks)
+            };
 
             Ok(PeakSimResult {
                 strain,
@@ -699,7 +764,6 @@ pub fn simulate_peaks(
                 peaks,
                 struct_id: job.structure,
                 permutation_id: job.permutation,
-                measurement_id: job.measurement,
             })
         }
     }
@@ -717,7 +781,7 @@ pub fn simulate_peaks(
         .map(|x| x.into())
         .unwrap_or(1);
 
-    if n_structs * n_permutations * n_texture_measurements < 50 {
+    if n_structs * n_permutations < 50 {
         info!("Small number of simulations. Using single-threaded mode.");
         n_threads = 1;
     }
@@ -739,40 +803,16 @@ pub fn simulate_peaks(
         info!("Running single-threaded peak simulation");
 
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
-            if let Some(t) = texture_measurement {
-                for (i, (phi, chi)) in t
-                    .chi
-                    .into_iter()
-                    .cartesian_product(t.phi.into_iter())
-                    .enumerate()
-                {
-                    let job = PeakSim {
-                        structure: struct_id,
-                        permutation: permutation_id,
-                        seed: rng.random(),
-                        min_r,
-                        max_r,
-                        chi,
-                        phi,
-                        measurement: i,
-                    };
-                    let p = ctx.run(job)?;
-                    unsafe { results.add(p) };
-                }
-            } else {
-                let job = PeakSim {
-                    structure: struct_id,
-                    permutation: permutation_id,
-                    seed: rng.random(),
-                    min_r,
-                    max_r,
-                    chi: 0.0,
-                    phi: 0.0,
-                    measurement: 0,
-                };
-                let p = ctx.run(job)?;
-                unsafe { results.add(p) };
-            }
+            let job = PeakSim {
+                structure: struct_id,
+                permutation: permutation_id,
+                seed: rng.random(),
+                min_r,
+                max_r,
+                t: texture_measurement,
+            };
+            let p = ctx.run(job)?;
+            unsafe { results.add(p) };
         }
     } else {
         let (job_sender, job_receiver) = crossbeam_channel::unbounded();
@@ -813,38 +853,15 @@ pub fn simulate_peaks(
             .collect_vec();
 
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
-            if let Some(t) = texture_measurement {
-                for (i, (phi, chi)) in t
-                    .chi
-                    .into_iter()
-                    .cartesian_product(t.phi.into_iter())
-                    .enumerate()
-                {
-                    let job = PeakSim {
-                        structure: struct_id,
-                        permutation: permutation_id,
-                        seed: rng.random(),
-                        min_r,
-                        max_r,
-                        chi,
-                        phi,
-                        measurement: i,
-                    };
-                    let _ = job_sender.send(Task::Job(job));
-                }
-            } else {
-                let job = PeakSim {
-                    structure: struct_id,
-                    permutation: permutation_id,
-                    seed: rng.random(),
-                    min_r,
-                    max_r,
-                    chi: 0.0,
-                    phi: 0.0,
-                    measurement: 0,
-                };
-                let _ = job_sender.send(Task::Job(job));
-            }
+            let job = PeakSim {
+                structure: struct_id,
+                permutation: permutation_id,
+                seed: rng.random(),
+                min_r,
+                max_r,
+                t: texture_measurement,
+            };
+            let _ = job_sender.send(Task::Job(job));
         }
 
         debug!("Sending stop signal to peak simulation threads");

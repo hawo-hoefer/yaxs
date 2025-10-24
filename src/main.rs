@@ -386,6 +386,7 @@ where
         // write as single chunk
         let mut jobs = Vec::with_capacity(gen.remaining());
         while let Some(job) = gen.next() {
+            println!("next job");
             jobs.push(job);
         }
         let xs = gen.xs();

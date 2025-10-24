@@ -9,7 +9,7 @@ pub struct BinghamParams {
     pub ks: Vec4<f64>,
 }
 
-pub const N_SAMPLES: usize = 32768;
+pub const N_SAMPLES: usize = 2048;
 
 /// orientation distribution for perferred orientation in sample coordinates
 ///

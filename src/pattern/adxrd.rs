@@ -1,6 +1,6 @@
 use super::{
-    render_peak, DiscretizeJobGenerator, Discretizer, JobParams, PeakRenderParams, RenderCommon,
-    VFGenerator,
+    render_peak, DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams,
+    PeakRenderParams, RenderCommon, VFGenerator,
 };
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
@@ -211,29 +211,29 @@ impl Discretizer for DiscretizeAngleDispersive {
         }
     }
 
-    fn init_meta_data(n_patterns: usize, p: &JobParams) -> Vec<PatternMeta> {
+    fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
         let mut v = vec![
-            Strains(Array3::<f32>::zeros((n_patterns, p.n_phases, 6))),
-            Etas(Array1::<f32>::zeros(n_patterns)),
-            CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
-            MeanDsNm(Array2::<f32>::zeros((n_patterns, p.n_phases))),
-            VolumeFractions(Array2::<f32>::zeros((n_patterns, p.n_phases))),
-            ImpuritySum(Array1::<f32>::zeros(n_patterns)),
-            SampleDisplacementMuM(Array1::<f32>::zeros(n_patterns)),
+            Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
+            Etas(Array1::<f32>::zeros(n_samples)),
+            CagliotiParams(Array2::<f32>::zeros((n_samples, 3))),
+            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            ImpuritySum(Array1::<f32>::zeros(n_samples)),
+            SampleDisplacementMuM(Array1::<f32>::zeros(n_samples)),
         ];
 
         if p.has_weight_fracs {
             v.push(WeightFractions(Array2::<f32>::zeros((
-                n_patterns, p.n_phases,
+                n_samples, p.n_phases,
             ))))
         }
 
         if let Some(n) = p.textured_phases {
             v.push(BinghamODFParams {
-                orientations: Array3::zeros((n_patterns, n, 4)),
-                ks: Array3::zeros((n_patterns, n, 4)),
+                orientations: Array3::zeros((n_samples, n, 4)),
+                ks: Array3::zeros((n_samples, n, 4)),
             })
         }
         v
@@ -320,63 +320,38 @@ where
 {
     type Item = DiscretizeAngleDispersive;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let stride = self
-            .sim_params
-            .texture_measurement
-            .map(|x| x.stride())
-            .unwrap_or(1);
-
-        if self.n >= self.sim_params.n_patterns * stride {
+    fn next(&mut self) -> Option<DiscretizeSample<Self::Item>> {
+        if self.n >= self.sim_params.n_patterns {
             return None;
         }
+        let mut job = self.to_discretize.generate_adxrd_job(
+            &self.vf_generator,
+            &self.cfg,
+            &self.sim_params,
+            &mut self.rng,
+        );
 
-        let ret = if self.cur_job.is_none() || self.n % stride == 0 {
-            // this branch will be hit when we start simulating a new texture
-            // measurement or on each iteration of a standard XRD sample
-            self.cur_job = Some(self.to_discretize.generate_adxrd_job(
-                &self.vf_generator,
-                &self.cfg,
-                &self.sim_params,
-                &mut self.rng,
-            ));
-            let cur_job = self.cur_job.as_mut().expect("we just set it");
-            if stride > 1 {
-                // indices in job only contain structure and permutation.
-                // in case of texture measurement, we need to perform n_phi * n_chi
-                // discretizations for each phi and chi value taken
-                // so first, adjust the indices to start at the correct place
-                for idx in cur_job.common.indices.iter_mut() {
-                    *idx *= stride;
+        let ret = match self.sim_params.texture_measurement {
+            Some(t) => {
+                let mut ret = Vec::new();
+                for _ in 0..t.stride() {
+                    for idx in job.common.indices.iter_mut() {
+                        *idx += 1;
+                    }
+                    ret.push(job.clone());
                 }
+                DiscretizeSample::TextureMeasurement(ret)
             }
-            Some(cur_job.clone())
-        } else {
-            // this case will be hit only if we are in texture simulation mode as
-            // only then the stride will be larger than one
-            let cur_job = self.cur_job.as_mut().expect("we just checked");
-
-            // in texture mode, we increment the index to cycle through the phi
-            // and chi combinations one by one
-            for idx in cur_job.common.indices.iter_mut() {
-                *idx *= 1;
-            }
-            Some(cur_job.clone())
+            None => DiscretizeSample::Standard(job),
         };
 
         self.n += 1;
 
-        ret
+        Some(ret)
     }
 
     fn remaining(&self) -> usize {
-        let stride = self
-            .sim_params
-            .texture_measurement
-            .map(|x| x.stride())
-            .unwrap_or(1);
-
-        self.sim_params.n_patterns * stride - self.n
+        self.sim_params.n_patterns - self.n
     }
 
     fn xs(&self) -> &[f32] {
@@ -384,7 +359,7 @@ where
     }
 
     fn get_job_params(&self) -> JobParams {
-        let texture_measurement_phases = self.sim_params.texture_measurement.as_ref().map(|_| {
+        let textured_phases = self.sim_params.texture_measurement.as_ref().map(|_| {
             self.to_discretize
                 .sample_parameters
                 .structures
@@ -401,7 +376,7 @@ where
                 .structures
                 .iter()
                 .all(|s| s.density.is_some()),
-            textured_phases: texture_measurement_phases,
+            textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
         }
     }

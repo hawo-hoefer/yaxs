@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use cfg_if::cfg_if;
 use itertools::Itertools;
-use log::warn;
+use log::{debug, info, warn};
 use ndarray::{Array2, Array3, Array4};
 use rand::Rng;
 
@@ -24,10 +24,26 @@ use crate::cfg::{CompactSimResults, TextureMeasurement, VolumeFraction};
 pub mod adxrd;
 pub mod edxrd;
 
+// TODO: Somehow encode that all samples have the same of measurement in
+// the type system
+pub enum DiscretizeSample<T> {
+    Standard(T),
+    TextureMeasurement(Vec<T>),
+}
+
+impl<T> DiscretizeSample<T> {
+    pub fn n_patterns(&self) -> usize {
+        match self {
+            DiscretizeSample::Standard(_) => 1,
+            DiscretizeSample::TextureMeasurement(items) => items.len(),
+        }
+    }
+}
+
 pub trait DiscretizeJobGenerator {
     type Item;
 
-    fn next(&mut self) -> Option<Self::Item>;
+    fn next(&mut self) -> Option<DiscretizeSample<Self::Item>>;
     fn remaining(&self) -> usize;
     fn xs(&self) -> &[f32];
     fn get_job_params(&self) -> JobParams;
@@ -351,7 +367,7 @@ pub trait Discretizer {
     }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
-    fn init_meta_data(n_patterns: usize, p: &JobParams) -> Vec<PatternMeta>;
+    fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
         for PeakRenderParams {
@@ -394,6 +410,17 @@ pub struct Peak {
 }
 pub type Peaks = Box<[Peak]>;
 
+/// render a pseudo-voigt peak into an xrd pattern by splitting it into a left
+/// and right half, rendering the pv-function until an intensity tolerance is
+/// reached
+///
+/// * `pos`:
+/// * `weight`:
+/// * `fwhm`:
+/// * `eta`:
+/// * `abstol`:
+/// * `xs`:
+/// * `ys`:
 pub fn render_peak(
     pos: f32,
     weight: f32,
@@ -534,42 +561,61 @@ pub enum Intensities {
 }
 
 pub fn render_jobs<T>(
-    jobs: Vec<T>,
+    jobs: Vec<DiscretizeSample<T>>,
     xs: &[f32],
     p: &JobParams,
 ) -> Result<(Intensities, Vec<PatternMeta>), String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    let n = jobs.len();
-    let mut metadata = T::init_meta_data(jobs.len(), p);
+    let n_samples = jobs.len();
+    let mut metadata = T::init_meta_data(n_samples, p);
+    info!("Initialized metadata for {n_samples} sample(s).");
+
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
+            let job = match job {
+                DiscretizeSample::Standard(job) => job,
+                DiscretizeSample::TextureMeasurement(items) => items
+                    .first()
+                    .expect("at least one pattern in texture measurement"),
+            };
             job.write_meta_data(m, i)
         }
     }
 
+    let n_peak_sets = jobs.iter().map(|x| x.n_patterns()).sum();
+
     // actual rendering of the patterns
     cfg_if! {
         if #[cfg(feature = "cpu-only")] {
-            let mut intensities = Array2::<f32>::zeros((n, xs.len()));
-            for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
-                job.discretize_into(pattern.as_slice_mut().unwrap(), &xs, p.abstol);
+            let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
+            let mut peak_set = 0;
+            for job in jobs {
+                // TODO: somehow encode that all samples have the same simulation type
+                // in the type system
+                match job {
+                    DiscretizeSample::Standard(job) => {
+                        job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
+                        peak_set += 1;
+                    },
+                    DiscretizeSample::TextureMeasurement(items) => {
+                        for job in items.iter() {
+                            job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
+                            peak_set += 1;
+                        }
+                    },
+                }
             }
         } else {
             use crate::discretize_cuda::discretize_peaks_cuda;
             let intensities = discretize_peaks_cuda(jobs, xs)?;
-            let intensities = ndarray::Array2::from_shape_vec((n, xs.len()), intensities)
+            let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
                 .expect("sizes must match");
         }
     };
 
     let intensities = if let Some(t) = p.texture_measurement {
-        let stride = t.stride();
-        let n_samples = n / stride;
-        // println!("{} {} {}", stride, n_samples, n);
-        assert_eq!(n % stride, 0);
-        // TODO: ensure this from the chunking algorithm
         Intensities::TextureMeasurement(
             intensities
                 .into_shape_with_order((n_samples, t.phi.steps, t.chi.steps, xs.len()))

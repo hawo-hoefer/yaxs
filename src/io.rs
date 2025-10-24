@@ -191,31 +191,6 @@ pub fn write_to_npz(
     Ok((data_names, meta_names))
 }
 
-/// render a chunk of angle dispersive XRD patterns
-///
-/// # Errors
-///
-/// This function will return an error if the writing thread has died and cannot be sent to
-pub fn render_chunk_and_queue_write_in_thread<D, T>(
-    jobs: Vec<D>,
-    two_thetas: &[f32],
-    path: T,
-    send: Sender<Arc<WriteJob<T>>>,
-    p: JobParams,
-) -> Result<(), String>
-where
-    T: AsRef<Path> + Send + Sync,
-    D: Discretizer + Send + Sync + 'static,
-{
-    let (intensities, meta) = render_jobs(jobs, two_thetas, &p)?;
-    send.send(Arc::new(WriteJob::Write {
-        intensities,
-        meta,
-        path,
-    }))
-    .map_err(|err| err.to_string())
-}
-
 /// prepare an output directory for saving generated XRD patterns
 ///
 /// * `opts`: IO options for writing the data
@@ -266,9 +241,9 @@ pub fn render_write_chunked<T>(
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    let l = gen.remaining();
-    let chunk_size = io_opts.chunk_size.unwrap_or(l);
-    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
+    let samples = gen.remaining();
+    let chunk_size = io_opts.chunk_size.unwrap_or(samples);
+    let n_chunks = samples / chunk_size + (samples % chunk_size > 0) as usize;
     info!("Rendering {n_chunks} chunks of {chunk_size} patterns each");
     let pad_width = if n_chunks > 1 {
         1 + (n_chunks - 1).ilog10()
@@ -322,7 +297,7 @@ where
     let mut i = 0;
 
     let mut datafiles = Vec::new();
-    while i < l {
+    while i < samples {
         let chunk_file_name = format!(
             "data_{:0width$}.npz",
             i / chunk_size,
@@ -344,14 +319,13 @@ where
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        render_chunk_and_queue_write_in_thread(
-            chunk,
-            gen.xs(),
-            chunk_path,
-            tx.clone(),
-            gen.get_job_params(),
-        )
-        .map_err(|err| format!("Could not queue write job: {err}."))?;
+        let (intensities, meta) = render_jobs(chunk, gen.xs(), &gen.get_job_params())?;
+        tx.send(Arc::new(WriteJob::Write {
+            intensities,
+            meta,
+            path: chunk_path,
+        }))
+        .map_err(|err| format!("Could not queue write job: {}", err.to_string()))?;
 
         i += actual_chunk_size;
     }
