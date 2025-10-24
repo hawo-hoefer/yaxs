@@ -342,6 +342,7 @@ fn main() {
     let params = cfg.simulation_parameters;
     let extra = io::Extra {
         max_phases: cfg.sample_parameters.structures.len(),
+        texture: params.texture_measurement,
         encoding: cfg
             .sample_parameters
             .structures

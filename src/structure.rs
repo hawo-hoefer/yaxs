@@ -351,7 +351,7 @@ impl Structure {
 
             if let Some(Alignment { po, phi, chi }) = alignment {
                 let w =
-                    NotNan::new(po.weight(&hkl, &self.lat, phi, chi)).expect("weight is not nan");
+                    NotNan::new(po.weight(&hkl, &self.lat, chi, phi)).expect("weight is not nan");
                 i_hkl = i_hkl * w;
             }
 
@@ -450,7 +450,7 @@ impl Structure {
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
 
             if let Some(Alignment { po, phi, chi }) = alignment {
-                let w = po.weight(&hkl, &self.lat, phi, chi);
+                let w = po.weight(&hkl, &self.lat, chi, phi);
                 i_hkl *= w;
             }
             let d_hkl = 1.0 / g_hkl;
@@ -738,7 +738,7 @@ pub fn simulate_peaks(
                     .get_hkl_intensities_spacings(job.min_r, job.max_r)
                     .into_boxed_slice();
                 let mut peaks = Vec::new();
-                for (_, (phi, chi)) in t
+                for (_, (chi, phi)) in t
                     .chi
                     .into_iter()
                     .cartesian_product(t.phi.into_iter())

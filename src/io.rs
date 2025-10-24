@@ -17,6 +17,7 @@ use ndarray_npy::WritableElement;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
+use crate::cfg::TextureMeasurement;
 use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
@@ -118,6 +119,7 @@ impl PatternMeta {
 pub struct Extra {
     pub cfg: SimulationKind,
     pub max_phases: usize,
+    pub texture: Option<TextureMeasurement>,
     pub encoding: Vec<String>,
 }
 

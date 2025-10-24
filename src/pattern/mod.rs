@@ -618,7 +618,7 @@ where
     let intensities = if let Some(t) = p.texture_measurement {
         Intensities::TextureMeasurement(
             intensities
-                .into_shape_with_order((n_samples, t.phi.steps, t.chi.steps, xs.len()))
+                .into_shape_with_order((n_samples, t.chi.steps, t.phi.steps, xs.len()))
                 .expect("shapes match"),
         )
     } else {

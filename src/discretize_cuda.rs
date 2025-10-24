@@ -205,8 +205,6 @@ where
 
     let num_peak_sets = jobs.iter().map(|job| job.n_patterns()).sum();
 
-    println!("{}", n_peaks_tot);
-
     let jobs = {
         let mut jobs_flat = Vec::with_capacity(num_peak_sets);
         for job in jobs.drain(..) {
@@ -219,7 +217,6 @@ where
         }
         jobs_flat
     };
-
 
     let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(num_peak_sets);
     let mut ctx = Arc::new(RenderCtx::new(n_peaks_tot));
