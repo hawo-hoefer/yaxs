@@ -238,8 +238,6 @@ fn main() {
             std::process::exit(1);
         });
 
-    println!("ToDiscretize: {}", to_discretize.sim_res.all_simulated_peaks.len());
-
     let elapsed = begin.elapsed().as_secs_f64();
 
     if args.io.display_hkls {
@@ -387,7 +385,6 @@ where
         // write as single chunk
         let mut jobs = Vec::with_capacity(gen.remaining());
         while let Some(job) = gen.next() {
-            println!("next job");
             jobs.push(job);
         }
         let xs = gen.xs();
