@@ -8,6 +8,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
+use yaxs::math::pseudo_voigt;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
@@ -233,34 +234,47 @@ fn main() {
 
         for i in 0..to_discretize.structures.len() {
             let idx = to_discretize.sim_res.idx(i, 0);
+            let mean_ds_nm = to_discretize.sample_parameters.structures[i]
+                .mean_ds_nm
+                .mean();
             info!("======= Structure {} =======", structure_paths[i]);
             let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
                 .map(|p| match &cfg.kind {
-                    SimulationKind::AngleDispersive(angle_dispersive) => {
-                        let wavelength_ams = angle_dispersive.emission_lines[0].wavelength_ams;
-                        let (pos, intens, _) = p.get_adxrd_render_params(
+                    SimulationKind::AngleDispersive(ad) => {
+                        let wavelength_ams = ad.emission_lines[0].wavelength_ams;
+                        let u = ad.caglioti.u.mean();
+                        let v = ad.caglioti.v.mean();
+                        let w = ad.caglioti.w.mean();
+                        let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
+
+                        let (pos, intens, fwhm) = p.get_adxrd_render_params(
                             wavelength_ams / 10.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            100.0,
+                            u,
+                            v,
+                            w,
+                            mean_ds_nm,
                             1.0,
-                            0.0,
-                            angle_dispersive.goniometer_radius_mm,
+                            sd,
+                            ad.goniometer_radius_mm,
                         );
+
+                        let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
                         (pos, intens)
                     }
                     SimulationKind::EnergyDispersive(energy_dispersive) => {
                         let theta_rad = energy_dispersive.theta_deg.to_radians();
                         let f_lorentz = lorentz_polarization_factor(theta_rad);
-                        let (pos, intens, _) = p.get_edxrd_render_params(
+                        let (pos, intens, fwhm) = p.get_edxrd_render_params(
                             theta_rad,
                             f_lorentz,
-                            100.0,
+                            mean_ds_nm,
                             1.0,
                             &energy_dispersive.beamline,
                         );
+
+                        let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
+
                         (pos, intens)
                     }
                 })
