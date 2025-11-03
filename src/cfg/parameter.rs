@@ -1,3 +1,4 @@
+use num_traits::Float;
 use rand::distr::uniform::SampleUniform;
 use rand::distr::Uniform;
 use rand::Rng;
@@ -44,6 +45,13 @@ impl<T> Parameter<T> {
             Parameter::Fixed(v) => *v,
             Parameter::Range(v, _) => *v,
         }
+    }
+
+    pub fn mean(&self) -> T
+    where
+        T: Float,
+    {
+        (self.upper_bound() + self.lower_bound()) / (T::one() + T::one())
     }
 }
 
