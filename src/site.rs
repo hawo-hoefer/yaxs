@@ -8,9 +8,9 @@ pub enum AtomicDisplacement {
     Uiso(f64),
     Biso(f64),
     Uani(Mat3<f64>),
+    Bani(Mat3<f64>),
     // Uovl,
     // Umpe,
-    // Bani,
     // Bovl,
 }
 
@@ -38,6 +38,15 @@ impl AtomicDisplacement {
                 for j in 0..3 {
                     for l in 0..3 {
                         t += h[j] * u[(j, l)] * h[l];
+                    }
+                }
+                (-2.0 * PI * t).exp()
+            }
+            AtomicDisplacement::Bani(b) => {
+                let mut t = 0.0;
+                for j in 0..3 {
+                    for l in 0..3 {
+                        t += h[j] * b[(j, l)] / (8.0 * PI * PI) * h[l];
                     }
                 }
                 (-2.0 * PI * t).exp()

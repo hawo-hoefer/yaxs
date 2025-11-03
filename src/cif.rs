@@ -40,6 +40,15 @@ const ANISO_ADP_B_LABELS: [&str; 6] = [
     "_atom_site_aniso_B_33",
 ];
 
+const ANISO_ADP_BETA_LABELS: [&str; 6] = [
+    "_atom_site_aniso_beta_11",
+    "_atom_site_aniso_beta_12",
+    "_atom_site_aniso_beta_22",
+    "_atom_site_aniso_beta_13",
+    "_atom_site_aniso_beta_23",
+    "_atom_site_aniso_beta_33",
+];
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
     c: &'a str,
@@ -91,6 +100,37 @@ pub struct CIFContents {
     pub block_name: String,
     pub kvs: HashMap<String, Value>,
     pub tables: Vec<HashMap<String, Vec<Value>>>,
+}
+
+fn parse_matrix_from_symmetric_order_labels(
+    t: &Table,
+    mat_labels: &[&str; 6],
+    base_label: &str,
+    label: &str,
+    idx: usize,
+) -> Result<Mat3<f64>, String> {
+    let mut values = [0.0; 6];
+
+    for ((key, v), tgt) in mat_labels
+        .iter()
+        .map(|key| (key, t.get(*key).map(|x| &x[idx])))
+        .zip(values.iter_mut())
+    {
+        if let Some(v) = v {
+            *tgt = v.try_to_f64().map_err(|_| {
+                format!("Could not get {key} for {label}: Needs to be Integer or Float, got {v}.")
+            })?;
+        } else {
+            return Err(format!("Could not acquire anisotropic atomic displacement parameters. Could not find column '{key}' in table containing '{base_label}'"));
+        }
+    }
+
+    let [v11, v21, v22, v31, v32, v33] = values;
+    return Ok(Mat3::from_rows([
+        [v11, v21, v31],
+        [v21, v22, v32],
+        [v31, v32, v33],
+    ]));
 }
 
 impl CIFContents {
@@ -161,7 +201,7 @@ impl CIFContents {
         }
     }
 
-    pub fn get_sites(&self) -> Result<Vec<Site>, String> {
+    pub fn get_sites(&self, lattice: &Lattice) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
             const SITE_KEYS: [&str; 6] = [
                 "_atom_site_label",
@@ -214,35 +254,57 @@ impl CIFContents {
                 return Ok(None);
             };
 
-            let mut values = [0.0; 6];
             let aniso_u_ident = ANISO_ADP_U_LABELS[0];
-            let aniso_b_ident = ANISO_ADP_B_LABELS[0];
-
             if atom_site_aniso_table.contains_key(aniso_u_ident) {
-                // parse anisotropic U
-                for ((key, v), tgt) in ANISO_ADP_U_LABELS
-                    .iter()
-                    .map(|key| (key, atom_site_aniso_table.get(*key).map(|x| &x[idx])))
-                    .zip(values.iter_mut())
-                {
-                    if let Some(v) = v {
-                        *tgt = v.try_to_f64().map_err(|_| format!("Could not get {key} for {label}: Needs to be Integer or Float, got {v}."))?;
-                    } else {
-                        return Err(format!("Could not acquire anisotropic atomic displacement parameters. Could not find column '{key}' in table containing '_atom_site_aniso_label' and '{aniso_u_ident}'"));
+                let mat = parse_matrix_from_symmetric_order_labels(
+                    atom_site_aniso_table,
+                    &ANISO_ADP_U_LABELS,
+                    aniso_u_ident,
+                    label,
+                    idx,
+                )?;
+
+                return Ok(Some(AtomicDisplacement::Uani(mat)));
+            }
+
+            let aniso_b_ident = ANISO_ADP_B_LABELS[0];
+            if atom_site_aniso_table.contains_key(aniso_b_ident) {
+                let mat = parse_matrix_from_symmetric_order_labels(
+                    atom_site_aniso_table,
+                    &ANISO_ADP_B_LABELS,
+                    aniso_b_ident,
+                    label,
+                    idx,
+                )?;
+
+                return Ok(Some(AtomicDisplacement::Bani(mat)));
+            }
+
+            let aniso_beta_ident = ANISO_ADP_BETA_LABELS[0];
+            if atom_site_aniso_table.contains_key(aniso_beta_ident) {
+                let mut mat = parse_matrix_from_symmetric_order_labels(
+                    atom_site_aniso_table,
+                    &ANISO_ADP_BETA_LABELS,
+                    aniso_b_ident,
+                    label,
+                    idx,
+                )?;
+
+                let abc = lattice.abc();
+
+                // from https://www.iucr.org/resources/commissions/crystallographic-nomenclature
+                // equation 2.1.38
+                //
+                // convert to B^ij using lattice lengths
+                for j in 0..mat.rows() {
+                    for l in 0..mat.cols() {
+                        // beta^jl / (2 pi^2 a^j a^l) = B^jl / (8 pi^2)
+                        // 4 beta^jl / (a^j a^l)
+                        mat[(j, l)] = mat[(j, l)] * 4.0 / (abc[j] * abc[l]);
                     }
                 }
 
-                let [v11, v21, v22, v31, v32, v33] = values;
-                return Ok(Some(AtomicDisplacement::Uani(Mat3::from_rows([
-                    [v11, v21, v31],
-                    [v21, v22, v32],
-                    [v31, v32, v33],
-                ]))));
-            }
-
-            if atom_site_aniso_table.contains_key(aniso_b_ident) {
-                // parse anisotropic B
-                todo!("parse B labels")
+                return Ok(Some(AtomicDisplacement::Bani(mat)));
             }
 
             let mut table_labels = String::from("[");
@@ -391,6 +453,9 @@ impl CIFContents {
                         }
                         Some(AtomicDisplacement::Uani(ref v)) => {
                             Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
+                        }
+                        Some(AtomicDisplacement::Bani(ref v)) => {
+                            Some(AtomicDisplacement::Bani(op.transform_orientation(&v)))
                         }
                     },
                 };

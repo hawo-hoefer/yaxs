@@ -124,7 +124,7 @@ impl Lattice {
             .abs()
     }
 
-    fn abc(&self) -> Vec3<f64> {
+    pub fn abc(&self) -> Vec3<f64> {
         let mut values = [0.0; 3];
         for i in 0..self.mat.rows() {
             values[i] = self.mat.row(i).magnitude();
@@ -169,9 +169,10 @@ impl TryFrom<&CIFContents> for Structure {
     type Error = String;
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
+        let lattice = value.get_lattice();
         Ok(Structure {
-            sites: value.get_sites()?,
-            lat: value.get_lattice(),
+            sites: value.get_sites(&lattice)?,
+            lat: lattice,
             density: value.get_density()?,
             sg_no,
             sg_class,
