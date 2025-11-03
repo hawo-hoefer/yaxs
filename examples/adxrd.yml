@@ -10,7 +10,8 @@ kind: !AngleDispersive
   two_theta_range: [10.0, 70.0]
   goniometer_radius_mm: 180
   sample_displacement_mu_m: [-200, 200]
-  caglioti:
+  caglioti:   # optional caglioti parameters
+    kind: GSAS # optional GSAS-like caglioti mode
     u: 0.0
     v: 0.0
     w: 0.0

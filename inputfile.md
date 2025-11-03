@@ -65,9 +65,10 @@ kind: !AngleDispersive
   noise: !Gaussian                      # ignored for now
     sigma_min: 0.0
     sigma_max: 1.0
-  caglioti:                             # caglioti parameters of the device
-    u: 0.0
-    v: 0.0
+  caglioti:                             # Optional caglioti parameters of the device
+    kind: Raw                           # Mode for Caglioti parameters, Raw or GSAS
+    u: 0.0                              # GSAS is a GSASII-Compatibility mode,  
+    v: 0.0                              # as they multiply each parameter by 8 ln(2) / 10000
     w: 0.0
   background: !Chebyshev                # background type and parameters
     coefs:                              # chebyshev coefficient ranges
@@ -90,6 +91,20 @@ kind: !AngleDispersive
   #   slope: [-0.05, 0.025]
   #   scale: [200, 800]
 ```
+
+### Caglioti Parameters
+In ADXRD Simulation, Caglioti Parameters may be optionally specified using the 
+`caglioti`-key. 
+They can be used to specify the instrumental line broadening $\Delta$ using the Caglioti function
+$$
+    \Delta = u \tan^2\theta + v * \tan\theta + w.
+$$
+Additionally, the Caglioti kind may be specified as `Raw` or `GSAS` (defaults to `Raw`). 
+This indicates to use the definition of caglioti parameters according to the formula
+above (`Raw`) or do what GSASII does (`GSAS`). GSAS multiplies Caglioti parameters
+($u$, $v$, and $w$) by $8 \ln 2 / 10000$ before passing them to the Caglioti function.
+Should you want to compare yaxs-output patterns to GSASII simulations, either adjust 
+the Caglioti kind or $u$, $v$ and $w$ values.
 
 ## 2. Sample Parameters
 This section contains (physical) sample parameters, like the phase's domain sizes.
