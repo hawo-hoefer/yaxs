@@ -157,7 +157,7 @@ fn main() {
         preferred_orientation: po,
         strain,
         volume_fraction,
-        mean_ds_nm: _,
+        mean_ds_nm,
     } in cfg.sample_parameters.structures.iter()
     {
         let mut struct_path = args
@@ -194,6 +194,10 @@ fn main() {
             );
         }
 
+        if mean_ds_nm.upper_bound() > 200.0 {
+            error!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound());
+            std::process::exit(1);
+        }
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
         vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
