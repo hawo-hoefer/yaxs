@@ -10,12 +10,13 @@ use crate::background::Background;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
+    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
     scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
 };
 use crate::noise::Noise;
 use crate::structure::Structure;
 
+use self::adxrd::Caglioti;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
@@ -428,9 +429,7 @@ impl Peak {
     pub fn get_adxrd_render_params(
         &self,
         wavelength_nm: f64,
-        u: f64,
-        v: f64,
-        w: f64,
+        caglioti: &Caglioti,
         mean_ds_nm: f64,
         weight: f64,
         sample_displacement_mu_m: f64,
@@ -442,7 +441,7 @@ impl Peak {
         let wavelength_ams = wavelength_nm * 10.0;
         let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
         let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
-        let fwhm = caglioti(u, v, w, theta_hkl_rad)
+        let fwhm = caglioti.broadening(theta_hkl_rad)
             + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 

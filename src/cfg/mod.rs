@@ -25,7 +25,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::math::e_kev_to_lambda_ams;
-use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
+use crate::pattern::adxrd::{ADXRDMeta, Caglioti, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::MarchDollase;
@@ -160,15 +160,42 @@ pub struct AngleDispersive {
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
-    pub caglioti: Caglioti,
+    pub caglioti: CagliotiCfg,
     pub background: BackgroundSpec,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CagliotiKind {
+    Raw,
+    GSAS,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Caglioti {
+pub struct CagliotiCfg {
+    pub kind: Option<CagliotiKind>,
     pub u: Parameter<f64>,
     pub v: Parameter<f64>,
     pub w: Parameter<f64>,
+}
+
+impl CagliotiCfg {
+    pub fn generate(&self, rng: &mut impl Rng) -> Caglioti {
+        let mut u = self.u.generate(rng);
+        let mut v = self.v.generate(rng);
+        let mut w = self.w.generate(rng);
+        use std::f64::consts::LN_2;
+
+        match self.kind.unwrap_or(CagliotiKind::Raw) {
+            CagliotiKind::Raw => todo!(),
+            CagliotiKind::GSAS => {
+                u = 8.0 * LN_2 * u / 10000.0;
+                v = 8.0 * LN_2 * v / 10000.0;
+                w = 8.0 * LN_2 * w / 10000.0;
+            }
+        }
+
+        Caglioti { u, v, w }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -284,7 +311,7 @@ impl ToDiscretize {
         rng: &mut impl Rng,
     ) -> DiscretizeAngleDispersive {
         let AngleDispersive {
-            caglioti: Caglioti { u, v, w },
+            caglioti,
             background,
             emission_lines,
             n_steps: _,
@@ -300,9 +327,6 @@ impl ToDiscretize {
             struct_ids,
         } = self.sample_parameters.generate(rng);
 
-        let u = u.generate(rng);
-        let v = v.generate(rng);
-        let w = w.generate(rng);
         let background = background.generate_bkg(rng);
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
@@ -328,9 +352,7 @@ impl ToDiscretize {
                 weight_fractions,
                 eta,
                 mean_ds_nm,
-                u,
-                v,
-                w,
+                caglioti: caglioti.generate(rng),
                 background,
                 sample_displacement_mu_m,
             },

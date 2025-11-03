@@ -14,9 +14,7 @@ pub struct ADXRDMeta {
     pub weight_fractions: Option<Box<[f64]>>,
     pub mean_ds_nm: Box<[f64]>,
     pub eta: f64,
-    pub u: f64,
-    pub v: f64,
-    pub w: f64,
+    pub caglioti: Caglioti,
     pub sample_displacement_mu_m: f64,
     pub background: Background,
 }
@@ -43,6 +41,30 @@ impl EmissionLine {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Caglioti {
+    pub u: f64,
+    pub v: f64,
+    pub w: f64,
+}
+
+impl Caglioti {
+    pub fn new(u: f64, v: f64, w: f64) -> Self {
+        Caglioti { u, v, w }
+    }
+    pub fn zero() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+
+    /// Calculate Caglioti broadening for a position
+    /// $FWHM(\theta) = u \tan(\theta)^2 + v \tan(\theta) + w$
+    ///
+    /// * `theta`: theta in radians
+    pub fn broadening(&self, theta: f64) -> f64 {
+        self.u * (theta).tan().powi(2) + self.v * theta.tan() + self.w
+    }
+}
+
 pub struct DiscretizeAngleDispersive {
     pub common: RenderCommon,
     pub emission_lines: Box<[EmissionLine]>,
@@ -57,9 +79,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             vol_fractions,
             mean_ds_nm,
             eta,
-            u,
-            v,
-            w,
+            caglioti,
             sample_displacement_mu_m,
             background: _,
             weight_fractions: _,
@@ -75,9 +95,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .map(move |peak| {
                         let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
                             wavelength_nm,
-                            *u,
-                            *v,
-                            *w,
+                            caglioti,
                             *phase_mean_ds_nm,
                             vf * emission_line.weight,
                             *sample_displacement_mu_m,
@@ -100,9 +118,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                         let wavelength_nm = emission_line.wavelength_ams / 10.0;
                         let (two_theta_hkl_deg, _, fwhm) = ip.peak.get_adxrd_render_params(
                             wavelength_nm,
-                            *u,
-                            *v,
-                            *w,
+                            caglioti,
                             ip.mean_ds_nm,
                             emission_line.weight,
                             *sample_displacement_mu_m,
@@ -163,9 +179,9 @@ impl Discretizer for DiscretizeAngleDispersive {
                 }
             }
             CagliotiParams(dst) => {
-                dst[(pat_id, 0)] = self.meta.u as f32;
-                dst[(pat_id, 1)] = self.meta.v as f32;
-                dst[(pat_id, 2)] = self.meta.w as f32;
+                dst[(pat_id, 0)] = self.meta.caglioti.u as f32;
+                dst[(pat_id, 1)] = self.meta.caglioti.v as f32;
+                dst[(pat_id, 2)] = self.meta.caglioti.w as f32;
             }
             ImpuritySum(dst) => {
                 dst[pat_id] = self

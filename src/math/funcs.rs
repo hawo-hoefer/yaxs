@@ -25,17 +25,6 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
     H_EV_S * C_M_S / e_kev * 1e7
 }
 
-/// Calculate Caglioti broadening for a position
-/// $FWHM(\theta) = u \tan(\theta)^2 + v \tan(\theta) + w$
-///
-/// * `u`: parameter u
-/// * `v`: parameter v
-/// * `w`: parameter w
-/// * `theta_rad`: theta in radians
-pub fn caglioti(u: f64, v: f64, w: f64, theta: f64) -> f64 {
-    u * (theta).tan().powi(2) + v * theta.tan() + w
-}
-
 // Scherrer broadening constant
 const K: f64 = 0.9;
 

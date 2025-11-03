@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
+use yaxs::pattern::adxrd::Caglioti;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
@@ -243,16 +244,16 @@ fn main() {
                 .map(|p| match &cfg.kind {
                     SimulationKind::AngleDispersive(ad) => {
                         let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                        let u = ad.caglioti.u.mean();
-                        let v = ad.caglioti.v.mean();
-                        let w = ad.caglioti.w.mean();
+                        let caglioti = Caglioti::new(
+                            ad.caglioti.u.mean(),
+                            ad.caglioti.v.mean(),
+                            ad.caglioti.w.mean(),
+                        );
                         let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
 
                         let (pos, intens, fwhm) = p.get_adxrd_render_params(
                             wavelength_ams / 10.0,
-                            u,
-                            v,
-                            w,
+                            &caglioti,
                             mean_ds_nm,
                             1.0,
                             sd,

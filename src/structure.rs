@@ -732,6 +732,7 @@ pub fn simulate_peaks(
 mod test {
     use super::*;
     use crate::cif::CifParser;
+    use crate::pattern::adxrd::Caglioti;
 
     #[test]
     #[rustfmt::skip]
@@ -838,7 +839,7 @@ loop_
             .iter()
             .map(|peak| {
                 let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
+                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 100.0, 1.0, 0.0, 180.0);
                 (pos, intens)
             })
             .collect_vec();
@@ -860,7 +861,7 @@ loop_
             .iter()
             .map(|peak| {
                 let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
+                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 100.0, 1.0, 0.0, 180.0);
                 (pos, intens)
             })
             .collect_vec();
