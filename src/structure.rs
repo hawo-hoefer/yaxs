@@ -312,6 +312,7 @@ impl Structure {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let d_hkl = 1.0 / g_hkl;
             let s = g_hkl / 2.0;
             let s2 = s.powi(2);
 
@@ -319,21 +320,25 @@ impl Structure {
             // TODO: Debye-Waller Correction
             // (we ignore it for now, in the test data we don't have DW-factors)
             // dw_correction = np.exp(-dw_factors * s2)
-            let dw_correction = 1.0;
-
             for site in &self.sites {
                 // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
                 let g_dot_r: f64 = site.coords.dot(&hkl);
+                let dw_factor = site
+                    .displacement
+                    .map(|x| x.debye_waller_factor(g_hkl))
+                    .unwrap_or(1.0);
+
                 for species in &site.species {
                     let fs = species.el.scattering_factor(s2);
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    let f_part =
-                        fs * site.occu * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
+                    let f_part = fs
+                        * site.occu
+                        * dw_factor
+                        * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
                     f_hkl += f_part;
                 }
             }
-            f_hkl *= dw_correction;
 
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
@@ -342,7 +347,6 @@ impl Structure {
                 let w = po.weight(&hkl, &self.lat);
                 i_hkl *= w;
             }
-            let d_hkl = 1.0 / g_hkl;
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
             let (ref mut i_hkl_map, ref mut hkls_map) = agg
                 .entry(d_spacing)
@@ -875,5 +879,4 @@ loop_
             assert!(diff < ATOL, "Simulated and actual intensities difference exceeds tolerance (at position {s_pos}). Simulated: {s_intens}, actual: {a_intens}. diff: {diff}");
         }
     }
-
 }

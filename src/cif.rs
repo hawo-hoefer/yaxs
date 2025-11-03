@@ -4,7 +4,7 @@ use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
 use log::warn;
 
-use crate::site::Site;
+use crate::site::{AtomicDisplacement, Site};
 use crate::species::Species;
 use crate::structure::{Lattice, SGClass};
 use crate::symop::SymOp;
@@ -17,6 +17,7 @@ const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_a
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
+const IMPORTANT_FRACTIONS: [f64; 4] = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
@@ -156,9 +157,48 @@ impl CIFContents {
                 site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
-            let important_fracs = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
+
+            let adp = match site_table.get("_atom_site_adp_type").map(|x| &x[i]) {
+                None => {
+                    if site_table.get("_atom_site_thermal_displace_type").is_some() {
+                        warn!("found deprecated '_atom_site_thermal_displace_type'. Ignoring until it is implemented");
+                    }
+
+                    if let Some(v) = site_table.get("_atom_site_B_iso_or_equiv").map(|x| &x[i]) {
+                        Some(AtomicDisplacement::Biso(v.try_to_f64().unwrap()))
+                    } else if let Some(v) = site_table.get("_atom_site_U_iso_or_equiv").map(|x| &x[i]) {
+                        Some(AtomicDisplacement::Uiso(v.try_to_f64().unwrap()))
+                    } else {
+                        None
+                    }
+                },
+                Some(Value::Inapplicable | Value::Unknown) => {
+                    return Err("Found unkown or inapplicable as ADP Type".to_string())
+                }
+                Some(Value::Float(v)) => return Err(format!("ADP type must be string. Got float '{v}'")),
+                Some(Value::Int(v)) => return Err(format!("ADP type must be string. Got integer '{v}'")),
+                Some(Value::Text(v)) => {
+                    match v.as_str() {
+                        "Uani" => Some(unimplemented!("look up anisotropic displacement parameters in anisotropic table")),
+                        "Uiso" => {
+                            let v = site_table["_atom_site_U_iso_or_equiv"][i].try_to_f64()?;
+                            Some(AtomicDisplacement::Uiso(v))
+                        }, 
+                        "Uovl" => unimplemented!("Parse atomic displacement parameter Uovl"),
+                        "Umpe" => unimplemented!("Parse atomic displacement parameter Umpe"),
+                        "Bani" => unimplemented!("Parse atomic displacement parameter Bani"),
+                        "Biso" => {
+                            let v = site_table["_atom_site_B_iso_or_equiv"][i].try_to_f64()?;
+                            Some(AtomicDisplacement::Biso(v))
+                        }
+                        "Bovl" => unimplemented!("Parse atomic displacement parameter Bovl"),
+                        v => return Err(format!("Unknown ADP type: '{v}'. Must be one of ['Uani', 'Uiso', 'Uovl', 'Umpe', 'Bani', 'Biso', 'Bovl']"))
+                    }
+                },
+            };
+
             let coords = coords.map(|x| {
-                for frac in important_fracs {
+                for frac in IMPORTANT_FRACTIONS {
                     if (x - frac).abs() < FRAC_TOL_POS_ATOL {
                         warn!("Rounded fractional coordinate {x} to {frac}");
                         return frac;
@@ -170,11 +210,12 @@ impl CIFContents {
                 species: sp,
                 coords,
                 occu,
+                displacement: adp,
             })
         };
 
         fn site_exists_periodic(site: &Site, sites: &[Site]) -> bool {
-            // adapted from pymatgen.util.coord.find_in_coord_list
+            // adapted from pymavtgen.util.coord.find_in_coord_list
             sites
                 .iter()
                 .map(|ps| {
@@ -205,6 +246,10 @@ impl CIFContents {
                     coords: op.apply(&base_site.coords),
                     species: base_site.species.clone(),
                     occu: base_site.occu,
+                    displacement: match base_site.displacement {
+                        Some(AtomicDisplacement::Uiso(_)| AtomicDisplacement::Biso(_)) | None => base_site.displacement,
+                        Some(_) => unimplemented!("ansotropic displacement matrices need to be transformed according to the symmetry operation")
+                    },
                 };
 
                 if site_exists_periodic(&s, &sites) {
@@ -876,6 +921,7 @@ loop_
                 coords: Vec3::new(0.0, 0.0, 0.25),
                 species: "Na+".parse().unwrap(),
                 occu: 0.25,
+                displacement: None,
             },
             sites.next().unwrap()
         );
@@ -885,6 +931,7 @@ loop_
                 coords: Vec3::new(0.0, 0.0, 0.25),
                 species: "Fe-".parse().unwrap(),
                 occu: 0.75,
+                displacement: None,
             },
             sites.next().unwrap()
         );
