@@ -244,11 +244,12 @@ fn main() {
                 .map(|p| match &cfg.kind {
                     SimulationKind::AngleDispersive(ad) => {
                         let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                        let caglioti = Caglioti::new(
-                            ad.caglioti.u.mean(),
-                            ad.caglioti.v.mean(),
-                            ad.caglioti.w.mean(),
-                        );
+                        let caglioti = ad
+                            .caglioti
+                            .as_ref()
+                            .map(|c| Caglioti::new(c.u.mean(), c.v.mean(), c.w.mean()))
+                            .unwrap_or(Caglioti::zero());
+
                         let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
 
                         let (pos, intens, fwhm) = p.get_adxrd_render_params(

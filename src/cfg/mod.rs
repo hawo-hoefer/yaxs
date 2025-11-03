@@ -160,7 +160,7 @@ pub struct AngleDispersive {
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
-    pub caglioti: CagliotiCfg,
+    pub caglioti: Option<CagliotiCfg>,
     pub background: BackgroundSpec,
 }
 
@@ -186,7 +186,7 @@ impl CagliotiCfg {
         use std::f64::consts::LN_2;
 
         match self.kind.unwrap_or(CagliotiKind::Raw) {
-            CagliotiKind::Raw => todo!(),
+            CagliotiKind::Raw => (),
             CagliotiKind::GSAS => {
                 u = 8.0 * LN_2 * u / 10000.0;
                 v = 8.0 * LN_2 * v / 10000.0;
@@ -352,7 +352,10 @@ impl ToDiscretize {
                 weight_fractions,
                 eta,
                 mean_ds_nm,
-                caglioti: caglioti.generate(rng),
+                caglioti: caglioti
+                    .as_ref()
+                    .map(|x| x.generate(rng))
+                    .unwrap_or(Caglioti::zero()),
                 background,
                 sample_displacement_mu_m,
             },
