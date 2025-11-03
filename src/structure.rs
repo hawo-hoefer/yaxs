@@ -311,7 +311,7 @@ impl Structure {
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+        for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
             let s = g_hkl / 2.0;
             let s2 = s.powi(2);
@@ -325,7 +325,8 @@ impl Structure {
                 let g_dot_r: f64 = site.coords.dot(&hkl);
                 let dw_factor = site
                     .displacement
-                    .map(|x| x.debye_waller_factor(g_hkl))
+                    .as_ref()
+                    .map(|x| x.debye_waller_factor(&pos, g_hkl))
                     .unwrap_or(1.0);
 
                 for species in &site.species {
@@ -436,7 +437,7 @@ impl<'a> Lattice {
         &'a self,
         min_r: f64,
         max_r: f64,
-    ) -> impl Iterator<Item = (Vec3<f64>, f64)> + use<'a> {
+    ) -> impl Iterator<Item = (Vec3<f64>, Vec3<f64>, f64)> + use<'a> {
         const RADIUS_TOL: f64 = 1e-8;
         let recip_lat = self.recip_lattice_crystallographic();
         let recp_len = recip_lat.recip_lattice().abc();
@@ -452,7 +453,7 @@ impl<'a> Lattice {
         (n_min[0]..n_max[0])
             .cartesian_product(n_min[1]..n_max[1])
             .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(move |((a, b), c)| -> Option<(Vec3<f64>, f64)> {
+            .filter_map(move |((a, b), c)| -> Option<_> {
                 let hkl = Vec3::new(a as f64, b as f64, c as f64);
                 let pos = recip_lat.mat.matmul(&hkl);
                 let g_hkl = pos.magnitude();
@@ -471,7 +472,7 @@ impl<'a> Lattice {
                         .map(|&x| (x > global_min) && (x < global_max))
                         .all(|x| x)
                 {
-                    Some((hkl, g_hkl))
+                    Some((hkl, pos, g_hkl))
                 } else {
                     None
                 }
@@ -749,6 +750,7 @@ mod test {
         assert_eq!(hkls, 26);
 
         let mut iter = lat.iter_hkls(0.0, 15.0)
+            .map(|(hkl, _, g_hkl)| (hkl, g_hkl))
             .sorted_by_key(|(hkl, g_hkl)| (
                 NotNan::new(*g_hkl).unwrap(),
                 NotNan::new(hkl[0]).unwrap(),

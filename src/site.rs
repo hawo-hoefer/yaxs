@@ -1,13 +1,13 @@
-use crate::math::linalg::Vec3;
+use crate::math::linalg::{Mat3, Mat4, Vec3};
 
 use crate::species::Species;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AtomicDisplacement {
     // https://www.iucr.org/resources/commissions/crystallographic-nomenclature/adp
     Uiso(f64),
     Biso(f64),
-    // Uani([f64; 6]),
+    Uani(Mat3<f64>),
     // Uovl,
     // Umpe,
     // Bani,
@@ -15,7 +15,8 @@ pub enum AtomicDisplacement {
 }
 
 impl AtomicDisplacement {
-    pub fn debye_waller_factor(&self, g_hkl: f64) -> f64 {
+    pub fn debye_waller_factor(&self, h: &Vec3<f64>, g_hkl: f64) -> f64 {
+        use std::f64::consts::PI;
         match self {
             AtomicDisplacement::Uiso(u) => {
                 // original formula from link above is
@@ -24,7 +25,6 @@ impl AtomicDisplacement {
                 // and using n = 1, we get
                 // sin theta / lambda = 1 / (2 d).
                 // therefore, T(|h|) = exp(-8 pi^2 * <u^2> / 4d^2)
-                use std::f64::consts::PI;
                 let x = (-8.0 * PI * PI * u / 4.0 * g_hkl.powi(2)).exp();
                 x
             }
@@ -32,6 +32,15 @@ impl AtomicDisplacement {
                 // the same as Uiso, only that b = u / (8 pi^2)
                 let x = (-b / 4.0 * g_hkl.powi(2)).exp();
                 x
+            }
+            AtomicDisplacement::Uani(u) => {
+                let mut t = 0.0;
+                for j in 0..3 {
+                    for l in 0..3 {
+                        t += h[j] * u[(j, l)] * h[l];
+                    }
+                }
+                (-2.0 * PI * t).exp()
             }
         }
     }
@@ -59,7 +68,7 @@ impl Site {
             coords,
             species: self.species.clone(),
             occu: self.occu,
-            displacement: self.displacement,
+            displacement: self.displacement.clone(),
         }
     }
 }

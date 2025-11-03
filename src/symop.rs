@@ -3,7 +3,7 @@ use std::str::FromStr;
 use itertools::Itertools;
 use log::warn;
 
-use crate::math::linalg::{Mat4, Vec3};
+use crate::math::linalg::{Mat3, Mat4, Vec3};
 
 pub struct SymOp {
     mat: Mat4<f64>,
@@ -12,6 +12,10 @@ pub struct SymOp {
 impl SymOp {
     pub fn apply(&self, pos: &Vec3<f64>) -> Vec3<f64> {
         self.mat.homog_mul(pos)
+    }
+
+    pub fn transform_orientation(&self, ori: &Mat3<f64>) -> Mat3<f64> {
+        self.mat.homog_mul_mat(ori)
     }
 }
 
@@ -187,10 +191,10 @@ mod test {
         let op: SymOp = "x+1/3t, -y+x, -3z+1/2t".parse().expect("valid symop");
 
         let exp = Mat4::from_rows([
-            [1.0,  0.0,  0.0, 1.0 / 3.0],
-            [1.0, -1.0,  0.0,       0.0],
-            [0.0,  0.0, -3.0, 1.0 / 2.0],
-            [0.0,  0.0,  0.0,       1.0],
+            [1.0, 0.0, 0.0, 1.0 / 3.0],
+            [1.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -3.0, 1.0 / 2.0],
+            [0.0, 0.0, 0.0, 1.0],
         ]);
         assert_eq!(op.mat, exp);
     }

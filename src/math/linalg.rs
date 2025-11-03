@@ -563,6 +563,33 @@ impl<T> Mat<T, 4, 4> {
             g * rhs[0] + h * rhs[1] + i * rhs[2] + z,
         )
     }
+
+    /// Treating self as a homogenous matrix, transform a Mat3
+    ///
+    /// * `rhs`: vector to transform
+    pub fn homog_mul_mat(&self, rhs: &Mat3<T>) -> Mat3<T>
+    where
+        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + Copy + AddAssign<T>,
+    {
+        let mut m = Mat4::zeros();
+        for r in 0..rhs.rows() {
+            for c in 0..rhs.cols() {
+                m[(r, c)] = rhs[(r, c)];
+            }
+        }
+
+        let r_ = self.matmul(&m);
+
+        let mut ret = Mat3::zeros();
+
+        for r in 0..rhs.rows() {
+            for c in 0..rhs.cols() {
+                ret[(r, c)] = r_[(r, c)];
+            }
+        }
+
+        ret
+    }
 }
 
 impl<T, const N: usize> Mat<T, N, N> {

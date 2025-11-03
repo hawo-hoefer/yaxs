@@ -19,6 +19,27 @@ const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
 const IMPORTANT_FRACTIONS: [f64; 4] = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
 
+// in the cif-definition, the elements ase entered by row, and they use the top
+// right half of the symmetric matrix. In yaxs, we usually use the bottom left
+// half, so we change the order here to reflect that.
+const ANISO_ADP_U_LABELS: [&str; 6] = [
+    "_atom_site_aniso_U_11",
+    "_atom_site_aniso_U_12",
+    "_atom_site_aniso_U_22",
+    "_atom_site_aniso_U_13",
+    "_atom_site_aniso_U_23",
+    "_atom_site_aniso_U_33",
+];
+
+const ANISO_ADP_B_LABELS: [&str; 6] = [
+    "_atom_site_aniso_B_11",
+    "_atom_site_aniso_B_12",
+    "_atom_site_aniso_B_22",
+    "_atom_site_aniso_B_13",
+    "_atom_site_aniso_B_23",
+    "_atom_site_aniso_B_33",
+];
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
     c: &'a str,
@@ -31,6 +52,18 @@ pub enum Value {
     Float(f64),
     Int(i32),
     Text(String),
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Inapplicable => f.write_str("Inapplicable"),
+            Value::Unknown => f.write_str("Unknown"),
+            Value::Float(v) => write!(f, "Float({v})"),
+            Value::Int(v) => write!(f, "Integer({v})"),
+            Value::Text(v) => write!(f, "Text({v})"),
+        }
+    }
 }
 
 impl Value {
@@ -130,7 +163,8 @@ impl CIFContents {
 
     pub fn get_sites(&self) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [&str; 5] = [
+            const SITE_KEYS: [&str; 6] = [
+                "_atom_site_label",
                 "_atom_site_type_symbol",
                 "_atom_site_fract_x",
                 "_atom_site_fract_y",
@@ -144,12 +178,101 @@ impl CIFContents {
         let n = site_table["_atom_site_type_symbol"].len();
         let symops = self.get_symops()?;
 
+        let atom_site_aniso_table = self
+            .tables
+            .iter()
+            .find(|t: &&Table| t.contains_key("_atom_site_aniso_label"));
+
+        let extract_aniso_adp = |label: &str| -> Result<Option<AtomicDisplacement>, String> {
+            let Some(atom_site_aniso_table) = atom_site_aniso_table else {
+                return Ok(None);
+            };
+
+            let mut idx = None;
+            for (i, site_label) in atom_site_aniso_table
+                .get("_atom_site_aniso_label")
+                .expect("we check this above")
+                .iter()
+                .enumerate()
+            {
+                match site_label {
+                    Value::Text(v) => {
+                        if v == label {
+                            idx = Some(i)
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                        "Invalid type for _atom_site_aniso_label: Must be Text, got {site_label}"
+                    ))
+                    }
+                }
+            }
+
+            let Some(idx) = idx else {
+                // TODO: should this be ok?
+                return Ok(None);
+            };
+
+            let mut values = [0.0; 6];
+            let aniso_u_ident = ANISO_ADP_U_LABELS[0];
+            let aniso_b_ident = ANISO_ADP_B_LABELS[0];
+
+            if atom_site_aniso_table.contains_key(aniso_u_ident) {
+                // parse anisotropic U
+                for ((key, v), tgt) in ANISO_ADP_U_LABELS
+                    .iter()
+                    .map(|key| (key, atom_site_aniso_table.get(*key).map(|x| &x[idx])))
+                    .zip(values.iter_mut())
+                {
+                    if let Some(v) = v {
+                        *tgt = v.try_to_f64().map_err(|_| format!("Could not get {key} for {label}: Needs to be Integer or Float, got {v}."))?;
+                    } else {
+                        return Err(format!("Could not acquire anisotropic atomic displacement parameters. Could not find column '{key}' in table containing '_atom_site_aniso_label' and '{aniso_u_ident}'"));
+                    }
+                }
+
+                let [v11, v21, v22, v31, v32, v33] = values;
+                return Ok(Some(AtomicDisplacement::Uani(Mat3::from_rows([
+                    [v11, v21, v31],
+                    [v21, v22, v32],
+                    [v31, v32, v33],
+                ]))));
+            }
+
+            if atom_site_aniso_table.contains_key(aniso_b_ident) {
+                // parse anisotropic B
+                todo!("parse B labels")
+            }
+
+            let mut table_labels = String::from("[");
+            let n_keys = atom_site_aniso_table.len();
+            for (i, key) in atom_site_aniso_table.keys().enumerate() {
+                table_labels.push_str(key);
+
+                if i == n_keys - 1 {
+                    table_labels.push_str("]");
+                } else {
+                    table_labels.push_str(", ");
+                }
+            }
+
+            return Err(
+                format!("Could not extract anisotropic ADP from table with _atom_site_aniso_label. Currently, we only support anisotropic U and B parameters. Table contains labels {table_labels}"),
+            );
+        };
+
         let site_at_index = |i: usize| -> Result<Site, String> {
-            let label = &site_table["_atom_site_type_symbol"][i];
-            let sp: Species = match label {
+            let sp: Species = match &site_table["_atom_site_type_symbol"][i] {
                 Value::Text(label) => label.parse().unwrap(),
+                v => return Err(format!("Invalid _atom_site_type_symbol: {v}")),
+            };
+
+            let label = match &site_table["_atom_site_label"][i] {
+                Value::Text(label) => label,
                 _ => return Err("Invalid site label".to_string()),
             };
+
             let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
             // TODO: remove unwraps, proper error handling
             let coords = Vec3::new(
@@ -158,16 +281,32 @@ impl CIFContents {
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
 
-            let adp = match site_table.get("_atom_site_adp_type").map(|x| &x[i]) {
-                None => {
-                    if site_table.get("_atom_site_thermal_displace_type").is_some() {
-                        warn!("found deprecated '_atom_site_thermal_displace_type'. Ignoring until it is implemented");
-                    }
+            use AtomicDisplacement::*;
 
+            let adp = match site_table.get("_atom_site_adp_type").map(|x| &x[i]) {
+                None if site_table.get("_atom_site_thermal_displace_type").is_some() => {
+                    warn!("found deprecated '_atom_site_thermal_displace_type'. Ignoring until it is implemented");
+                    None
+                },
+                None => {
                     if let Some(v) = site_table.get("_atom_site_B_iso_or_equiv").map(|x| &x[i]) {
-                        Some(AtomicDisplacement::Biso(v.try_to_f64().unwrap()))
+                        match v {
+                            Value::Inapplicable => {
+                                extract_aniso_adp(label)?
+                            },
+                            Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_B_iso_or_equiv' needs to be Integer or Float. Got {v}")),
+                            Value::Float(v) => Some(Biso(*v)),
+                            Value::Int(v) => Some(Biso(*v as f64)),
+                        }
                     } else if let Some(v) = site_table.get("_atom_site_U_iso_or_equiv").map(|x| &x[i]) {
-                        Some(AtomicDisplacement::Uiso(v.try_to_f64().unwrap()))
+                        let v = match v {
+                            Value::Inapplicable => todo!("we have anisotropic adp"),
+                            Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_B_iso_or_equiv' needs to be Integer or Float. Got {v}")),
+                            Value::Float(v) => *v,
+                            Value::Int(v) => *v as f64,
+                        };
+
+                        Some(AtomicDisplacement::Uiso(v))
                     } else {
                         None
                     }
@@ -183,7 +322,7 @@ impl CIFContents {
                         "Uiso" => {
                             let v = site_table["_atom_site_U_iso_or_equiv"][i].try_to_f64()?;
                             Some(AtomicDisplacement::Uiso(v))
-                        }, 
+                        },
                         "Uovl" => unimplemented!("Parse atomic displacement parameter Uovl"),
                         "Umpe" => unimplemented!("Parse atomic displacement parameter Umpe"),
                         "Bani" => unimplemented!("Parse atomic displacement parameter Bani"),
@@ -247,8 +386,12 @@ impl CIFContents {
                     species: base_site.species.clone(),
                     occu: base_site.occu,
                     displacement: match base_site.displacement {
-                        Some(AtomicDisplacement::Uiso(_)| AtomicDisplacement::Biso(_)) | None => base_site.displacement,
-                        Some(_) => unimplemented!("ansotropic displacement matrices need to be transformed according to the symmetry operation")
+                        Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
+                            base_site.displacement.clone()
+                        }
+                        Some(AtomicDisplacement::Uani(ref v)) => {
+                            Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
+                        }
                     },
                 };
 
