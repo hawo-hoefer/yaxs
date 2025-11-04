@@ -177,7 +177,7 @@ fn main() {
 
         let mut cif = String::new();
         let _ = reader.read_to_string(&mut cif).unwrap();
-        let mut p = CifParser::new(&cif);
+        let mut p = CifParser::new(&cif).with_file(struct_path.display().to_string());
 
         let structure = Structure::try_from(&p.parse().unwrap_or_else(|err| {
             error!("Invalid CIF Syntax for '{path}': {err}");

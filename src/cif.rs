@@ -51,7 +51,7 @@ const ANISO_ADP_BETA_LABELS: [&str; 6] = [
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
-    file_path: Option<&'a str>,
+    file_path: Option<String>,
     c: &'a str,
 }
 
@@ -243,6 +243,7 @@ fn extract_iso_adp(
     index: usize,
     label: &str,
     site_table: &Table,
+    file_path: &str,
 ) -> Result<Option<AtomicDisplacement>, String> {
     use AtomicDisplacement::*;
     let site_table_adp_type = site_table.get("_atom_site_adp_type").map(|x| &x[index]);
@@ -276,7 +277,7 @@ fn extract_iso_adp(
         return Ok(None);
     }
 
-    debug!("No ADP type explicitly declared. Trying to parse from table header.");
+    debug!("{file_path}: site '{label}': No ADP type explicitly declared. Trying to parse from table header.");
     if let Some(v) = site_table
         .get("_atom_site_B_iso_or_equiv")
         .map(|x| &x[index])
@@ -415,7 +416,7 @@ impl<'a> CIFContents<'a> {
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
 
-            let iso_adp = extract_iso_adp(i, label, site_table)?;
+            let iso_adp = extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
             let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table, lattice)?;
             let adp = match (iso_adp, aniso_adp) {
                 (Some(_iso_adp), Some(aniso_adp)) => {
@@ -551,7 +552,7 @@ impl<'a> CifParser<'a> {
         }
     }
 
-    pub fn with_file(mut self, file_path: &'a str) -> Self {
+    pub fn with_file(mut self, file_path: String) -> Self {
         self.file_path = Some(file_path);
         self
     }
@@ -591,7 +592,7 @@ impl<'a> CifParser<'a> {
             block_name: bn,
             kvs,
             tables,
-            file_path: self.file_path,
+            file_path: self.file_path.as_ref().map(|x| x.as_str()),
         })
     }
 
