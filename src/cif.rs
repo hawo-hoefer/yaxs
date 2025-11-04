@@ -739,7 +739,7 @@ impl<'a> CifParser<'a> {
             // while tokens start with '_', we are reading column names
 
             kvs.push((self.parse_tag()?.to_string(), Vec::new()));
-            self.skip_whitespace();
+            self.skip_ws_comments();
         }
 
         while !self.c.starts_with('_')
@@ -1332,5 +1332,96 @@ loop_
         let _ = CifParser::new(input)
             .parse()
             .expect("in symop t should be treated as constant and not throw error");
+    }
+
+    #[test]
+    fn parse_cif_comment_in_loop_header() {{
+        let input = "data_comment_loop_header
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2'
+   'x, -y, z+1/2'
+   'x+1/2, y+1/2, z'
+   '-x+1/2, -y+1/2, -z'
+   '-x+1/2, y+1/2, -z+1/2'
+   'x+1/2, -y+1/2, z+1/2'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+# this is a comment
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("comment in loop header should be ok");
+    }
+    }
+
+    #[test]
+    fn parse_cif_comment_in_loop() {{
+        let input = "data_comment_loop
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2'
+   'x, -y, z+1/2'
+   'x+1/2, y+1/2, z'
+   '-x+1/2, -y+1/2, -z'
+   '-x+1/2, y+1/2, -z+1/2'
+   'x+1/2, -y+1/2, z+1/2'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+# this is a comment
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu # this is a comment
+# another one
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("comment in loop header should be ok");
+    }
     }
 }
