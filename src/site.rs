@@ -40,7 +40,7 @@ impl AtomicDisplacement {
                         t += h[j] * u[(j, l)] * h[l];
                     }
                 }
-                (-2.0 * PI * t).exp()
+                (-2.0 * PI * PI * t).exp()
             }
             AtomicDisplacement::Bani(b) => {
                 let mut t = 0.0;
@@ -49,7 +49,7 @@ impl AtomicDisplacement {
                         t += h[j] * b[(j, l)] / (8.0 * PI * PI) * h[l];
                     }
                 }
-                (-2.0 * PI * t).exp()
+                (-2.0 * PI * PI * t).exp()
             }
         }
     }
