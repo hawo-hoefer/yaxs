@@ -389,7 +389,7 @@ impl CIFContents {
                         "Umpe" => unimplemented!("Parse atomic displacement parameter Umpe"),
                         "Bani" => unimplemented!("Parse atomic displacement parameter Bani"),
                         "Biso" => {
-                            let v = site_table["_atom_site_B_iso_or_equiv"][i].try_to_f64()?;
+                            let v = site_table.get("_atom_site_B_iso_or_equiv").ok_or(format!("Site {label} specified ADP 'Biso', but could not find '_atom_site_B_iso_or_equiv' in table."))?[i].try_to_f64()?;
                             Some(AtomicDisplacement::Biso(v))
                         }
                         "Bovl" => unimplemented!("Parse atomic displacement parameter Bovl"),
@@ -1239,7 +1239,7 @@ _atom_site_fract_z
 _atom_site_occupancy
 _atom_site_symmetry_multiplicity
 _atom_site_adp_type
-_atom_site_U_iso_or_equiv
+_atom_site_B_iso_or_equiv
 Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
 O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
         let contents = CifParser::new(input).parse().unwrap();
@@ -1248,6 +1248,43 @@ O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
             println!("{:?}", site);
         }
         assert_eq!(s.sites.len(), 4)
+    }
+
+    #[test]
+    fn test_biso_specified_but_not_present() {
+        let input = "data_biso_wrong
+_chemical_name_mineral 'bug_rock'
+_cell_length_a  2.898009
+_cell_length_b  2.898009
+_cell_length_c  11.1751
+_cell_angle_alpha 90
+_cell_angle_beta  90
+_cell_angle_gamma 120
+_cell_volume 81.27959
+_symmetry_space_group_name_H-M P63/mmc
+_space_group_IT_number 194
+loop_
+_symmetry_equiv_pos_as_xyz
+	 'x, y, z '
+	 '-x, -x+y, z+1/2 '
+	 '-x, -y, z+1/2 '
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_symmetry_multiplicity
+_atom_site_adp_type
+_atom_site_U_iso_or_equiv
+Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
+O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
+        let contents = CifParser::new(input).parse().unwrap();
+        let s = Structure::try_from(&contents).expect_err(
+            "this should fail because _atom_site_B_iso_or_equiv is missing in the sites table",
+        );
+        assert_eq!(s, "Site Na_e specified ADP 'Biso', but could not find '_atom_site_B_iso_or_equiv' in table.")
     }
 
     #[test]
