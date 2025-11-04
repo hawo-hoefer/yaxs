@@ -369,7 +369,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             ))));
         }
 
-        if let Some(bkg_params) = bkg_params {
+        if let Some(_) = bkg_params {
             unreachable!("EDXRD simulation is implemented without background")
         }
         v

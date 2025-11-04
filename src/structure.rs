@@ -165,7 +165,7 @@ pub struct Structure {
     pub density: Option<f64>,
 }
 
-impl TryFrom<&CIFContents> for Structure {
+impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     type Error = String;
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
@@ -833,9 +833,8 @@ loop_
 
     #[test]
     fn fm3m_simulation_positions() {
-        let d = CifParser::new(&FM3M_CIF_DATA)
-            .parse()
-            .expect("valid cif contents");
+        let mut p = CifParser::new(&FM3M_CIF_DATA);
+        let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
         let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
         let peaks = peaks
@@ -854,9 +853,8 @@ loop_
 
     #[test]
     fn fm3m_simulation_intensities() {
-        let d = CifParser::new(&FM3M_CIF_DATA)
-            .parse()
-            .expect("valid cif contents");
+        let mut p = CifParser::new(&FM3M_CIF_DATA);
+        let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
 
         let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);

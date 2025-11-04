@@ -1,4 +1,4 @@
-use crate::math::linalg::{Mat3, Mat4, Vec3};
+use crate::math::linalg::{Mat3, Vec3};
 
 use crate::species::Species;
 
@@ -51,6 +51,15 @@ impl AtomicDisplacement {
                 }
                 (-2.0 * PI * PI * t).exp()
             }
+        }
+    }
+
+    pub fn fmt_kind(&self) -> &'static str {
+        match self {
+            AtomicDisplacement::Uiso(_) => "Uiso",
+            AtomicDisplacement::Biso(_) => "Biso",
+            AtomicDisplacement::Uani(_) => "Uani",
+            AtomicDisplacement::Bani(_) => "Bani",
         }
     }
 }
