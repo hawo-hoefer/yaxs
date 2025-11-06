@@ -569,7 +569,7 @@ impl<T> Mat<T, 4, 4> {
     /// * `rhs`: vector to transform
     pub fn homog_mul_mat(&self, rhs: &Mat3<T>) -> Mat3<T>
     where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + Copy + AddAssign<T>,
+        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + One + Copy + AddAssign<T>,
     {
         let mut m = Mat4::zeros();
         for r in 0..rhs.rows() {
@@ -577,6 +577,7 @@ impl<T> Mat<T, 4, 4> {
                 m[(r, c)] = rhs[(r, c)];
             }
         }
+        m[(3, 3)] = T::one();
 
         let r_ = self.matmul(&m);
 

@@ -239,23 +239,29 @@ fn extract_aniso_adp(
             );
 }
 
+enum IsotropicDisplacementInFile {
+    FoundUnlabeled,
+    FoundLabeled,
+}
+
 fn extract_iso_adp(
     index: usize,
     label: &str,
     site_table: &Table,
     file_path: &str,
-) -> Result<Option<AtomicDisplacement>, String> {
+) -> Result<Option<(AtomicDisplacement, IsotropicDisplacementInFile)>, String> {
     use AtomicDisplacement::*;
+    use IsotropicDisplacementInFile::*;
     let site_table_adp_type = site_table.get("_atom_site_adp_type").map(|x| &x[index]);
     if let Some(Value::Text(v)) = site_table_adp_type {
         return match v.as_str() {
             "Uiso" => {
                 let v = site_table["_atom_site_U_iso_or_equiv"][index].try_to_f64()?;
-                Ok(Some(AtomicDisplacement::Uiso(v)))
+                Ok(Some((Uiso(v), FoundLabeled)))
             },
             "Biso" => {
                 let v = site_table.get("_atom_site_B_iso_or_equiv").ok_or(format!("Site {label} specified ADP 'Biso', but could not find '_atom_site_B_iso_or_equiv' in table."))?[index].try_to_f64()?;
-                Ok(Some(AtomicDisplacement::Biso(v)))
+                Ok(Some((Biso(v), FoundLabeled)))
             }
             "Uovl" => unimplemented!("Parse atomic displacement parameter Uovl"),
             "Umpe" => unimplemented!("Parse atomic displacement parameter Umpe"),
@@ -284,8 +290,8 @@ fn extract_iso_adp(
     {
         let v = match v {
             Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_B_iso_or_equiv' needs to be Integer, Float or Inapplicable. Got {v}")),
-            Value::Float(v) => Some(Biso(*v)),
-            Value::Int(v) => Some(Biso(*v as f64)),
+            Value::Float(v) => Some((Biso(*v), FoundUnlabeled)),
+            Value::Int(v) => Some((Biso(*v as f64), FoundUnlabeled)),
             Value::Inapplicable => None, 
         };
         return Ok(v);
@@ -297,8 +303,8 @@ fn extract_iso_adp(
     {
         let v = match v {
             Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_U_iso_or_equiv' needs to be Integer, Float or Inapplicable. Got {v}")),
-            Value::Float(v) => Some(Uiso(*v)),
-            Value::Int(v) => Some(Uiso(*v as f64)),
+            Value::Float(v) => Some((Uiso(*v), FoundUnlabeled)),
+            Value::Int(v) => Some((Uiso(*v as f64), FoundUnlabeled)),
             Value::Inapplicable => None,
         };
         return Ok(v);
@@ -419,11 +425,20 @@ impl<'a> CIFContents<'a> {
             let iso_adp = extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
             let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table, lattice)?;
             let adp = match (iso_adp, aniso_adp) {
-                (Some(_iso_adp), Some(aniso_adp)) => {
-                    warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using anisotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
-                    Some(aniso_adp)
+                (Some((_iso_adp, how_found)), Some(aniso_adp)) => {
+                    use IsotropicDisplacementInFile::*;
+                    match how_found {
+                        FoundUnlabeled => {
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
+                            Some(aniso_adp)
+                        }
+                        FoundLabeled => {
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP, because ADP is labeled as isotropic in site table.", p = self.file_path.unwrap_or("in-mem"));
+                            Some(_iso_adp)
+                        },
+                    }
                 }
-                (Some(iso_adp), None) => Some(iso_adp),
+                (Some((iso_adp, _)), None) => Some(iso_adp),
                 (None, Some(aniso_adp)) => Some(aniso_adp),
                 (None, None) => None,
             };
