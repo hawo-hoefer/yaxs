@@ -25,19 +25,21 @@ use crate::pattern::Discretizer;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HKLDisplayMode {
-    Unnormalized,
-    Normalized,
+    Standard { normalized: bool },
+    Structure { normalized: bool },
 }
 
 impl FromStr for HKLDisplayMode {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Unnormalized" => Ok(HKLDisplayMode::Unnormalized),
-            "Normalized" => Ok(HKLDisplayMode::Normalized),
+        match s.to_lowercase().as_str() {
+            "standard" => Ok(HKLDisplayMode::Standard { normalized: false }),
+            "structure" => Ok(HKLDisplayMode::Structure {normalized: false}),
+            "standard-n" => Ok(HKLDisplayMode::Standard { normalized: true }),
+            "structure-n" => Ok(HKLDisplayMode::Structure {normalized: true}),
             _ => Err(format!(
-                "Invalid Mode: {s}. Expected 'Normalized' or 'Unnormalized'"
+                "Invalid Mode: {s}. Expected ('standard'|'structure')[-n]."
             )),
         }
     }
@@ -67,7 +69,7 @@ pub struct Opts {
     #[arg(
         long,
         default_value = None,
-        help = "show simulated intensities and hkls for each phase and exit. Either 'Unnormalized' or 'Normalized'"
+        help = "show simulated intensities and hkls for each phase and exit. Either 'standard' or 'structure'. If 'standard-n' or 'structure-n' is specified, intensities will be normalized."
     )]
     pub display_hkls: Option<HKLDisplayMode>,
 }

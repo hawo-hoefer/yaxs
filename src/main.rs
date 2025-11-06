@@ -245,56 +245,65 @@ fn main() {
             info!("======= Structure {} =======", structure_paths[i]);
             let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
-                .map(|p| match &cfg.kind {
-                    SimulationKind::AngleDispersive(ad) => {
-                        let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                        let caglioti = ad
-                            .caglioti
-                            .as_ref()
-                            .map(|c| Caglioti::new(c.u.mean(), c.v.mean(), c.w.mean()))
-                            .unwrap_or(Caglioti::zero());
+                .map(|p| {
+                    let (pos, intens) = match &cfg.kind {
+                        SimulationKind::AngleDispersive(ad) => {
+                            let wavelength_ams = ad.emission_lines[0].wavelength_ams;
+                            let caglioti = ad
+                                .caglioti
+                                .as_ref()
+                                .map(|c| Caglioti::new(c.u.mean(), c.v.mean(), c.w.mean()))
+                                .unwrap_or(Caglioti::zero());
 
-                        let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
+                            let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
 
-                        let (pos, intens, fwhm) = p.get_adxrd_render_params(
-                            wavelength_ams / 10.0,
-                            &caglioti,
-                            mean_ds_nm,
-                            1.0,
-                            sd,
-                            ad.goniometer_radius_mm,
-                        );
+                            let (pos, intens, fwhm) = p.get_adxrd_render_params(
+                                wavelength_ams / 10.0,
+                                &caglioti,
+                                mean_ds_nm,
+                                1.0,
+                                sd,
+                                ad.goniometer_radius_mm,
+                            );
 
-                        let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
-                        (pos, intens)
+                            let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
+                            (pos, intens)
+                        }
+                        SimulationKind::EnergyDispersive(energy_dispersive) => {
+                            let theta_rad = energy_dispersive.theta_deg.to_radians();
+                            let f_lorentz = lorentz_polarization_factor(theta_rad);
+                            let (pos, intens, fwhm) = p.get_edxrd_render_params(
+                                theta_rad,
+                                f_lorentz,
+                                mean_ds_nm,
+                                1.0,
+                                &energy_dispersive.beamline,
+                            );
+
+                            let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
+
+                            (pos, intens)
+                        }
+                    };
+
+                    if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
+                        return (pos, p.i_hkl as f32);
                     }
-                    SimulationKind::EnergyDispersive(energy_dispersive) => {
-                        let theta_rad = energy_dispersive.theta_deg.to_radians();
-                        let f_lorentz = lorentz_polarization_factor(theta_rad);
-                        let (pos, intens, fwhm) = p.get_edxrd_render_params(
-                            theta_rad,
-                            f_lorentz,
-                            mean_ds_nm,
-                            1.0,
-                            &energy_dispersive.beamline,
-                        );
 
-                        let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
-
-                        (pos, intens)
-                    }
+                    (pos, intens)
                 })
                 .collect_vec();
 
             let scale = match mode {
-                io::HKLDisplayMode::Unnormalized => 1.0,
-                io::HKLDisplayMode::Normalized => {
+                io::HKLDisplayMode::Standard { normalized: true }
+                | io::HKLDisplayMode::Structure { normalized: true } => {
                     intensities_positions
                         .iter()
                         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
                         .expect("at least one peak")
                         .1
                 }
+                _ => 1.0,
             };
 
             for (p, (pos, i)) in to_discretize.sim_res.all_simulated_peaks[idx]
