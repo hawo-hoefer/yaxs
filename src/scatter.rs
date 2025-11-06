@@ -75,6 +75,7 @@ use log::warn;
 use crate::element::Element;
 use crate::species::Atom;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Scatter {
     a: [f64; 4],
     b: [f64; 4],
@@ -356,5 +357,5 @@ pub fn get_scatter_or_base_elem(a: &Atom) -> Option<Scatter> {
     };
 
     scatt_approx_gsas(&a_union)
-        .inspect(|_| warn!("Could not find Scattering data for atom {a}. Using atom {a_union} instead"))
+        .inspect(|_| warn!("Could not find scattering parameters for atom {a}. Using atom {a_union} instead"))
 }

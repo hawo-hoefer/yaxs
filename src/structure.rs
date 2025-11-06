@@ -311,22 +311,9 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         po: Option<&MarchDollase>,
-        scattering_parameters: &mut HashMap<Atom, Scatter>,
+        scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
-
-        for site in self.sites.iter() {
-            for atom in &site.species {
-                if scattering_parameters.contains_key(atom) {
-                    continue;
-                }
-
-                let scatter = atom.scattering_params().expect(
-                    format!("Could not find atomic scattering parameter for {atom}").as_str(),
-                );
-                scattering_parameters.insert(atom.clone(), scatter);
-            }
-        }
 
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
@@ -625,7 +612,7 @@ pub fn simulate_peaks(
         fn run(
             &self,
             job: PeakSim,
-            scattering_param_cache: &mut HashMap<Atom, Scatter>,
+            scattering_param_cache: &HashMap<Atom, Scatter>,
         ) -> Result<PeakSimResult, String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
             let Some((perm_s, strain)) = apply_strain_cfg(
@@ -660,6 +647,20 @@ pub fn simulate_peaks(
     let n_structs = structures.len();
     let n_permutations = sample_parameters.structure_permutations;
 
+    let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
+    for struct_id in 0..n_structs {
+        for site in &structures[struct_id].sites {
+            for atom in &site.species {
+                if !scattering_parameters.contains_key(atom) {
+                    let scatter = atom.scattering_params().expect(
+                        format!("Could not find atomic scattering parameter for {atom}").as_str(),
+                    );
+                    scattering_parameters.insert(atom.clone(), scatter);
+                }
+            }
+        }
+    }
+
     enum Task {
         Job(PeakSim),
         Stop,
@@ -685,7 +686,6 @@ pub fn simulate_peaks(
 
     if n_threads == 1 {
         info!("Running single-threaded peak simulation");
-        let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
             let job = PeakSim {
                 structure: struct_id,
@@ -706,8 +706,8 @@ pub fn simulate_peaks(
                 let ctx = Arc::clone(&ctx);
                 let results = Arc::clone(&results);
                 let job_receiver = job_receiver.clone();
+                let scattering_parameters = scattering_parameters.clone();
                 std::thread::spawn(move || -> Result<(), String> {
-                    let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
                             Ok(Task::Stop) => break,
@@ -716,7 +716,7 @@ pub fn simulate_peaks(
                         };
 
                         let p = ctx
-                            .run(job, &mut scattering_parameters)
+                            .run(job, &scattering_parameters)
                             .map_err(|err| format!("Peak simulation thread {i}: {err}"))?;
                         unsafe {
                             results.add(p);
