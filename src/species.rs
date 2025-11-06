@@ -10,6 +10,29 @@ pub struct Atom {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Species(pub Vec<Atom>);
 
+impl std::fmt::Display for Atom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.el)?;
+        match self.ionization {
+            0 => (),
+            ..0 => write!(f, "{}-", self.ionization.abs())?,
+            1.. => write!(f, "{}+", self.ionization)?,
+        }
+        Ok(())
+    }
+}
+
+
+impl std::fmt::Display for Species {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Species(")?;
+        for atom in self.0.iter() {
+            write!(f, "{atom}")?;
+        }
+        f.write_str(")")
+    }
+}
+
 impl IntoIterator for Species {
     type Item = Atom;
 
