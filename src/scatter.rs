@@ -70,6 +70,8 @@
 // POSSIBILITY OF SUCH LOSS OR DAMAGES.
 // ******************************************************************************
 
+use log::warn;
+
 use crate::element::Element;
 use crate::species::Atom;
 
@@ -120,7 +122,7 @@ macro_rules! atom {
 ///
 ///
 /// * `a`: atom to compute scattering parameters for
-pub fn scatt_approx_gsas(a: &Atom) -> Option<Scatter> {
+fn scatt_approx_gsas(a: &Atom) -> Option<Scatter> {
     #[rustfmt::skip]
     let ret = match a {
         atom!{H}      => Scatter{ a: [0.493002, 0.322912, 0.140191, 0.040810], b: [  10.5109,  26.1257,  3.14236,  57.7997],  c: 0.003038},
@@ -337,4 +339,22 @@ pub fn scatt_approx_gsas(a: &Atom) -> Option<Scatter> {
     };
 
     Some(ret)
+}
+
+/// Extract the scattering parameters from the values provided by GSASII
+/// or fall back to non-ion variant of the atom, if needed.
+///
+/// * `a`: atom to get scattering parameters for
+pub fn get_scatter_or_base_elem(a: &Atom) -> Option<Scatter> {
+    if let Some(s) = scatt_approx_gsas(a) {
+        return Some(s);
+    }
+
+    let a_union = Atom {
+        el: a.el,
+        ionization: 0,
+    };
+
+    scatt_approx_gsas(&a_union)
+        .inspect(|_| warn!("Could not find Scattering data for atom {a}. Using atom {a_union} instead"))
 }
