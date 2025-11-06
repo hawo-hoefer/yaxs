@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::scatter::{Scatter, scatt_approx_gsas};
+use crate::scatter::{Scatter, get_scatter_or_base_elem};
 
 use crate::element::Element;
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -16,7 +16,7 @@ impl Atom {
     /// * `a`: atom
     /// * `sin_theta_over_lambda`: sin theta over lambda for scattering parameters
     pub fn scattering_params(&self) -> Option<Scatter> {
-        scatt_approx_gsas(self)
+        get_scatter_or_base_elem(self)
     }
 }
 

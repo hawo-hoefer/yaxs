@@ -4,14 +4,14 @@
 //
 //             General Structure Analysis System - II (GSAS-II)
 //                          OPEN SOURCE LICENSE
-// 
-// Copyright 2010, UChicago Argonne, LLC, Operator of Argonne National Laboratory 
+//
+// Copyright 2010, UChicago Argonne, LLC, Operator of Argonne National Laboratory
 // All rights reserved.
-// 
+//
 // GSAS-II may be used by anyone on a royalty-free basis. Use and
 // redistribution, with or without modification, are permitted provided
 // that the following conditions are met:
-// 
+//
 // * Redistributions of source code must retain the above copyright
 //   notice, this list of conditions and the following disclaimer.
 // * Software changes, modifications, or derivative works should be noted
@@ -32,20 +32,20 @@
 //   redistribution, if any, must include the following acknowledgment:
 //   "This product includes software produced by UChicago Argonne, LLC
 //   under Contract No. DE-AC02-06CH11357 with the Department of Energy."
-// 
+//
 // Also note that GSAS-II is normally distributed with the following
 // included software:
-// 
+//
 // NIST_profile (Fundamental Parameters Python Code): U.S. Government work,
 //         not subject to copyright
-// 
+//
 // DIFFaX: Not copyrighted; Distributed with direct permission of
 //         author (M. Treacy)
-// 
+//
 // NIST*LATTICE: U.S. Government work, not subject to copyright
-// 
+//
 // Shapes: GNU GPL 3+ license; see initial text in file GSASII/G2shapes.py
-// 
+//
 // *****************************************************************************
 // WARRANTY DISCLAIMER: THE SOFTWARE IS SUPPLIED "AS IS" WITHOUT WARRANTY
 // OF ANY KIND. THE COPYRIGHT HOLDERS, THEIR THIRD PARTY LICENSORS, THE
@@ -58,7 +58,7 @@
 // SOFTWARE WOULD NOT INFRINGE PRIVATELY OWNED RIGHTS, (4) DO NOT WARRANT
 // THAT THE SOFTWARE WILL FUNCTION UNINTERRUPTED, THAT IT IS ERROR-FREE
 // OR THAT ANY ERRORS WILL BE CORRECTED.
-// 
+//
 // LIMITATION OF LIABILITY: IN NO EVENT WILL THE COPYRIGHT HOLDERS, THEIR
 // THIRD PARTY LICENSORS, THE UNITED STATES, THE UNITED STATES DEPARTMENT
 // OF ENERGY, OR THEIR EMPLOYEES: BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
