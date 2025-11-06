@@ -17,7 +17,9 @@ use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
 use crate::preferred_orientation::MarchDollase;
+use crate::scatter::Scatter;
 use crate::site::Site;
+use crate::species::Atom;
 use crate::uninit_vec;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -312,9 +314,22 @@ impl Structure {
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
+        let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
+        for site in self.sites.iter() {
+            for atom in &site.species {
+                if scattering_parameters.contains_key(atom) {
+                    continue;
+                }
+
+                let scatter = atom.scattering_params().expect(
+                    format!("Could not find atomic scattering parameter for {atom}").as_str(),
+                );
+                scattering_parameters.insert(atom.clone(), scatter);
+            }
+        }
+
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
-            let s = g_hkl / 2.0;
 
             // n lambda = 2 d sin(theta) | n = 1
             // lambda = 2 d sin(theta)
@@ -332,7 +347,7 @@ impl Structure {
                     .unwrap_or(1.0);
 
                 for atom in &site.species {
-                    let scatter = atom.scattering_params().expect(format!("Could not find atomic scattering parameter for {atom}").as_str());
+                    let scatter = &scattering_parameters[atom];
                     let fs = scatter.eval(sin_theta_over_lambda);
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)

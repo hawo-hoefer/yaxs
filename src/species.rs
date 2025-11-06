@@ -3,7 +3,7 @@ use std::str::FromStr;
 use crate::scatter::{Scatter, get_scatter_or_base_elem};
 
 use crate::element::Element;
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Debug, Clone, Hash)]
 pub struct Atom {
     pub el: Element,
     pub ionization: i16,
