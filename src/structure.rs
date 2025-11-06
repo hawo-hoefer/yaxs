@@ -315,23 +315,25 @@ impl Structure {
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
             let s = g_hkl / 2.0;
-            let s2 = s.powi(2);
+
+            // n lambda = 2 d sin(theta) | n = 1
+            // lambda = 2 d sin(theta)
+            // 1 / (2 d) = sin(theta) / lambda
+            let sin_theta_over_lambda = 1.0 / (2.0 * d_hkl);
 
             let mut f_hkl = Complex::new(0.0, 0.0);
-            // TODO: Debye-Waller Correction
-            // (we ignore it for now, in the test data we don't have DW-factors)
-            // dw_correction = np.exp(-dw_factors * s2)
             for site in &self.sites {
                 // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
                 let g_dot_r: f64 = site.coords.dot(&hkl);
                 let dw_factor = site
                     .displacement
                     .as_ref()
-                    .map(|x| x.debye_waller_factor(&pos, g_hkl))
+                    .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
                     .unwrap_or(1.0);
 
-                for species in &site.species {
-                    let fs = species.el.scattering_factor(s2);
+                for atom in &site.species {
+                    let scatter = atom.scattering_params().expect(format!("Could not find atomic scattering parameter for {atom}").as_str());
+                    let fs = scatter.eval(sin_theta_over_lambda);
 
                     // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
                     let f_part = fs
@@ -386,6 +388,7 @@ impl Structure {
                 }),
             }
         }
+
         let volume = self.lat.volume();
         for peak in compressed.iter_mut() {
             peak.i_hkl /= volume.powi(2);

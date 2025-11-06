@@ -15,22 +15,18 @@ pub enum AtomicDisplacement {
 }
 
 impl AtomicDisplacement {
-    pub fn debye_waller_factor(&self, h: &Vec3<f64>, g_hkl: f64) -> f64 {
+    pub fn debye_waller_factor(&self, h: &Vec3<f64>, sin_theta_over_lambda: f64) -> f64 {
         use std::f64::consts::PI;
         match self {
             AtomicDisplacement::Uiso(u) => {
                 // original formula from link above is
                 // T(|h|) = exp(- 8 pi^2 * <u^2> (sin^2 theta / lambda^2) )
-                // in bragg condition, n \lambda = 2 d sin theta
-                // and using n = 1, we get
-                // sin theta / lambda = 1 / (2 d).
-                // therefore, T(|h|) = exp(-8 pi^2 * <u^2> / 4d^2)
-                let x = (-8.0 * PI * PI * u / 4.0 * g_hkl.powi(2)).exp();
+                let x = (-8.0 * PI * PI * u * sin_theta_over_lambda.powi(2)).exp();
                 x
             }
             AtomicDisplacement::Biso(b) => {
                 // the same as Uiso, only that b = u / (8 pi^2)
-                let x = (-b / 4.0 * g_hkl.powi(2)).exp();
+                let x = (-b * sin_theta_over_lambda.powi(2)).exp();
                 x
             }
             AtomicDisplacement::Uani(u) => {
