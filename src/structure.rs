@@ -311,10 +311,10 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         po: Option<&MarchDollase>,
+        scattering_parameters: &mut HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
         for site in self.sites.iter() {
             for atom in &site.species {
                 if scattering_parameters.contains_key(atom) {
@@ -421,11 +421,12 @@ impl Structure {
         wavelength_ams: f64,
         two_theta_range: &(f64, f64),
         po: Option<&MarchDollase>,
+        scattering_parameters: &mut HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po)
+        self.get_d_spacings_intensities(min_r, max_r, po, scattering_parameters)
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -438,6 +439,7 @@ impl Structure {
         theta_deg: f64,
         energy_kev_range: &(f64, f64),
         po: Option<&MarchDollase>,
+        scattering_parameters: &mut HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
@@ -447,7 +449,7 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po)
+        self.get_d_spacings_intensities(min_r, max_r, po, scattering_parameters)
     }
 }
 
@@ -620,7 +622,11 @@ pub fn simulate_peaks(
     }
 
     impl RunCtx {
-        fn run(&self, job: PeakSim) -> Result<PeakSimResult, String> {
+        fn run(
+            &self,
+            job: PeakSim,
+            scattering_param_cache: &mut HashMap<Atom, Scatter>,
+        ) -> Result<PeakSimResult, String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
             let Some((perm_s, strain)) = apply_strain_cfg(
                 &self.strain_cfgs[job.structure],
@@ -631,8 +637,14 @@ pub fn simulate_peaks(
             };
             let po_cfg = &self.po_cfgs[job.structure];
             let po = po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
+
             let peaks = perm_s
-                .get_d_spacings_intensities(job.min_r, job.max_r, po.as_ref())
+                .get_d_spacings_intensities(
+                    job.min_r,
+                    job.max_r,
+                    po.as_ref(),
+                    scattering_param_cache,
+                )
                 .into_boxed_slice();
 
             Ok(PeakSimResult {
@@ -673,6 +685,7 @@ pub fn simulate_peaks(
 
     if n_threads == 1 {
         info!("Running single-threaded peak simulation");
+        let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
             let job = PeakSim {
                 structure: struct_id,
@@ -681,7 +694,7 @@ pub fn simulate_peaks(
                 min_r,
                 max_r,
             };
-            let p = ctx.run(job)?;
+            let p = ctx.run(job, &mut scattering_parameters)?;
             unsafe { results.add(p) };
         }
     } else {
@@ -694,6 +707,7 @@ pub fn simulate_peaks(
                 let results = Arc::clone(&results);
                 let job_receiver = job_receiver.clone();
                 std::thread::spawn(move || -> Result<(), String> {
+                    let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
                             Ok(Task::Stop) => break,
@@ -702,7 +716,7 @@ pub fn simulate_peaks(
                         };
 
                         let p = ctx
-                            .run(job)
+                            .run(job, &mut scattering_parameters)
                             .map_err(|err| format!("Peak simulation thread {i}: {err}"))?;
                         unsafe {
                             results.add(p);
@@ -854,7 +868,8 @@ loop_
         let mut p = CifParser::new(&FM3M_CIF_DATA);
         let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let mut sp_c = HashMap::new();
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &mut sp_c);
         let peaks = peaks
             .iter()
             .map(|peak| {
@@ -874,8 +889,8 @@ loop_
         let mut p = CifParser::new(&FM3M_CIF_DATA);
         let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
-
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let mut sp_c = HashMap::new();
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &mut sp_c);
         let mut peaks = peaks
             .iter()
             .map(|peak| {

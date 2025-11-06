@@ -52,7 +52,7 @@ sample_parameters:
       strain: !Maximum 0.005
       mean_ds_nm: [15.0, 25.0]
       # volume_fraction: 0.4
-    - path: ./cif/Fe3O4_183969.cif
+    - path: ./cif/Na2CO3.cif
       strain: !Maximum 0.005
       mean_ds_nm: 15.0
       preferred_orientation:
