@@ -5,6 +5,8 @@ use itertools::Itertools;
 use log::warn;
 use ndarray::Array2;
 use rand::Rng;
+use serde::de::Visitor;
+use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::io::PatternMeta;
@@ -61,7 +63,7 @@ pub struct VFGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
     pub fractions: Vec<Option<VolumeFraction>>,
-    pub max_subset_dim: Option<usize>,
+    pub max_subset_dim: Option<ConcentrationSubset>,
 }
 
 pub fn get_weight_fractions(
@@ -82,10 +84,10 @@ pub fn get_weight_fractions(
     // w_i = m_i / m_ges
     //
     // m_ges = sum_i m_i
-    // m_ges = sum_i rho_i V_i 
+    // m_ges = sum_i rho_i V_i
     //       = sum_i rho_i phi_i V_tot
     //       = V_tot * (sum_i rho_i phi_i)
-    // 
+    //
     // w_i = rho_i * V_i / m_ges
     //     = rho_i * V_i / (V_tot * (sum_i rho_i phi_i))
     //     = rho_i / (sum_i rho_i phi_i) * V_i / V_tot
@@ -137,10 +139,95 @@ pub fn uniform_sample_no_replacement_knuth(
     samples
 }
 
+#[derive(PartialEq, Clone, Debug, Serialize)]
+pub enum ConcentrationSubset {
+    MaxDim(usize),
+    Probabilities(Vec<f64>),
+}
+
+impl ConcentrationSubset {
+    pub fn roll(&self, rng: &mut impl Rng) -> usize {
+        use ConcentrationSubset::*;
+        match self {
+            MaxDim(maxdim) => {
+                if *maxdim == 0 {
+                    // should this be an error?
+                    0
+                } else {
+                    rng.random_range(1..=*maxdim)
+                }
+            }
+            Probabilities(probs) => {
+                let t = rng.random_range(0.0..=1.0);
+                let mut acc = 0.0;
+                for (i, p) in probs.iter().enumerate() {
+                    acc += p;
+                    if t <= acc {
+                        return i + 1;
+                    }
+                }
+
+                unreachable!("t is between 0 and 1")
+            }
+        }
+    }
+
+    pub fn max_subset_size(&self) -> usize {
+        match self {
+            ConcentrationSubset::MaxDim(n) => *n,
+            ConcentrationSubset::Probabilities(items) => items.len(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConcentrationSubset {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CSProxy {
+            MaxDim(usize),
+            Weights(Vec<f64>),
+        }
+
+        let p = CSProxy::deserialize(deserializer)?;
+
+        match p {
+            CSProxy::MaxDim(d) => return Ok(ConcentrationSubset::MaxDim(d)),
+            CSProxy::Weights(mut items) => {
+                for i in items.iter() {
+                    if *i < 0.0 {
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Float(*i),
+                            &"subset size weights needs to be larger than 0.",
+                        ));
+                    }
+                }
+                let sum = items.iter().sum::<f64>();
+
+                if sum == 0.0 {
+                    return Err(serde::de::Error::invalid_value(
+                        serde::de::Unexpected::Float(sum),
+                        &"Concentration subset weights need to sum to more than 0.",
+                    ));
+                }
+
+                for i in items.iter_mut() {
+                    *i /= sum;
+                }
+
+                return Ok(ConcentrationSubset::Probabilities(items));
+            }
+        }
+    }
+}
+
 impl VFGenerator {
     pub fn try_new(
         mut fractions: Vec<Option<VolumeFraction>>,
-        max_subset_dim: Option<usize>,
+        max_subset_dim: Option<ConcentrationSubset>,
     ) -> Result<Self, String> {
         if fractions.len() == 0 {
             // no structures is ok. in that case, no volume fractions will be generated
@@ -183,9 +270,10 @@ impl VFGenerator {
             return Err(format!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum));
         }
 
-        if let Some(max_subset_dim) = max_subset_dim {
-            if max_subset_dim > n_free {
-                return Err(format!("max_subset_dim can be at most equal to the number of free phases. Expected max_subset_dim < {n_free}, got {max_subset_dim}"));
+        if let Some(max_subset_dim) = &max_subset_dim {
+            let max_subset_size = max_subset_dim.max_subset_size();
+            if max_subset_size > n_free {
+                return Err(format!("max_subset_dim can be at most equal to the number of free phases. Expected < {n_free}, got {max_subset_size}"));
             }
         }
 
@@ -217,12 +305,8 @@ impl VFGenerator {
 
         let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
 
-        let roll_n = if let Some(max_subset_dim) = self.max_subset_dim {
-            if max_subset_dim == 0 {
-                0
-            } else {
-                rng.random_range(1..=max_subset_dim)
-            }
+        let roll_n = if let Some(max_subset_dim) = &self.max_subset_dim {
+            max_subset_dim.roll(rng)
         } else {
             self.n_free
         };
@@ -664,7 +748,7 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, Some(2)).unwrap();
+        let gen = VFGenerator::try_new(vfs, Some(ConcentrationSubset::MaxDim(2))).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let mut n_zeroed = 0;
         for _ in 0..1000 {

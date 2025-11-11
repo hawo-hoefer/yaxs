@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, Caglioti, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
+use crate::pattern::{get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
@@ -237,7 +237,7 @@ impl RandomlyScalePeaks {
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
-    pub max_concentration_subset_dim: Option<usize>,
+    pub concentration_subset: Option<ConcentrationSubset>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
     pub eta: Parameter<f64>,
