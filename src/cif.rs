@@ -429,7 +429,7 @@ impl<'a> CIFContents<'a> {
                     use IsotropicDisplacementInFile::*;
                     match how_found {
                         FoundUnlabeled => {
-                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using anisotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
                             Some(aniso_adp)
                         }
                         FoundLabeled => {
@@ -495,17 +495,18 @@ impl<'a> CIFContents<'a> {
                     coords: op.apply(&base_site.coords),
                     species: base_site.species.clone(),
                     occu: base_site.occu,
-                    displacement: match base_site.displacement {
-                        Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
-                            base_site.displacement.clone()
-                        }
-                        Some(AtomicDisplacement::Uani(ref v)) => {
-                            Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
-                        }
-                        Some(AtomicDisplacement::Bani(ref v)) => {
-                            Some(AtomicDisplacement::Bani(op.transform_orientation(&v)))
-                        }
-                    },
+                    displacement: base_site.displacement.clone(),
+                    // displacement: match base_site.displacement {
+                    //     Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
+                    //         base_site.displacement.clone()
+                    //     }
+                    //     Some(AtomicDisplacement::Uani(ref v)) => {
+                    //         Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
+                    //     }
+                    //     Some(AtomicDisplacement::Bani(ref v)) => {
+                    //         Some(AtomicDisplacement::Bani(op.transform_orientation(&v)))
+                    //     }
+                    // },
                 };
 
                 if site_exists_periodic(&s, &sites) {
