@@ -40,15 +40,6 @@ const ANISO_ADP_B_LABELS: [&str; 6] = [
     "_atom_site_aniso_B_33",
 ];
 
-const ANISO_ADP_BETA_LABELS: [&str; 6] = [
-    "_atom_site_aniso_beta_11",
-    "_atom_site_aniso_beta_12",
-    "_atom_site_aniso_beta_22",
-    "_atom_site_aniso_beta_13",
-    "_atom_site_aniso_beta_23",
-    "_atom_site_aniso_beta_33",
-];
-
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
     file_path: Option<String>,
@@ -191,33 +182,6 @@ fn extract_aniso_adp(
             label,
             idx,
         )?;
-
-        return Ok(Some(AtomicDisplacement::Bani(mat)));
-    }
-
-    let aniso_beta_ident = ANISO_ADP_BETA_LABELS[0];
-    if atom_site_aniso_table.contains_key(aniso_beta_ident) {
-        let mut mat = parse_matrix_from_symmetric_order_labels(
-            atom_site_aniso_table,
-            &ANISO_ADP_BETA_LABELS,
-            aniso_b_ident,
-            label,
-            idx,
-        )?;
-
-        let abc = lattice.abc();
-
-        // from https://www.iucr.org/resources/commissions/crystallographic-nomenclature
-        // equation 2.1.38
-        //
-        // convert to B^ij using lattice lengths
-        for j in 0..mat.rows() {
-            for l in 0..mat.cols() {
-                // beta^jl / (2 pi^2 a^j a^l) = B^jl / (8 pi^2)
-                // 4 beta^jl / (a^j a^l)
-                mat[(j, l)] = mat[(j, l)] * 4.0 / (abc[j] * abc[l]);
-            }
-        }
 
         return Ok(Some(AtomicDisplacement::Bani(mat)));
     }
