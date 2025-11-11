@@ -74,24 +74,40 @@ pub fn get_weight_fractions(
         }
     }
 
-    // m = V * density
-    let mut sum = 0.0;
-    let mut weight_fractions = volume_fractions
+    // phi_i = V_i / V_tot
+    // V_tot = sum_i V_i
+    // V_i = rho_i * m_i
+    // V_tot = sum_i rho_i * m_i
+    // m_i = rho_i * V_i
+    // w_i = m_i / m_ges
+    //
+    // m_ges = sum_i m_i
+    // m_ges = sum_i rho_i V_i 
+    //       = sum_i rho_i phi_i V_tot
+    //       = V_tot * (sum_i rho_i phi_i)
+    // 
+    // w_i = rho_i * V_i / m_ges
+    //     = rho_i * V_i / (V_tot * (sum_i rho_i phi_i))
+    //     = rho_i / (sum_i rho_i phi_i) * V_i / V_tot
+    //     = rho_i / (sum_i rho_i phi_i) * phi_i
+    let mut sum_rho_i_phi_i = 0.0;
+    let mut mass_fractions = volume_fractions
         .iter()
         .zip(structures)
-        .map(|(vf, s)| {
-            let mass = s.density.expect("we check above that all are some") * vf;
-            sum += mass;
-            mass
+        .map(|(phi_i, s)| {
+            let rho_i = s.density.expect("we have all densities");
+            let rpi = rho_i * phi_i;
+            sum_rho_i_phi_i += rpi;
+            rpi
         })
         .collect_vec();
 
     // normalize again
-    for vf in weight_fractions.iter_mut() {
-        *vf /= sum;
+    for rpi in mass_fractions.iter_mut() {
+        *rpi /= sum_rho_i_phi_i;
     }
 
-    Some(weight_fractions.into())
+    Some(mass_fractions.into())
 }
 
 /// sample integers uniformly without replacement from the interval [0, max_val)
