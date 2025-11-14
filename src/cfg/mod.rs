@@ -425,9 +425,9 @@ impl ToDiscretize {
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
-            ds_eta,
-            mustrain,
-            mustrain_eta,
+            ds_eta: _,
+            mustrain: _,
+            mustrain_eta: _,
         } = self.sample_parameters.generate(rng);
 
         let vol_fractions = vf_generator.generate(rng);

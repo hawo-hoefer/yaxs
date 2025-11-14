@@ -291,10 +291,10 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     }
                 }
             }
-            DsEtas(dst) => {
-                for i in 0..n_phases {
+            DsEtas(_dst) => {
+                for _ in 0..n_phases {
+                    // _dst[(pat_id, i)] = self.meta.eta as f32;
                     todo!("adjust edxrd eta");
-                    dst[(pat_id, i)] = self.meta.eta as f32;
                 }
             }
             MeanDsNm(dst) => {
@@ -339,8 +339,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             BackgroundParameters(_) => {
                 unreachable!("EDXRD measurements are currently implemented without background")
             }
-            Mustrains(dst) => todo!(),
-            MustrainEtas(dst) => todo!(),
+            Mustrains(_dst) => todo!(),
+            MustrainEtas(_dst) => todo!(),
         }
     }
 
