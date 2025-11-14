@@ -83,7 +83,7 @@ pub enum PatternMeta {
     Mustrains(Array2<f32>),
     MustrainEtas(Array2<f32>),
     MeanDsNm(Array2<f32>),
-    CagliotiParams(Array2<f32>),
+    InstrumentParameters(Array2<f32>),
     ImpuritySum(Array1<f32>),
     ImpurityMax(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
@@ -125,7 +125,7 @@ impl PatternMeta {
             }
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
             DsEtas(x) => Self::push_arr(w, x, "ds_etas", meta_names),
-            CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
+            InstrumentParameters(x) => Self::push_arr(w, x, "instrument_parameters", meta_names),
             MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
             BackgroundParameters(x) => Self::push_arr(w, x, "background_parameters", meta_names),
             Mustrains(x) => Self::push_arr(w, x, "mustrain", meta_names),

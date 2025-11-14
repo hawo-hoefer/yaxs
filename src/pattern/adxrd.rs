@@ -195,10 +195,13 @@ impl Discretizer for DiscretizeAngleDispersive {
                     dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
                 }
             }
-            CagliotiParams(dst) => {
+            InstrumentParameters(dst) => {
                 dst[(pat_id, 0)] = self.meta.instrument_parameters.u as f32;
                 dst[(pat_id, 1)] = self.meta.instrument_parameters.v as f32;
                 dst[(pat_id, 2)] = self.meta.instrument_parameters.w as f32;
+                dst[(pat_id, 3)] = self.meta.instrument_parameters.x as f32;
+                dst[(pat_id, 4)] = self.meta.instrument_parameters.y as f32;
+                dst[(pat_id, 5)] = self.meta.instrument_parameters.z as f32;
             }
             ImpuritySum(dst) => {
                 dst[pat_id] = self
@@ -271,7 +274,7 @@ impl Discretizer for DiscretizeAngleDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
+            InstrumentParameters(Array2::<f32>::zeros((n_patterns, 6))),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
             Mustrains(Array2::<f32>::zeros((n_patterns, n_phases))),
