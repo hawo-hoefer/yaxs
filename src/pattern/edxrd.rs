@@ -319,7 +319,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
                     .unwrap_or(0.0);
             }
-            CagliotiParams(_) => unreachable!("No Caglioti parameters in EDXRD"),
+            InstrumentParameters(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             MarchParameter(dst) => {
                 for i in 0..n_phases {

@@ -160,7 +160,6 @@ fn main() {
         mean_ds_nm,
         ds_eta: _,
         mustrain: _,
-        mustrain_eta: _,
     } in cfg.sample_parameters.structures.iter()
     {
         let mut struct_path = args
@@ -245,8 +244,12 @@ fn main() {
             let s = &to_discretize.sample_parameters.structures[i];
             let mean_ds_nm = s.mean_ds_nm.mean();
             let ds_eta = s.ds_eta.mean();
-            let mustrain = s.mustrain.mean();
-            let mustrain_eta = s.mustrain_eta.mean();
+            let mustrain = s
+                .mustrain
+                .as_ref()
+                .map(|x| x.amplitude.mean())
+                .unwrap_or(0.0);
+            let mustrain_eta = s.mustrain.as_ref().map(|x| x.eta.mean()).unwrap_or(0.0);
 
             info!("======= Structure {} =======", structure_paths[i]);
             let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]

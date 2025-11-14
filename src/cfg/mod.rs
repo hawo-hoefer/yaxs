@@ -35,7 +35,7 @@ use crate::pattern::{
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub kind: SimulationKind,
@@ -253,7 +253,7 @@ impl RandomlyScalePeaks {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
@@ -290,14 +290,24 @@ impl SampleParameters {
         let mustrain = self
             .structures
             .iter()
-            .map(|x| x.mustrain.generate(rng))
+            .map(|x| {
+                x.mustrain
+                    .as_ref()
+                    .map(|x| x.amplitude.generate(rng))
+                    .unwrap_or(0.0)
+            })
             .collect_vec()
             .into_boxed_slice();
 
         let mustrain_eta = self
             .structures
             .iter()
-            .map(|x| x.mustrain_eta.generate(rng))
+            .map(|x| {
+                x.mustrain
+                    .as_ref()
+                    .map(|x| x.eta.generate(rng))
+                    .unwrap_or(0.0)
+            })
             .collect_vec()
             .into_boxed_slice();
 
