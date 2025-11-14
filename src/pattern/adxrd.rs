@@ -11,8 +11,10 @@ pub struct ADXRDMeta {
     pub vol_fractions: Box<[f64]>,
     pub weight_fractions: Option<Box<[f64]>>,
     pub mean_ds_nm: Box<[f64]>,
-    pub eta: f64,
-    pub caglioti: Caglioti,
+    pub ds_eta: Box<[f64]>,
+    pub mustrain: Box<[f64]>,
+    pub mustrain_eta: Box<[f64]>,
+    pub instrument_parameters: InstrumentParameters,
     pub sample_displacement_mu_m: f64,
     pub background: Background,
 }
@@ -40,26 +42,34 @@ impl EmissionLine {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-pub struct Caglioti {
+pub struct InstrumentParameters {
     pub u: f64,
     pub v: f64,
     pub w: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
 }
 
-impl Caglioti {
-    pub fn new(u: f64, v: f64, w: f64) -> Self {
-        Caglioti { u, v, w }
+impl InstrumentParameters {
+    pub fn new(u: f64, v: f64, w: f64, x: f64, y: f64, z: f64) -> Self {
+        InstrumentParameters { u, v, w, x, y, z }
     }
     pub fn zero() -> Self {
-        Self::new(0.0, 0.0, 0.0)
+        Self::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     }
 
-    /// Calculate Caglioti broadening for a position
+    /// Calculate gaussian line broadening (Caglioti)
     /// $FWHM(\theta)^2 = u \tan(\theta)^2 + v \tan(\theta) + w$
     ///
     /// * `theta`: theta in radians
-    pub fn sigma_brd(&self, theta: f64) -> f64 {
+    pub fn gauss_broadening(&self, theta: f64) -> f64 {
         self.u * theta.tan().powi(2) + self.v * theta.tan() + self.w
+    }
+
+    /// Calculate lorentzian line broadening
+    pub fn lorentz_broadening(&self, theta: f64) -> f64 {
+        self.x / theta.cos() + self.y * theta.tan() + self.z
     }
 }
 
@@ -75,17 +85,30 @@ impl Discretizer for DiscretizeAngleDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
         let ADXRDMeta {
             vol_fractions,
-            mean_ds_nm,
-            eta,
-            caglioti,
+            instrument_parameters,
             sample_displacement_mu_m,
             background: _,
             weight_fractions: _,
+            mean_ds_nm,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
         } = &self.meta;
 
-        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
-            .cartesian_product(&self.emission_lines)
-            .flat_map(move |((phase_idx, vf, phase_mean_ds_nm), emission_line)| {
+        itertools::izip!(
+            0..self.common.n_phases(),
+            vol_fractions,
+            mean_ds_nm,
+            ds_eta,
+            mustrain,
+            mustrain_eta
+        )
+        .cartesian_product(&self.emission_lines)
+        .flat_map(
+            move |(
+                (phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, phase_mustrain, phase_mustrain_eta),
+                emission_line,
+            )| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 let idx = self.common.idx(phase_idx);
                 self.common.sim_res.all_simulated_peaks[idx]
@@ -93,33 +116,38 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .map(move |peak| {
                         peak.get_adxrd_render_params(
                             wavelength_nm,
-                            caglioti,
-                            *eta,
+                            instrument_parameters,
                             *phase_mean_ds_nm,
+                            *phase_ds_eta,
+                            *phase_mustrain,
+                            *phase_mustrain_eta,
                             vf * emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
                         )
                     })
-            })
-            .chain(
-                self.common
-                    .impurity_peaks
-                    .iter()
-                    .cartesian_product(&self.emission_lines)
-                    .map(move |(ip, emission_line)| {
-                        let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                        ip.peak.get_adxrd_render_params(
-                            wavelength_nm,
-                            caglioti,
-                            *eta,
-                            ip.mean_ds_nm,
-                            emission_line.weight,
-                            *sample_displacement_mu_m,
-                            self.goniometer_radius_mm,
-                        )
-                    })
-            )
+            },
+        )
+        .chain(
+            self.common
+                .impurity_peaks
+                .iter()
+                .cartesian_product(&self.emission_lines)
+                .map(move |(ip, emission_line)| {
+                    let wavelength_nm = emission_line.wavelength_ams / 10.0;
+                    ip.peak.get_adxrd_render_params(
+                        wavelength_nm,
+                        instrument_parameters,
+                        ip.mean_ds_nm,
+                        ip.eta,
+                        0.0, // impurity peaks only have one source of
+                        0.0, // peak broadening for now.
+                        emission_line.weight,
+                        *sample_displacement_mu_m,
+                        self.goniometer_radius_mm,
+                    )
+                }),
+        )
     }
 
     fn n_peaks_tot(&self) -> usize {
@@ -157,8 +185,10 @@ impl Discretizer for DiscretizeAngleDispersive {
                     }
                 }
             }
-            Etas(dst) => {
-                dst[pat_id] = self.meta.eta as f32;
+            DsEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
+                }
             }
             MeanDsNm(dst) => {
                 for i in 0..n_phases {
@@ -166,9 +196,9 @@ impl Discretizer for DiscretizeAngleDispersive {
                 }
             }
             CagliotiParams(dst) => {
-                dst[(pat_id, 0)] = self.meta.caglioti.u as f32;
-                dst[(pat_id, 1)] = self.meta.caglioti.v as f32;
-                dst[(pat_id, 2)] = self.meta.caglioti.w as f32;
+                dst[(pat_id, 0)] = self.meta.instrument_parameters.u as f32;
+                dst[(pat_id, 1)] = self.meta.instrument_parameters.v as f32;
+                dst[(pat_id, 2)] = self.meta.instrument_parameters.w as f32;
             }
             ImpuritySum(dst) => {
                 dst[pat_id] = self
@@ -231,7 +261,7 @@ impl Discretizer for DiscretizeAngleDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            Etas(Array1::<f32>::zeros(n_patterns)),
+            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
             CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),

@@ -1,4 +1,4 @@
-use std::f32::consts::{FRAC_2_SQRT_PI, PI, TAU};
+use std::f32::consts::PI;
 
 /// plack's constant in ev * s = ev * hz^-1
 pub const H_EV_S: f64 = 4.135_667_696e-15f64;
@@ -83,12 +83,12 @@ pub fn pseudo_voigt(dx: f32, eta: f32, fwhm: f32) -> f32 {
     eta * lorentz(dx, gamma) + (1.0 - eta) * gauss(dx, sigma)
 }
 
-pub fn sample_displacement_delta_two_theta_rad(
+pub fn sample_displacement_delta_theta_rad(
     displacement_mu_m: f64,
     goniometer_radius_mm: f64,
     theta_rad: f64,
 ) -> f64 {
-    -2.0 * displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
+    -displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
 }
 
 pub mod acm757 {

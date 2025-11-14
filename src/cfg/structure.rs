@@ -51,4 +51,7 @@ pub struct StructureDef {
     pub strain: Option<StrainCfg>,
     pub volume_fraction: Option<VolumeFraction>,
     pub mean_ds_nm: Parameter<f64>,
+    pub ds_eta: Parameter<f64>,
+    pub mustrain: Parameter<f64>,
+    pub mustrain_eta: Parameter<f64>,
 }

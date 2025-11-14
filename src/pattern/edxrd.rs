@@ -291,8 +291,11 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     }
                 }
             }
-            Etas(dst) => {
-                dst[pat_id] = self.meta.eta as f32;
+            DsEtas(dst) => {
+                for i in 0..n_phases {
+                    todo!("adjust edxrd eta");
+                    dst[(pat_id, i)] = self.meta.eta as f32;
+                }
             }
             MeanDsNm(dst) => {
                 for i in 0..n_phases {
@@ -349,7 +352,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            Etas(Array1::<f32>::zeros(n_patterns)),
+            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),

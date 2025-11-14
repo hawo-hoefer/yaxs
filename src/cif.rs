@@ -128,7 +128,6 @@ fn parse_matrix_from_symmetric_order_labels(
 fn extract_aniso_adp(
     label: &str,
     atom_site_aniso_table: Option<&Table>,
-    lattice: &Lattice,
 ) -> Result<Option<AtomicDisplacement>, String> {
     let Some(atom_site_aniso_table) = atom_site_aniso_table else {
         return Ok(None);
@@ -387,7 +386,7 @@ impl<'a> CIFContents<'a> {
             );
 
             let iso_adp = extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
-            let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table, lattice)?;
+            let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table)?;
             let adp = match (iso_adp, aniso_adp) {
                 (Some((_iso_adp, how_found)), Some(aniso_adp)) => {
                     use IsotropicDisplacementInFile::*;

@@ -79,7 +79,7 @@ pub enum PatternMeta {
     Strains(Array3<f32>),
     VolumeFractions(Array2<f32>),
     WeightFractions(Array2<f32>),
-    Etas(Array1<f32>),
+    DsEtas(Array2<f32>),
     MeanDsNm(Array2<f32>),
     CagliotiParams(Array2<f32>),
     ImpuritySum(Array1<f32>),
@@ -116,7 +116,7 @@ impl PatternMeta {
             VolumeFractions(x) => Self::push_arr(w, x, "volume_fractions", meta_names),
             WeightFractions(x) => Self::push_arr(w, x, "weight_fractions", meta_names),
             Strains(x) => Self::push_arr(w, x, "strains", meta_names),
-            Etas(x) => Self::push_arr(w, x, "etas", meta_names),
+            DsEtas(x) => Self::push_arr(w, x, "etas", meta_names),
             ImpuritySum(x) => Self::push_arr(w, x, "impurity_sum", meta_names),
             ImpurityMax(x) => Self::push_arr(w, x, "impurity_max", meta_names),
             SampleDisplacementMuM(x) => {

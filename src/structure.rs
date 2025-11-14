@@ -408,7 +408,7 @@ impl Structure {
         wavelength_ams: f64,
         two_theta_range: &(f64, f64),
         po: Option<&MarchDollase>,
-        scattering_parameters: &mut HashMap<Atom, Scatter>,
+        scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
@@ -437,6 +437,19 @@ impl Structure {
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
         self.get_d_spacings_intensities(min_r, max_r, po, scattering_parameters)
+    }
+
+    pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
+        for site in self.sites.iter() {
+            for atom in &site.species {
+                if !scattering_parameters.contains_key(atom) {
+                    let scatter = atom.scattering_params().expect(
+                        format!("Could not find atomic scattering parameter for {atom}").as_str(),
+                    );
+                    scattering_parameters.insert(atom.clone(), scatter);
+                }
+            }
+        }
     }
 }
 
@@ -649,16 +662,7 @@ pub fn simulate_peaks(
 
     let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
     for struct_id in 0..n_structs {
-        for site in &structures[struct_id].sites {
-            for atom in &site.species {
-                if !scattering_parameters.contains_key(atom) {
-                    let scatter = atom.scattering_params().expect(
-                        format!("Could not find atomic scattering parameter for {atom}").as_str(),
-                    );
-                    scattering_parameters.insert(atom.clone(), scatter);
-                }
-            }
-        }
+        structures[struct_id].gather_scattering_params(&mut scattering_parameters);
     }
 
     enum Task {
@@ -694,7 +698,7 @@ pub fn simulate_peaks(
                 min_r,
                 max_r,
             };
-            let p = ctx.run(job, &mut scattering_parameters)?;
+            let p = ctx.run(job, &scattering_parameters)?;
             unsafe { results.add(p) };
         }
     } else {
@@ -766,7 +770,7 @@ pub fn simulate_peaks(
 mod test {
     use super::*;
     use crate::cif::CifParser;
-    use crate::pattern::adxrd::Caglioti;
+    use crate::pattern::adxrd::InstrumentParameters;
     use crate::pattern::PeakRenderParams;
 
     #[test]
@@ -870,12 +874,15 @@ loop_
         let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
         let mut sp_c = HashMap::new();
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &mut sp_c);
+        s.gather_scattering_params(&mut sp_c);
+
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &sp_c);
         let peaks = peaks
             .iter()
             .map(|peak| {
+                #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 1.0, 100.0, 1.0, 0.0, 180.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0);
                 (pos, intensity)
             })
             .collect_vec();
@@ -891,12 +898,23 @@ loop_
         let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
         let mut sp_c = HashMap::new();
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &mut sp_c);
+        s.gather_scattering_params(&mut sp_c);
+
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &sp_c);
         let mut peaks = peaks
             .iter()
             .map(|peak| {
-                let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 1.0, 100.0, 1.0, 0.0, 180.0);
+                let PeakRenderParams { pos, intensity, .. } = peak.get_adxrd_render_params(
+                    0.071,
+                    &InstrumentParameters::zero(),
+                    100.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    180.0,
+                );
                 (pos, intensity)
             })
             .collect_vec();

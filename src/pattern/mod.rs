@@ -5,20 +5,19 @@ use itertools::Itertools;
 use log::warn;
 use ndarray::Array2;
 use rand::Rng;
-use serde::de::Visitor;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::{
-    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
-    scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
+    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
+    scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
 };
 use crate::noise::Noise;
 use crate::structure::Structure;
 
-use self::adxrd::Caglioti;
+use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
@@ -575,9 +574,11 @@ impl Peak {
     pub fn get_adxrd_render_params(
         &self,
         wavelength_nm: f64,
-        caglioti: &Caglioti,
-        eta_size_broadening: f64,
+        instrument_parameters: &InstrumentParameters,
         mean_ds_nm: f64,
+        ds_eta: f64,
+        mustrain: f64,
+        mustrain_eta: f64,
         weight: f64,
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
@@ -586,61 +587,49 @@ impl Peak {
         // lambda = 2 d sin(theta)
         // theta = asin(lambda / 2d)
         let wavelength_ams = wavelength_nm * 10.0;
-        let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
-        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
+        let theta_hkl_rad = {
+            let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
 
-        let mustrain = 1e-3;
+            let sd_delta_theta_rad = sample_displacement_delta_theta_rad(
+                sample_displacement_mu_m,
+                goniometer_radius_mm,
+                theta_hkl_rad,
+            );
+
+            theta_hkl_rad + sd_delta_theta_rad
+        };
+
+        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
 
         // use names from GSAS for now
         // size and microstrain broadening fwhms
         let sgam = scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
         let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
 
-        let eta_mustrain_broadening = 1.0;
-        let eta_size_broadening = 0.0;
-
         // FWHM = sqrt(8 ln 2) sigma
         // sigma^2 = FWHM^2 / 8 ln 2
         #[rustfmt::skip]
-        let mut sample_g_fwhm_sq = (sgam * (1.0 -     eta_size_broadening)).powi(2)
-                                 + (mgam * (1.0 - eta_mustrain_broadening)).powi(2);
+        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
+                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
         sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
-        let sample_l_fwhm = sgam * eta_size_broadening + mgam * eta_mustrain_broadening;
+        let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
 
         // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
-        let g_fwhm_sq = (caglioti.sigma_brd(theta_hkl_rad) + sample_g_fwhm_sq).max(0.0000001);
+        let g_fwhm_sq = (instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq)
+            .max(0.0000001);
 
         // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
         // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
         // of theta
-        let x = 0.0;
-        let y = 0.0;
-        let z = 0.0;
-        let l_fwhm = x / theta_hkl_rad.cos() + y * theta_hkl_rad.tan() + sample_l_fwhm + z;
+        let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
         let l_fwhm = l_fwhm.max(0.00001);
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 
-        // TODO: sample displacement should be computed first
-        let sd_delta_two_theta_rad = sample_displacement_delta_two_theta_rad(
-            sample_displacement_mu_m,
-            goniometer_radius_mm,
-            theta_hkl_rad,
-        );
-
-        let two_theta_hkl_deg = (2.0 * theta_hkl_rad + sd_delta_two_theta_rad).to_degrees() as f32;
-
-        if wavelength_ams < 1.544 {
-            println!(
-                "{:.3} {:.4} {:.4}",
-                two_theta_hkl_deg, eta, fwhm
-            );
-        }
-
         PeakRenderParams {
-            pos: two_theta_hkl_deg,
+            pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,
             intensity: peak_weight,
             fwhm: fwhm as f32,
             eta: eta as f32,

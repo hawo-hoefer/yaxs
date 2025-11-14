@@ -15,29 +15,11 @@ kind: !AngleDispersive
     u: 0.0
     v: 0.0
     w: 0.0
-  # background: !Chebyshev
-  #   coefs: 
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   - [-1.0, 1.0]
-  #   scale: 40.0
-  background: None
   # background: !Exponential
   #   slope: [-0.05, -0.025]
   #   scale: [200.0, 800.0]
 
 sample_parameters:
-  eta: 0.5
   concentration_subset: [0.01, 0.8, 0.1]
   impurities:
     - d_hkl_ams: 2
@@ -50,17 +32,26 @@ sample_parameters:
   structures:
     - path: ./cif/CuO_16025.cif
       strain: !Maximum 0.005
-      mean_ds_nm: [15.0, 25.0]
+      mean_ds_nm: 15.0
+      ds_eta: [0.0, 1.0]
+      mustrain: [0, 1000]
+      mustrain_eta: [0.0, 1.0]
       # volume_fraction: 0.4
     - path: ./cif/Na2CO3.cif
       strain: !Maximum 0.005
       mean_ds_nm: 15.0
+      ds_eta: [0.0, 1.0]
+      mustrain: 0.0
+      mustrain_eta: 0.0
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
     - path: ./cif/Si_101017.cif
       strain: !Maximum 0.005
-      mean_ds_nm: 15
+      mean_ds_nm: 15.0
+      ds_eta: [0.0, 1.0]
+      mustrain: 0.0
+      mustrain_eta: 0.0
 
 
 simulation_parameters:

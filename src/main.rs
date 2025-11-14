@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
-use yaxs::pattern::adxrd::Caglioti;
+use yaxs::pattern::adxrd::InstrumentParameters;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
@@ -158,6 +158,9 @@ fn main() {
         strain,
         volume_fraction,
         mean_ds_nm,
+        ds_eta: _,
+        mustrain: _,
+        mustrain_eta: _,
     } in cfg.sample_parameters.structures.iter()
     {
         let mut struct_path = args
@@ -239,9 +242,12 @@ fn main() {
 
         for i in 0..to_discretize.structures.len() {
             let idx = to_discretize.sim_res.idx(i, 0);
-            let mean_ds_nm = to_discretize.sample_parameters.structures[i]
-                .mean_ds_nm
-                .mean();
+            let s = &to_discretize.sample_parameters.structures[i];
+            let mean_ds_nm = s.mean_ds_nm.mean();
+            let ds_eta = s.ds_eta.mean();
+            let mustrain = s.mustrain.mean();
+            let mustrain_eta = s.mustrain_eta.mean();
+
             info!("======= Structure {} =======", structure_paths[i]);
             let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
                 .iter()
@@ -250,17 +256,19 @@ fn main() {
                         SimulationKind::AngleDispersive(ad) => {
                             let wavelength_ams = ad.emission_lines[0].wavelength_ams;
                             let caglioti = ad
-                                .caglioti
+                                .instrument_parameters
                                 .as_ref()
-                                .map(|c| Caglioti::new(c.u.mean(), c.v.mean(), c.w.mean()))
-                                .unwrap_or(Caglioti::zero());
+                                .map(|c| c.mean())
+                                .unwrap_or(InstrumentParameters::zero());
 
                             let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
                             let rp = p.get_adxrd_render_params(
                                 wavelength_ams / 10.0,
                                 &caglioti,
-                                0.5,
                                 mean_ds_nm,
+                                ds_eta,
+                                mustrain,
+                                mustrain_eta,
                                 1.0,
                                 sd,
                                 ad.goniometer_radius_mm,
