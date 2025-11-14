@@ -344,7 +344,7 @@ impl<'a> CIFContents<'a> {
         }
     }
 
-    pub fn get_sites(&self, lattice: &Lattice) -> Result<Vec<Site>, String> {
+    pub fn get_sites(&self) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
             const SITE_KEYS: [&str; 6] = [
                 "_atom_site_label",

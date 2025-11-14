@@ -243,7 +243,7 @@ where
             (
                 Background::Chebyshev { coef, scale },
                 BkgSOA::Polynomial {
-                    degree,
+                    degree: _,
                     ref mut all_coef,
                 },
             ) => {

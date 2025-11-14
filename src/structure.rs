@@ -173,7 +173,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
         let lattice = value.get_lattice();
         Ok(Structure {
-            sites: value.get_sites(&lattice)?,
+            sites: value.get_sites()?,
             lat: lattice,
             density: value.get_density()?,
             sg_no,

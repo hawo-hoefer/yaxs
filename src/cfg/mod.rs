@@ -214,7 +214,7 @@ impl InstrumentParameterCfg {
             }
         }
 
-        InstrumentParameters::new(u, v, w, z, y, z)
+        InstrumentParameters::new(u, v, w, x, y, z)
     }
 }
 
