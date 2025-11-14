@@ -10,12 +10,15 @@ kind: !AngleDispersive
   two_theta_range: [10.0, 70.0]
   goniometer_radius_mm: 180
   sample_displacement_mu_m: [-200, 200]
-  caglioti:   # optional caglioti parameters
-    kind: GSAS # optional GSAS-like caglioti mode
-    u: 0.0
+  instrument_parameters:   # optional instrument parameters
+    kind: GSAS # optional GSAS-like caglioti parameters
+    u: 0.0     # caglioti parameters for gaussian instrumental broadening
     v: 0.0
     w: 0.0
-  # background: !Exponential
+    x: 0.0     # parameters for lorentzian instrumental broadening
+    y: 0.0
+    z: 0.0
+  # background: !Exponential # optional background
   #   slope: [-0.05, -0.025]
   #   scale: [200.0, 800.0]
 
