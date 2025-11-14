@@ -35,9 +35,9 @@ impl FromStr for HKLDisplayMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "standard" => Ok(HKLDisplayMode::Standard { normalized: false }),
-            "structure" => Ok(HKLDisplayMode::Structure {normalized: false}),
+            "structure" => Ok(HKLDisplayMode::Structure { normalized: false }),
             "standard-n" => Ok(HKLDisplayMode::Standard { normalized: true }),
-            "structure-n" => Ok(HKLDisplayMode::Structure {normalized: true}),
+            "structure-n" => Ok(HKLDisplayMode::Structure { normalized: true }),
             _ => Err(format!(
                 "Invalid Mode: {s}. Expected ('standard'|'structure')[-n]."
             )),
@@ -80,6 +80,8 @@ pub enum PatternMeta {
     VolumeFractions(Array2<f32>),
     WeightFractions(Array2<f32>),
     DsEtas(Array2<f32>),
+    Mustrains(Array2<f32>),
+    MustrainEtas(Array2<f32>),
     MeanDsNm(Array2<f32>),
     CagliotiParams(Array2<f32>),
     ImpuritySum(Array1<f32>),
@@ -116,16 +118,18 @@ impl PatternMeta {
             VolumeFractions(x) => Self::push_arr(w, x, "volume_fractions", meta_names),
             WeightFractions(x) => Self::push_arr(w, x, "weight_fractions", meta_names),
             Strains(x) => Self::push_arr(w, x, "strains", meta_names),
-            DsEtas(x) => Self::push_arr(w, x, "etas", meta_names),
             ImpuritySum(x) => Self::push_arr(w, x, "impurity_sum", meta_names),
             ImpurityMax(x) => Self::push_arr(w, x, "impurity_max", meta_names),
             SampleDisplacementMuM(x) => {
                 Self::push_arr(w, x, "sample_displacement_mu_m", meta_names)
             }
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
+            DsEtas(x) => Self::push_arr(w, x, "ds_etas", meta_names),
             CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
             MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
             BackgroundParameters(x) => Self::push_arr(w, x, "background_parameters", meta_names),
+            Mustrains(x) => Self::push_arr(w, x, "mustrain", meta_names),
+            MustrainEtas(x) => Self::push_arr(w, x, "mustrain_etas", meta_names),
         }
     }
 }

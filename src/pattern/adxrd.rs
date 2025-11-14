@@ -185,14 +185,14 @@ impl Discretizer for DiscretizeAngleDispersive {
                     }
                 }
             }
-            DsEtas(dst) => {
-                for i in 0..n_phases {
-                    dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
-                }
-            }
             MeanDsNm(dst) => {
                 for i in 0..n_phases {
                     dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
+                }
+            }
+            DsEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
                 }
             }
             CagliotiParams(dst) => {
@@ -248,6 +248,16 @@ impl Discretizer for DiscretizeAngleDispersive {
                     },
                 }
             }
+            Mustrains(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain[i] as f32;
+                }
+            },
+            MustrainEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain_eta[i] as f32;
+                }
+            },
         }
     }
 
@@ -261,9 +271,11 @@ impl Discretizer for DiscretizeAngleDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
             CagliotiParams(Array2::<f32>::zeros((n_patterns, 3))),
             MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
+            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
+            Mustrains(Array2::<f32>::zeros((n_patterns, n_phases))),
+            MustrainEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
             MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_patterns)),

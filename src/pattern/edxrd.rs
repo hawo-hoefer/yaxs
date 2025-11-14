@@ -339,6 +339,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             BackgroundParameters(_) => {
                 unreachable!("EDXRD measurements are currently implemented without background")
             }
+            Mustrains(dst) => todo!(),
+            MustrainEtas(dst) => todo!(),
         }
     }
 

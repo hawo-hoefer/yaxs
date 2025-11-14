@@ -8,11 +8,11 @@ pub mod math;
 pub mod noise;
 pub mod pattern;
 pub mod preferred_orientation;
+pub mod scatter;
 pub mod site;
 pub mod species;
 pub mod structure;
 pub mod symop;
-pub mod scatter;
 
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;

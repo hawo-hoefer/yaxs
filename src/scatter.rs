@@ -356,6 +356,7 @@ pub fn get_scatter_or_base_elem(a: &Atom) -> Option<Scatter> {
         ionization: 0,
     };
 
-    scatt_approx_gsas(&a_union)
-        .inspect(|_| warn!("Could not find scattering parameters for atom {a}. Using atom {a_union} instead"))
+    scatt_approx_gsas(&a_union).inspect(|_| {
+        warn!("Could not find scattering parameters for atom {a}. Using atom {a_union} instead")
+    })
 }

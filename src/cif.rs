@@ -255,7 +255,7 @@ fn extract_iso_adp(
             Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_B_iso_or_equiv' needs to be Integer, Float or Inapplicable. Got {v}")),
             Value::Float(v) => Some((Biso(*v), FoundUnlabeled)),
             Value::Int(v) => Some((Biso(*v as f64), FoundUnlabeled)),
-            Value::Inapplicable => None, 
+            Value::Inapplicable => None,
         };
         return Ok(v);
     }
@@ -385,7 +385,8 @@ impl<'a> CIFContents<'a> {
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
 
-            let iso_adp = extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
+            let iso_adp =
+                extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
             let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table)?;
             let adp = match (iso_adp, aniso_adp) {
                 (Some((_iso_adp, how_found)), Some(aniso_adp)) => {
@@ -398,7 +399,7 @@ impl<'a> CIFContents<'a> {
                         FoundLabeled => {
                             warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP, because ADP is labeled as isotropic in site table.", p = self.file_path.unwrap_or("in-mem"));
                             Some(_iso_adp)
-                        },
+                        }
                     }
                 }
                 (Some((iso_adp, _)), None) => Some(iso_adp),
@@ -406,7 +407,11 @@ impl<'a> CIFContents<'a> {
                 (None, None) => None,
             };
 
-            debug!("{p}: site '{label}': got atomic displacement parameter of type {k}", p=self.file_path.unwrap_or("in-mem"), k=adp.as_ref().map(|x| x.fmt_kind()).unwrap_or("None"));
+            debug!(
+                "{p}: site '{label}': got atomic displacement parameter of type {k}",
+                p = self.file_path.unwrap_or("in-mem"),
+                k = adp.as_ref().map(|x| x.fmt_kind()).unwrap_or("None")
+            );
 
             let coords = coords.map(|x| {
                 for frac in IMPORTANT_FRACTIONS {
@@ -839,7 +844,7 @@ B 2.0(32) 1.0 test",
     #[test]
     fn parse_text_field() {
         let mut p = CifParser::new(
-            "_test 
+            "_test
 ;
 Test Test Test
 test test
@@ -896,7 +901,7 @@ He2- '-2'
 loop_
 _a
 _b
-hello 1.0 
+hello 1.0
 hell  -2";
         use Value::*;
 
@@ -936,7 +941,7 @@ He2- 2.
 loop_
 _a
 _b
-hello 1.0 
+hello 1.0
 hell  -2";
         use Value::*;
 
