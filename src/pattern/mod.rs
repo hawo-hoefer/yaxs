@@ -13,7 +13,7 @@ use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::{
     e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
-    scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
+    scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
 };
 use crate::noise::Noise;
 use crate::structure::Structure;
@@ -388,6 +388,11 @@ impl VFGenerator {
 }
 
 pub fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
+    // TODO: revisit lorentz polarization. currently, we assume no polarization due to
+    // monochromator. is that correct?
+    // let lorentz_factor = 1.0 / (4.0 * theta_rad.sin().powi(2) * theta_rad.cos());
+    // let polarization_factor = 0.5 * (1.0 + (2.0 * theta_rad).cos().powi(2));
+
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
@@ -432,14 +437,8 @@ pub trait Discretizer {
         // math or extra memory allocation
         self.bkg().render(intensities, positions);
 
-        for PeakRenderParams {
-            pos,
-            intensity,
-            fwhm,
-            eta,
-        } in self.peak_info_iterator()
-        {
-            render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
+        for p in self.peak_info_iterator() {
+            p.render(positions, intensities, abstol)
         }
 
         if let Some(noise) = self.noise() {
@@ -471,57 +470,104 @@ pub struct Peak {
 }
 pub type Peaks = Box<[Peak]>;
 
-pub fn render_peak(
-    pos: f32,
-    weight: f32,
-    fwhm: f32,
-    eta: f32,
-    abstol: f32,
-    xs: &[f32],
-    ys: &mut [f32],
-) {
-    let n = xs.len();
-    let midpoint = ((pos - xs[0]) / (xs[n - 1] - xs[0]) * n as f32) as usize;
+impl PeakRenderParams {
+    pub fn render(self, xs: &[f32], ys: &mut [f32], abstol: f32) {
+        let n = xs.len();
+        let midpoint = ((self.pos - xs[0]) / (xs[n - 1] - xs[0]) * n as f32) as usize;
 
-    let mut i = midpoint;
-    if i > n - 1 {
-        i = n - 1
+        let mut i = midpoint;
+        if i > n - 1 {
+            i = n - 1
+        }
+
+        // left half
+        loop {
+            let dx = xs[i] - self.pos;
+            let di = self.intensity * pseudo_voigt(dx, self.eta, self.fwhm);
+            if di < abstol {
+                break;
+            }
+            ys[i] += di;
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+        }
+
+        // right half
+        i = midpoint + 1;
+        while i < n {
+            let dx = xs[i] - self.pos;
+            let di = self.intensity * pseudo_voigt(dx, self.eta, self.fwhm);
+            if di < abstol {
+                break;
+            }
+            ys[i] += di;
+            i += 1;
+        }
+    }
+}
+
+/// Compute Pseudo-Voigt eta from gaussian and pseudo-voigt fwhms
+///
+/// use the approximation given in equation 2 of
+///
+/// Thompson, P., D. E. Cox, and J. B. Hastings.
+/// "Rietveld refinement of Debye–Scherrer synchrotron X-ray data from Al2O3."
+/// Applied Crystallography 20.2 (1987): 79-83.
+///
+/// https://doi.org/10.1107/s0021889887087090
+///
+/// * `pv_fwhm`: pseudo-voigt fwhm
+/// * `g_fwhm`: gaussian fwhm
+fn compute_pv_eta(pv_fwhm: f64, l_fwhm: f64) -> f64 {
+    let mut eta = 0.0;
+
+    let frac = l_fwhm / pv_fwhm;
+    let mut pf = 1.0;
+    for coef in [1.36603, -0.47719, 0.11116] {
+        pf *= frac;
+        eta += coef * pf;
     }
 
-    // left half
-    loop {
-        let dx = xs[i] - pos;
-        let di = weight * pseudo_voigt(dx, eta, fwhm);
-        if di < abstol {
-            break;
-        }
-        ys[i] += di;
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
+    return eta;
+}
 
-    // right half
-    i = midpoint + 1;
-    while i < n {
-        let dx = xs[i] - pos;
-        let di = weight * pseudo_voigt(dx, eta, fwhm);
-        if di < abstol {
-            break;
-        }
-        ys[i] += di;
-        i += 1;
+/// Compute the pseudo-voigt fwhm from fwhms of the gaussian and
+/// lorentzian components
+///
+/// uses the approximation in equation 3 of
+///
+/// Thompson, P., D. E. Cox, and J. B. Hastings.
+/// "Rietveld refinement of Debye–Scherrer synchrotron X-ray data from Al2O3."
+/// Applied Crystallography 20.2 (1987): 79-83.
+///
+/// https://doi.org/10.1107/s0021889887087090
+///
+///
+/// * `g_fwhm`: gaussian fwhm
+/// * `l_fwhm`: lorentzian fwhm
+fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
+    let mut x = g_fwhm.powi(5);
+    let mut sum = 0.0;
+    for coef in [1.0, 2.69269, 2.42843, 4.47163, 0.07842, 1.0] {
+        sum += coef * x;
+        x = x / g_fwhm * l_fwhm;
     }
+    sum.powf(0.2)
+}
+
+fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
+    let pv_fwhm = compute_pv_fwhm(g_fwhm, l_fwhm);
+    (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
 }
 
 impl Peak {
     /// Get ADXRD Peak location, intensity and fwhm
     ///
     /// * `wavelength_nm`: X-ray wavelength
-    /// * `u`: caglioti u parameter
-    /// * `v`: caglioti v parameter
-    /// * `w`: caglioti w parameter
+    /// * `caglioti`: Caglioti instrument parameters for gaussian line broadening
+    /// * `eta_size_broadening`: gaussian-lorentzian mixing parameter for size broadening
     /// * `mean_ds_nm`: mean domain size in nanometers
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
     ///   emission line's relative intensity)
@@ -530,21 +576,54 @@ impl Peak {
         &self,
         wavelength_nm: f64,
         caglioti: &Caglioti,
+        eta_size_broadening: f64,
         mean_ds_nm: f64,
         weight: f64,
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
-    ) -> (f32, f32, f32) {
+    ) -> PeakRenderParams {
         // bragg condition
         // lambda = 2 d sin(theta)
         // theta = asin(lambda / 2d)
         let wavelength_ams = wavelength_nm * 10.0;
         let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
         let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
-        let fwhm = caglioti.broadening(theta_hkl_rad)
-            + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+
+        let mustrain = 1e-3;
+
+        // use names from GSAS for now
+        // size and microstrain broadening fwhms
+        let sgam = scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+        let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
+
+        let eta_mustrain_broadening = 1.0;
+        let eta_size_broadening = 0.0;
+
+        // FWHM = sqrt(8 ln 2) sigma
+        // sigma^2 = FWHM^2 / 8 ln 2
+        #[rustfmt::skip]
+        let mut sample_g_fwhm_sq = (sgam * (1.0 -     eta_size_broadening)).powi(2)
+                                 + (mgam * (1.0 - eta_mustrain_broadening)).powi(2);
+        sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
+        let sample_l_fwhm = sgam * eta_size_broadening + mgam * eta_mustrain_broadening;
+
+        // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
+        let g_fwhm_sq = (caglioti.sigma_brd(theta_hkl_rad) + sample_g_fwhm_sq).max(0.0000001);
+
+        // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
+        // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
+        // of theta
+        let x = 0.0;
+        let y = 0.0;
+        let z = 0.0;
+        let l_fwhm = x / theta_hkl_rad.cos() + y * theta_hkl_rad.tan() + sample_l_fwhm + z;
+        let l_fwhm = l_fwhm.max(0.00001);
+
+        let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
+
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 
+        // TODO: sample displacement should be computed first
         let sd_delta_two_theta_rad = sample_displacement_delta_two_theta_rad(
             sample_displacement_mu_m,
             goniometer_radius_mm,
@@ -552,7 +631,20 @@ impl Peak {
         );
 
         let two_theta_hkl_deg = (2.0 * theta_hkl_rad + sd_delta_two_theta_rad).to_degrees() as f32;
-        (two_theta_hkl_deg, peak_weight, fwhm as f32)
+
+        if wavelength_ams < 1.544 {
+            println!(
+                "{:.3} {:.4} {:.4}",
+                two_theta_hkl_deg, eta, fwhm
+            );
+        }
+
+        PeakRenderParams {
+            pos: two_theta_hkl_deg,
+            intensity: peak_weight,
+            fwhm: fwhm as f32,
+            eta: eta as f32,
+        }
     }
 
     /// Get EDXRD Peak location, intensity and fwhm
@@ -623,16 +715,16 @@ where
 
     // actual rendering of the patterns
     cfg_if! {
-        if #[cfg(feature = "cpu-only")] {
-            let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
-            for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
-                job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
-            }
-        } else {
+        if #[cfg(feature = "use-gpu")] {
             use crate::discretize_cuda::discretize_peaks_cuda;
             let intensities = discretize_peaks_cuda(jobs, two_thetas)?;
             let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
                 .expect("sizes must match");
+        } else {
+            let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
+            for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
+                job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+            }
         }
     };
 

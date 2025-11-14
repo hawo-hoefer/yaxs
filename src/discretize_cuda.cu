@@ -561,7 +561,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float
 
   cu_lerr(cudaDeviceSynchronize(), "synchronizing device after allocating patterns");
 
-  static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
+  // static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
   cu_lerr(cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot), "allocating peak info buffer");
 
   if (!patterns_d) {

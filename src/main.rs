@@ -26,12 +26,12 @@ use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, VFGenerato
 #[command(
     version = env!("YAXS_VERSION"),
     about = "Simulate a dataset of XRD patterns from YAML config.",
-    long_about = if cfg!(feature="cpu-only") {
-        "YaXS simulates XRD patterns from CIF
-CPU-only build: This may be much slower than GPU with support."
-    } else {
+    long_about = if cfg!(feature="use-gpu") {
         "YaXS simulates XRD patterns from CIF
 GPU-accelerated build: CUDA-based peak rendering."
+    } else {
+        "YaXS simulates XRD patterns from CIF
+CPU-only build: This may be much slower than the GPU-accelerated build."
     }
 )]
 struct Cli {
@@ -256,18 +256,18 @@ fn main() {
                                 .unwrap_or(Caglioti::zero());
 
                             let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
-
-                            let (pos, intens, fwhm) = p.get_adxrd_render_params(
+                            let rp = p.get_adxrd_render_params(
                                 wavelength_ams / 10.0,
                                 &caglioti,
+                                0.5,
                                 mean_ds_nm,
                                 1.0,
                                 sd,
                                 ad.goniometer_radius_mm,
                             );
 
-                            let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
-                            (pos, intens)
+                            let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
+                            (rp.pos, intens)
                         }
                         SimulationKind::EnergyDispersive(energy_dispersive) => {
                             let theta_rad = energy_dispersive.theta_deg.to_radians();

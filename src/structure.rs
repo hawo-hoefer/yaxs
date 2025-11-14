@@ -767,6 +767,7 @@ mod test {
     use super::*;
     use crate::cif::CifParser;
     use crate::pattern::adxrd::Caglioti;
+    use crate::pattern::PeakRenderParams;
 
     #[test]
     #[rustfmt::skip]
@@ -873,9 +874,9 @@ loop_
         let peaks = peaks
             .iter()
             .map(|peak| {
-                let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 100.0, 1.0, 0.0, 180.0);
-                (pos, intens)
+                let PeakRenderParams { pos, intensity, .. } =
+                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 1.0, 100.0, 1.0, 0.0, 180.0);
+                (pos, intensity)
             })
             .collect_vec();
         for ((s_pos, _), (a_pos, _)) in peaks.iter().zip(FM3M_EXPECTED) {
@@ -894,9 +895,9 @@ loop_
         let mut peaks = peaks
             .iter()
             .map(|peak| {
-                let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 100.0, 1.0, 0.0, 180.0);
-                (pos, intens)
+                let PeakRenderParams { pos, intensity, .. } =
+                    peak.get_adxrd_render_params(0.071, &Caglioti::zero(), 1.0, 100.0, 1.0, 0.0, 180.0);
+                (pos, intensity)
             })
             .collect_vec();
         let max_peak = peaks

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BackgroundSpec {
-    None,
     Chebyshev {
         coefs: Vec<Parameter<f32>>,
         scale: Parameter<f32>,
@@ -19,7 +18,6 @@ pub enum BackgroundSpec {
 impl BackgroundSpec {
     pub fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
-            BackgroundSpec::None => Background::None,
             BackgroundSpec::Chebyshev { ref coefs, scale } => {
                 let mut coef = Vec::<f32>::with_capacity(coefs.len());
                 for param in coefs.iter() {

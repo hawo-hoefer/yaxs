@@ -14,7 +14,7 @@ pub mod structure;
 pub mod symop;
 pub mod scatter;
 
-#[cfg(not(feature = "cpu-only"))]
+#[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;
 
 #[allow(clippy::uninit_vec)]

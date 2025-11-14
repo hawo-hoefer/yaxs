@@ -1,6 +1,4 @@
-use super::{
-    render_peak, DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator,
-};
+use super::{DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator};
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -57,11 +55,11 @@ impl Caglioti {
     }
 
     /// Calculate Caglioti broadening for a position
-    /// $FWHM(\theta) = u \tan(\theta)^2 + v \tan(\theta) + w$
+    /// $FWHM(\theta)^2 = u \tan(\theta)^2 + v \tan(\theta) + w$
     ///
     /// * `theta`: theta in radians
-    pub fn broadening(&self, theta: f64) -> f64 {
-        self.u * (theta).tan().powi(2) + self.v * theta.tan() + self.w
+    pub fn sigma_brd(&self, theta: f64) -> f64 {
+        self.u * theta.tan().powi(2) + self.v * theta.tan() + self.w
     }
 }
 
@@ -93,20 +91,15 @@ impl Discretizer for DiscretizeAngleDispersive {
                 self.common.sim_res.all_simulated_peaks[idx]
                     .iter()
                     .map(move |peak| {
-                        let (two_theta_hkl_deg, peak_weight, fwhm) = peak.get_adxrd_render_params(
+                        peak.get_adxrd_render_params(
                             wavelength_nm,
                             caglioti,
+                            *eta,
                             *phase_mean_ds_nm,
                             vf * emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
-                        );
-                        PeakRenderParams {
-                            pos: two_theta_hkl_deg,
-                            intensity: peak_weight,
-                            fwhm,
-                            eta: *eta as f32,
-                        }
+                        )
                     })
             })
             .chain(
@@ -116,22 +109,16 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .cartesian_product(&self.emission_lines)
                     .map(move |(ip, emission_line)| {
                         let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                        let (two_theta_hkl_deg, _, fwhm) = ip.peak.get_adxrd_render_params(
+                        ip.peak.get_adxrd_render_params(
                             wavelength_nm,
                             caglioti,
+                            *eta,
                             ip.mean_ds_nm,
                             emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
-                        );
-                        let peak_weight = ip.peak.i_hkl * emission_line.weight;
-                        PeakRenderParams {
-                            pos: two_theta_hkl_deg,
-                            intensity: peak_weight as f32,
-                            fwhm,
-                            eta: ip.eta as f32,
-                        }
-                    }),
+                        )
+                    })
             )
     }
 
@@ -274,33 +261,6 @@ impl Discretizer for DiscretizeAngleDispersive {
 
     fn noise(&self) -> &Option<Noise> {
         &self.common.noise
-    }
-
-    fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
-        for PeakRenderParams {
-            pos,
-            intensity,
-            fwhm,
-            eta,
-        } in self.peak_info_iterator()
-        {
-            render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
-        }
-
-        self.bkg().render(intensities, positions);
-        if let Some(noise) = self.noise() {
-            noise.apply(intensities, self.seed());
-        }
-
-        if self.normalize() {
-            // TODO: check for NaNs and normalization
-            let f = *intensities.first().unwrap();
-            let vmin = intensities.iter().fold(f, |a, b| f32::min(a, *b));
-            let vmax = intensities.iter().fold(f, |a, b| f32::max(a, *b));
-            intensities.iter_mut().for_each(|x| {
-                *x = (*x - vmin) / (vmax - vmin);
-            });
-        }
     }
 }
 

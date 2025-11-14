@@ -2,7 +2,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo::rerun-if-changed=src/discretize_cuda.cu");
-    if !cfg!(feature = "cpu-only") {
+    if cfg!(feature = "use-gpu") {
         #[rustfmt::skip]
         cc::Build::new()
             .cuda(true)

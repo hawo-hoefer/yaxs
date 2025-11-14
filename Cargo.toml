@@ -32,4 +32,5 @@ cc = { version = "1.0", features = ["parallel"] }
 debug = true
 
 [features]
-cpu-only = []
+default = ["use-gpu"]
+use-gpu = []

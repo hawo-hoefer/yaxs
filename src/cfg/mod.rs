@@ -27,7 +27,9 @@ use serde::{Deserialize, Serialize};
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, Caglioti, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
+use crate::pattern::{
+    get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
+};
 use crate::preferred_orientation::MarchDollase;
 use crate::structure::{Strain, Structure};
 
@@ -161,7 +163,7 @@ pub struct AngleDispersive {
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
     pub caglioti: Option<CagliotiCfg>,
-    pub background: BackgroundSpec,
+    pub background: Option<BackgroundSpec>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,14 +185,13 @@ impl CagliotiCfg {
         let mut u = self.u.generate(rng);
         let mut v = self.v.generate(rng);
         let mut w = self.w.generate(rng);
-        use std::f64::consts::LN_2;
 
         match self.kind.unwrap_or(CagliotiKind::Raw) {
             CagliotiKind::Raw => (),
             CagliotiKind::GSAS => {
-                u = 8.0 * LN_2 * u / 10000.0;
-                v = 8.0 * LN_2 * v / 10000.0;
-                w = 8.0 * LN_2 * w / 10000.0;
+                u /= 10000.0;
+                v /= 10000.0;
+                w /= 10000.0;
             }
         }
 
@@ -327,7 +328,11 @@ impl ToDiscretize {
             struct_ids,
         } = self.sample_parameters.generate(rng);
 
-        let background = background.generate_bkg(rng);
+        let background = background
+            .as_ref()
+            .map(|x| x.generate_bkg(rng))
+            .unwrap_or(crate::background::Background::None);
+
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
         let vol_fractions = vf_generator.generate(rng);
