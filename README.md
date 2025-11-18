@@ -89,3 +89,4 @@ Further information on the input file structure can be found [here](./inputfile.
     - figure out if I want to do that somehow
     - low priority
 - [ ] fix 'invalid resource handle' bug in CUDA when compiling with rustc 1.89
+- [ ] surface roughness intensity correction Suortti (J. Appl. Cryst, 5,325-331, 1972)
