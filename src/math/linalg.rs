@@ -607,8 +607,8 @@ impl<T> Mat<T, 4, 4> {
 
         let mut ret = Mat3::zeros();
 
-        for r in 0..rhs.rows() {
-            for c in 0..rhs.cols() {
+        for r in 0..ret.rows() {
+            for c in 0..ret.cols() {
                 ret[(r, c)] = r_[(r, c)];
             }
         }
