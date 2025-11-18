@@ -21,6 +21,30 @@ pub type Vec4<T> = ColVec<T, 4>;
 pub type Mat3<T> = Mat<T, 3, 3>;
 pub type Mat4<T> = Mat<T, 4, 4>;
 
+impl<T, const ROWS: usize, const COLS: usize> std::fmt::Display for Mat<T, ROWS, COLS>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = f.precision().to_owned().unwrap_or(3);
+        let w = f.width().to_owned().unwrap_or(6);
+        write!(f, "Mat{ROWS}x{COLS}([\n")?;
+        for row in 0..ROWS {
+            write!(f, "  [")?;
+            for col in 0..COLS {
+                write!(f, "{v:w$.*}", p, w = w, v = self[(row, col)])?;
+                if col != COLS - 1 {
+                    f.write_str(", ")?;
+                }
+            }
+            f.write_str("],\n")?;
+        }
+        f.write_str("])")?;
+
+        Ok(())
+    }
+}
+
 impl<T, const ROWS: usize> std::ops::Index<usize> for ColVec<T, ROWS> {
     type Output = T;
 
