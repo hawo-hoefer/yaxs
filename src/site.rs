@@ -30,12 +30,7 @@ impl AtomicDisplacement {
                 x
             }
             AtomicDisplacement::Uani(u) => {
-                let mut t = 0.0;
-                for j in 0..3 {
-                    for l in 0..3 {
-                        t += h[j] * u[(j, l)] * h[l];
-                    }
-                }
+                let t = h.transpose().matmul(u).matmul(h)[0];
                 (-2.0 * PI * PI * t).exp()
             }
             AtomicDisplacement::Bani(b) => {
