@@ -149,4 +149,10 @@ coefs: [0.1, [1.2, 0.8], 0.8]
         let _err =
             serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
     }
+
+    #[test]
+    fn deserialize_parameter_enum_should_fail() {
+        let _err =
+            serde_yaml::from_str::<Parameter<f64>>("[-0.0, -0.25]").expect_err("invalid range");
+    }
 }

@@ -466,3 +466,20 @@ impl ToDiscretize {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn deser_instrument_param() {
+        let _err = serde_yaml::from_str::<InstrumentParameterCfg>(
+            "
+u: [0.0, -0.25]
+v: [-0.25, 0.0]
+w: [0.0, -0.25]
+",
+        )
+        .expect_err("invalid range parameters");
+    }
+}
