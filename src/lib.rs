@@ -13,6 +13,7 @@ pub mod site;
 pub mod species;
 pub mod structure;
 pub mod symop;
+pub mod lattice;
 
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;

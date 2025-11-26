@@ -2,7 +2,7 @@ use crate::math::linalg::Vec3;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
-use crate::structure::Lattice;
+use crate::lattice::Lattice;
 
 const HKL_NORM_TOL: f64 = 1e-3;
 
