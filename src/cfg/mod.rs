@@ -144,7 +144,7 @@ impl SimulationKind {
         }
 
         debug!("d-spacing range: [{},{}]", min_r, max_r);
-        crate::structure::simulate_peaks(
+        crate::peak_sim::simulate_peaks(
             (min_r, max_r),
             sample_parameters,
             structures,

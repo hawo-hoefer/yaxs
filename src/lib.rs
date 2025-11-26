@@ -15,6 +15,7 @@ pub mod structure;
 pub mod symop;
 pub mod lattice;
 pub mod strain;
+pub mod peak_sim;
 
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;
