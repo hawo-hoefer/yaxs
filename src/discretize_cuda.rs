@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use log::{debug, error, info};
 
+use crate::background::cheb2poly;
 use crate::background::Background;
 use crate::noise::Noise;
 use crate::pattern::{DiscretizeSample, Discretizer, PeakRenderParams};
@@ -34,6 +35,7 @@ mod ffi {
                 file: *const c_char,
                 line: c_int,
                 msg: *const c_char,
+                cuda_err_code: c_int,
                 cuda_err: *const c_char,
             ),
             info_print_handle: extern "C" fn(msg: *const c_char),
@@ -161,12 +163,14 @@ extern "C" fn c_error_handler(
     _file: *const c_char,
     _line: c_int,
     msg: *const c_char,
+    cuda_err_code: c_int,
     cuda_err: *const c_char,
 ) {
     let msg = unsafe { CStr::from_ptr(msg) };
     let cuda_err = unsafe { CStr::from_ptr(cuda_err) };
     error!(
-        "CUDA Error while {}: {}",
+        "CUDA Error {} while {}: {}",
+        cuda_err_code,
         msg.to_str().expect("valid utf-8"),
         cuda_err.to_str().expect("valid utf-8")
     );
@@ -242,13 +246,11 @@ where
     let (mut bkg_soa, normalize) = {
         let soa = match fjob.bkg() {
             Background::None => BkgSOA::None,
-            Background::Polynomial {
-                poly_coef: ref coef,
-                ..
-            } => {
+            Background::Chebyshev { ref coef, .. } => {
                 bkg_scales.reserve_exact(num_peak_sets);
+                let poly = cheb2poly(coef);
                 BkgSOA::Polynomial {
-                    degree: coef.len(),
+                    degree: poly.len(),
                     all_coef: Vec::with_capacity(coef.len() * num_peak_sets),
                 }
             }
@@ -266,12 +268,14 @@ where
         match (job.bkg(), &mut bkg_soa) {
             (Background::None, BkgSOA::None) => (),
             (
-                Background::Polynomial { poly_coef, scale },
+                Background::Chebyshev { coef, scale },
                 BkgSOA::Polynomial {
-                    degree,
+                    degree: _,
                     ref mut all_coef,
                 },
-            ) if *degree == poly_coef.len() => {
+            ) => {
+                let poly_coef = cheb2poly(coef);
+                // TODO: check for scale matching
                 bkg_scales.push(*scale);
                 all_coef.extend(poly_coef);
             }

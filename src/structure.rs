@@ -11,7 +11,9 @@ use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
+use crate::scatter::Scatter;
 use crate::site::Site;
+use crate::species::Atom;
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -33,13 +35,14 @@ pub struct Structure {
     pub density: Option<f64>,
 }
 
-impl TryFrom<&CIFContents> for Structure {
+impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     type Error = String;
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
+        let lattice = value.get_lattice();
         Ok(Structure {
             sites: value.get_sites()?,
-            lat: value.get_lattice(),
+            lat: lattice,
             density: value.get_density()?,
             sg_no,
             sg_class,
@@ -164,40 +167,59 @@ impl Structure {
         ret
     }
 
+    pub fn structure_factor(
+        &self,
+        hkl: Vec3<f64>,
+        pos: Vec3<f64>,
+        d_hkl: f64,
+        scattering_parameters: &HashMap<Atom, Scatter>,
+    ) -> Complex<f64> {
+        let mut f_hkl = Complex::new(0.0, 0.0);
+
+        // n lambda = 2 d sin(theta) | n = 1
+        // lambda = 2 d sin(theta)
+        // 1 / (2 d) = sin(theta) / lambda
+        let sin_theta_over_lambda = 1.0 / (2.0 * d_hkl);
+
+        for site in &self.sites {
+            // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
+            let g_dot_r: f64 = site.coords.dot(&hkl);
+            let dw_factor = site
+                .displacement
+                .as_ref()
+                .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
+                .unwrap_or(1.0);
+
+            for atom in &site.species {
+                let scatter = &scattering_parameters[atom];
+                let fs = scatter.eval(sin_theta_over_lambda);
+
+                // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
+                let f_part = fs
+                    * site.occu
+                    * dw_factor
+                    * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
+                f_hkl += f_part;
+            }
+        }
+        f_hkl
+    }
+
     pub fn get_hkl_intensities_spacings(
         &self,
         min_r: f64,
         max_r: f64,
+        scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<(Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
         let mut agg = Vec::new();
-        for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
-            let s = g_hkl / 2.0;
-            let s2 = s.powi(2);
+        for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let d_hkl = 1.0 / g_hkl;
 
-            let mut f_hkl = Complex::new(0.0, 0.0);
-            // TODO: Debye-Waller Correction
-            // (we ignore it for now, in the test data we don't have DW-factors)
-            // dw_correction = np.exp(-dw_factors * s2)
-            let dw_correction = 1.0;
-
-            for site in &self.sites {
-                // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
-                let g_dot_r: f64 = site.coords.dot(&hkl);
-                for species in &site.species {
-                    let fs = species.el.scattering_factor(s2);
-
-                    // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    let f_part =
-                        fs * site.occu * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
-                    f_hkl += f_part;
-                }
-            }
-            f_hkl *= dw_correction;
+            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
             let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
 
-            let d_hkl = 1.0 / g_hkl;
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
             agg.push((hkl, i_hkl, d_spacing));
         }
@@ -264,6 +286,7 @@ impl Structure {
                 }),
             }
         }
+
         let volume = self.lat.volume();
         for peak in compressed.iter_mut() {
             peak.i_hkl /= volume.powi(2);
@@ -284,33 +307,14 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         alignment: Option<Alignment<'a>>,
+        scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        for (hkl, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
-            let hkl = hkl.map(|x| *x as f64);
-            let s = g_hkl / 2.0;
-            let s2 = s.powi(2);
-
-            let mut f_hkl = Complex::new(0.0, 0.0);
-            // TODO: Debye-Waller Correction
-            // (we ignore it for now, in the test data we don't have DW-factors)
-            // dw_correction = np.exp(-dw_factors * s2)
-            let dw_correction = 1.0;
-
-            for site in &self.sites {
-                // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
-                let g_dot_r: f64 = site.coords.dot(&hkl);
-                for species in &site.species {
-                    let fs = species.el.scattering_factor(s2);
-
-                    // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    let f_part =
-                        fs * site.occu * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
-                    f_hkl += f_part;
-                }
-            }
-            f_hkl *= dw_correction;
+        // TODO: update this to use the new version
+        for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let d_hkl = 1.0 / g_hkl;
+            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
@@ -344,11 +348,12 @@ impl Structure {
         wavelength_ams: f64,
         two_theta_range: &(f64, f64),
         alignment: Option<Alignment<'a>>,
+        scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, alignment)
+        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -361,6 +366,7 @@ impl Structure {
         theta_deg: f64,
         energy_kev_range: &(f64, f64),
         alignment: Option<Alignment<'a>>,
+        scattering_parameters: &mut HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
         let lambda_1 = e_kev_to_lambda_ams(energy_kev_range.0);
@@ -370,7 +376,20 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, alignment)
+        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
+    }
+
+    pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
+        for site in self.sites.iter() {
+            for atom in &site.species {
+                if !scattering_parameters.contains_key(atom) {
+                    let scatter = atom.scattering_params().expect(
+                        format!("Could not find atomic scattering parameter for {atom}").as_str(),
+                    );
+                    scattering_parameters.insert(atom.clone(), scatter);
+                }
+            }
+        }
     }
 }
 
@@ -379,6 +398,8 @@ mod test {
     use super::*;
     use crate::cif::CifParser;
     use crate::lattice::Lattice;
+    use crate::pattern::adxrd::InstrumentParameters;
+    use crate::pattern::PeakRenderParams;
 
     #[test]
     #[rustfmt::skip]
@@ -395,6 +416,7 @@ mod test {
         assert_eq!(hkls, 26);
 
         let mut iter = lat.iter_hkls(0.0, 15.0)
+            .map(|(hkl, _, g_hkl)| (hkl, g_hkl))
             .sorted_by_key(|(hkl, g_hkl)| (
                 NotNan::new(*g_hkl).unwrap(),
                 NotNan::new(hkl[0]).unwrap(),
@@ -469,24 +491,27 @@ loop_
 
     const FM3M_EXPECTED: [(f32, f32); 4] = [
         (19.70066419257163, 1.0),
-        (22.786339661733468, 0.4864883706070105),
-        (32.444550987327624, 0.302926682750686),
-        (38.244378463227896, 0.33030941984707324),
+        (22.786339661733468, 0.488065),
+        (32.444550987327624, 0.30115674),
+        (38.244378463227896, 0.3261041),
     ];
 
     #[test]
     fn fm3m_simulation_positions() {
-        let d = CifParser::new(&FM3M_CIF_DATA)
-            .parse()
-            .expect("valid cif contents");
+        let mut p = CifParser::new(&FM3M_CIF_DATA);
+        let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let mut sp_c = HashMap::new();
+        s.gather_scattering_params(&mut sp_c);
+
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &sp_c);
         let peaks = peaks
             .iter()
             .map(|peak| {
-                let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
-                (pos, intens)
+                #[rustfmt::skip]
+                let PeakRenderParams { pos, intensity, .. } =
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0);
+                (pos, intensity)
             })
             .collect_vec();
         for ((s_pos, _), (a_pos, _)) in peaks.iter().zip(FM3M_EXPECTED) {
@@ -497,18 +522,28 @@ loop_
 
     #[test]
     fn fm3m_simulation_intensities() {
-        let d = CifParser::new(&FM3M_CIF_DATA)
-            .parse()
-            .expect("valid cif contents");
+        let mut p = CifParser::new(&FM3M_CIF_DATA);
+        let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
+        let mut sp_c = HashMap::new();
+        s.gather_scattering_params(&mut sp_c);
 
-        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None);
+        let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &sp_c);
         let mut peaks = peaks
             .iter()
             .map(|peak| {
-                let (pos, intens, _) =
-                    peak.get_adxrd_render_params(0.071, 0.0, 0.0, 0.0, 100.0, 1.0, 0.0, 180.0);
-                (pos, intens)
+                let PeakRenderParams { pos, intensity, .. } = peak.get_adxrd_render_params(
+                    0.071,
+                    &InstrumentParameters::zero(),
+                    100.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    180.0,
+                );
+                (pos, intensity)
             })
             .collect_vec();
         let max_peak = peaks

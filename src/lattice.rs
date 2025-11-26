@@ -34,7 +34,7 @@ impl Lattice {
             .abs()
     }
 
-    fn abc(&self) -> Vec3<f64> {
+    pub fn abc(&self) -> Vec3<f64> {
         let mut values = [0.0; 3];
         for i in 0..self.mat.rows() {
             values[i] = self.mat.row(i).magnitude();
@@ -46,7 +46,7 @@ impl Lattice {
         &'a self,
         min_r: f64,
         max_r: f64,
-    ) -> impl Iterator<Item = (Vec3<f64>, f64)> + use<'a> {
+    ) -> impl Iterator<Item = (Vec3<f64>, Vec3<f64>, f64)> + use<'a> {
         const RADIUS_TOL: f64 = 1e-8;
         let recip_lat = self.recip_lattice_crystallographic();
         let recp_len = recip_lat.recip_lattice().abc();
@@ -81,7 +81,7 @@ impl Lattice {
                         .map(|&x| (x > global_min) && (x < global_max))
                         .all(|x| x)
                 {
-                    Some((hkl, g_hkl))
+                    Some((hkl, pos, g_hkl))
                 } else {
                     None
                 }
@@ -104,4 +104,3 @@ impl std::fmt::Display for Lattice {
         writeln!(f, ")")
     }
 }
-

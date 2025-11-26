@@ -65,9 +65,10 @@ kind: !AngleDispersive
   noise: !Gaussian                      # ignored for now
     sigma_min: 0.0
     sigma_max: 1.0
-  caglioti:                             # caglioti parameters of the device
-    u: 0.0
-    v: 0.0
+  caglioti:                             # Optional caglioti parameters of the device
+    kind: Raw                           # Mode for Caglioti parameters, Raw or GSAS
+    u: 0.0                              # GSAS is a GSASII-Compatibility mode,  
+    v: 0.0                              # as they multiply each parameter by 8 ln(2) / 10000
     w: 0.0
   background: !Chebyshev                # background type and parameters
     coefs:                              # chebyshev coefficient ranges
@@ -91,6 +92,20 @@ kind: !AngleDispersive
   #   scale: [200, 800]
 ```
 
+### Caglioti Parameters
+In ADXRD Simulation, Caglioti Parameters may be optionally specified using the 
+`caglioti`-key. 
+They can be used to specify the instrumental line broadening $\Delta$ using the Caglioti function
+$$
+    \Delta = u \tan^2\theta + v * \tan\theta + w.
+$$
+Additionally, the Caglioti kind may be specified as `Raw` or `GSAS` (defaults to `Raw`). 
+This indicates to use the definition of caglioti parameters according to the formula
+above (`Raw`) or do what GSASII does (`GSAS`). GSAS multiplies Caglioti parameters
+($u$, $v$, and $w$) by $8 \ln 2 / 10000$ before passing them to the Caglioti function.
+Should you want to compare yaxs-output patterns to GSASII simulations, either adjust 
+the Caglioti kind or $u$, $v$ and $w$ values.
+
 ## 2. Sample Parameters
 This section contains (physical) sample parameters, like the phase's domain sizes.
 They are shared for energy- and angle dispersive XRD simulation.
@@ -98,7 +113,7 @@ They are shared for energy- and angle dispersive XRD simulation.
 sample_parameters:
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
-  max_concentration_subset_dim: 4                       # (Optional) subsample the concentration space (all but max_concentration_subset_dim values are zeroed)
+  concentration_subset: 4                               # (Optional) subsample the concentration space (where some number of components will be set to zero)
   impurities:                                           # (Optional) list of specifications of impurity peaks
     - d_hkl_ams: [2.5, 3.5]                                 # impurity d-hkl in amstrong
       intensity: 1e2                                        # integral over peak
@@ -119,12 +134,14 @@ sample_parameters:
     - path: phase-3.cif
 ```
 ### Subsets
-If `max_concentration_subset_dim` is set to a value, a random number of composition components will be set
+If `concentration_subset` is set to a single value, a random number of composition components will be set
 to zero for each XRD pattern. The zeroed components respect fixed volume fractions. This allows sampling 
 of concentration subspaces and is useful for adding XRD patterns with large volume fractions if many 
 components are present in the dataset.
-`max_concentration_subset_dim` may be at most the number of phases. The program will error if it encounters
-larger values.
+The value may be at most the number of phases. The program will error if it encounters larger values.
+Alternatively, a list of weights for the subset dimension may be set. These must be larger than or
+equal to zero and sum to a number larger than zero. Each subset dimension will then be chosen with
+the adequate weight.
 
 ### Impurities
 The optional field `impurities` contains a list of impurity peaks. They may be used to specify extra peaks which occur in experimental samples but don't have a particular association with the phases of interest.
@@ -185,4 +202,16 @@ simulation_parameters:
   seed: 1234
   n_patterns: 10000
   abstol: 1e-2
+  randomly_scale_peaks:
+    scale: [0.5, 1.5]
+    probability: 0.5
 ```
+
+### Randomly Scale Peak Intensities
+Use the key `randomly_scale_peaks` to randomly scale peaks after structure simulation.
+Each for each structure, every peak will be scaled by the specified scale with 
+the specified probability. This will produce peaks which are not physically accuracte,
+but that may be beneficial for neural network training. This form of augmentation may
+make training for quantification more robust, as the network should in theory be pushed
+towards considering all peaks instead of only the largest few. Excessive (and non-balanced)
+scaling may also cause problems, so use at your own risk.

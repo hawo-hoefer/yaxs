@@ -2,7 +2,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo::rerun-if-changed=src/discretize_cuda.cu");
-    if !cfg!(feature = "cpu-only") {
+    if cfg!(feature = "use-gpu") {
         #[rustfmt::skip]
         cc::Build::new()
             .cuda(true)
@@ -14,31 +14,33 @@ fn main() {
             .flag("--generate-line-info")
             .flag("-gencode").flag("arch=compute_80,code=sm_80")
             .flag("-gencode").flag("arch=compute_86,code=sm_86")
+            .flag("-t0")
             .file("./src/discretize_cuda.cu")
             .compile("discretize_cuda");
     }
 
     let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
+        .args(["describe", "--tags"])
         .output()
         .expect("need git executable and ability to execute process");
-    let git_hash = String::from_utf8(output.stdout).expect("git hash is utf8");
-    let git_hash = git_hash.trim();
+    let git_desc = String::from_utf8(output.stdout).expect("git hash is utf8");
+    let git_desc = git_desc.trim();
+
     let output = Command::new("git")
         .args(["diff", "--quiet"])
         .output()
         .expect("needs to execute git diff");
+
     let version = if output
         .status
         .code()
         .expect("process needs to run successfully")
-        > 0
+        != 0
     {
-        // no unstaged changes not in worktree
-        format!("at commit: {git_hash} (unstaged changes)")
+        // unstaged changes in worktree
+        format!("{git_desc} (uncommitted changes)")
     } else {
-        format!("at commit: {git_hash} (unstaged changes)")
+        format!("{git_desc}")
     };
-    eprintln!("{}", version);
     println!("cargo::rustc-env=YAXS_VERSION={}", version);
 }

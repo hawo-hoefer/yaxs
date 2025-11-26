@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
-use log::warn;
+use log::{debug, warn};
 
-use crate::site::Site;
+use crate::site::{AtomicDisplacement, Site};
 use crate::species::Species;
 use crate::structure::SGClass;
 use crate::lattice::Lattice;
@@ -18,9 +18,32 @@ const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_a
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
+const IMPORTANT_FRACTIONS: [f64; 4] = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
+
+// in the cif-definition, the elements ase entered by row, and they use the top
+// right half of the symmetric matrix. In yaxs, we usually use the bottom left
+// half, so we change the order here to reflect that.
+const ANISO_ADP_U_LABELS: [&str; 6] = [
+    "_atom_site_aniso_U_11",
+    "_atom_site_aniso_U_12",
+    "_atom_site_aniso_U_22",
+    "_atom_site_aniso_U_13",
+    "_atom_site_aniso_U_23",
+    "_atom_site_aniso_U_33",
+];
+
+const ANISO_ADP_B_LABELS: [&str; 6] = [
+    "_atom_site_aniso_B_11",
+    "_atom_site_aniso_B_12",
+    "_atom_site_aniso_B_22",
+    "_atom_site_aniso_B_13",
+    "_atom_site_aniso_B_23",
+    "_atom_site_aniso_B_33",
+];
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
+    file_path: Option<String>,
     c: &'a str,
 }
 
@@ -31,6 +54,18 @@ pub enum Value {
     Float(f64),
     Int(i32),
     Text(String),
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Inapplicable => f.write_str("Inapplicable"),
+            Value::Unknown => f.write_str("Unknown"),
+            Value::Float(v) => write!(f, "Float({v})"),
+            Value::Int(v) => write!(f, "Integer({v})"),
+            Value::Text(v) => write!(f, "Text({v})"),
+        }
+    }
 }
 
 impl Value {
@@ -54,13 +89,195 @@ pub enum DataItem {
 }
 
 #[derive(Debug)]
-pub struct CIFContents {
+pub struct CIFContents<'a> {
     pub block_name: String,
     pub kvs: HashMap<String, Value>,
     pub tables: Vec<HashMap<String, Vec<Value>>>,
+    pub file_path: Option<&'a str>,
 }
 
-impl CIFContents {
+fn parse_matrix_from_symmetric_order_labels(
+    t: &Table,
+    mat_labels: &[&str; 6],
+    base_label: &str,
+    label: &str,
+    idx: usize,
+) -> Result<Mat3<f64>, String> {
+    let mut values = [0.0; 6];
+
+    for ((key, v), tgt) in mat_labels
+        .iter()
+        .map(|key| (key, t.get(*key).map(|x| &x[idx])))
+        .zip(values.iter_mut())
+    {
+        if let Some(v) = v {
+            *tgt = v.try_to_f64().map_err(|_| {
+                format!("Could not get {key} for {label}: Needs to be Integer or Float, got {v}.")
+            })?;
+        } else {
+            return Err(format!("Could not acquire anisotropic atomic displacement parameters. Could not find column '{key}' in table containing '{base_label}'"));
+        }
+    }
+
+    let [v11, v21, v22, v31, v32, v33] = values;
+    return Ok(Mat3::from_rows([
+        [v11, v21, v31],
+        [v21, v22, v32],
+        [v31, v32, v33],
+    ]));
+}
+fn extract_aniso_adp(
+    label: &str,
+    atom_site_aniso_table: Option<&Table>,
+) -> Result<Option<AtomicDisplacement>, String> {
+    let Some(atom_site_aniso_table) = atom_site_aniso_table else {
+        return Ok(None);
+    };
+
+    let mut idx = None;
+    for (i, site_label) in atom_site_aniso_table
+        .get("_atom_site_aniso_label")
+        .expect("we check this above")
+        .iter()
+        .enumerate()
+    {
+        match site_label {
+            Value::Text(v) => {
+                if v == label {
+                    idx = Some(i)
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Invalid type for _atom_site_aniso_label: Must be Text, got {site_label}"
+                ))
+            }
+        }
+    }
+
+    let Some(idx) = idx else {
+        // TODO: should this be ok?
+        return Ok(None);
+    };
+
+    let aniso_u_ident = ANISO_ADP_U_LABELS[0];
+    if atom_site_aniso_table.contains_key(aniso_u_ident) {
+        let mat = parse_matrix_from_symmetric_order_labels(
+            atom_site_aniso_table,
+            &ANISO_ADP_U_LABELS,
+            aniso_u_ident,
+            label,
+            idx,
+        )?;
+
+        return Ok(Some(AtomicDisplacement::Uani(mat)));
+    }
+
+    let aniso_b_ident = ANISO_ADP_B_LABELS[0];
+    if atom_site_aniso_table.contains_key(aniso_b_ident) {
+        let mat = parse_matrix_from_symmetric_order_labels(
+            atom_site_aniso_table,
+            &ANISO_ADP_B_LABELS,
+            aniso_b_ident,
+            label,
+            idx,
+        )?;
+
+        return Ok(Some(AtomicDisplacement::Bani(mat)));
+    }
+
+    let mut table_labels = String::from("[");
+    let n_keys = atom_site_aniso_table.len();
+    for (i, key) in atom_site_aniso_table.keys().enumerate() {
+        table_labels.push_str(key);
+
+        if i == n_keys - 1 {
+            table_labels.push_str("]");
+        } else {
+            table_labels.push_str(", ");
+        }
+    }
+
+    return Err(
+                format!("Could not extract anisotropic ADP from table with _atom_site_aniso_label. Currently, we only support anisotropic U and B parameters. Table contains labels {table_labels}"),
+            );
+}
+
+enum IsotropicDisplacementInFile {
+    FoundUnlabeled,
+    FoundLabeled,
+}
+
+fn extract_iso_adp(
+    index: usize,
+    label: &str,
+    site_table: &Table,
+    file_path: &str,
+) -> Result<Option<(AtomicDisplacement, IsotropicDisplacementInFile)>, String> {
+    use AtomicDisplacement::*;
+    use IsotropicDisplacementInFile::*;
+    let site_table_adp_type = site_table.get("_atom_site_adp_type").map(|x| &x[index]);
+    if let Some(Value::Text(v)) = site_table_adp_type {
+        return match v.as_str() {
+            "Uiso" => {
+                let v = site_table["_atom_site_U_iso_or_equiv"][index].try_to_f64()?;
+                Ok(Some((Uiso(v), FoundLabeled)))
+            },
+            "Biso" => {
+                let v = site_table.get("_atom_site_B_iso_or_equiv").ok_or(format!("Site {label} specified ADP 'Biso', but could not find '_atom_site_B_iso_or_equiv' in table."))?[index].try_to_f64()?;
+                Ok(Some((Biso(v), FoundLabeled)))
+            }
+            "Uovl" => unimplemented!("Parse atomic displacement parameter Uovl"),
+            "Umpe" => unimplemented!("Parse atomic displacement parameter Umpe"),
+            "Bovl" => unimplemented!("Parse atomic displacement parameter Bovl"),
+            "Uani" | "Bani" => return Ok(None), // if nothing is present here, try to parse anisotropic parameters
+            v => Err(format!("Unknown ADP type: '{v}'. Must be one of ['Uani', 'Uiso', 'Uovl', 'Umpe', 'Bani', 'Biso', 'Bovl']"))
+        };
+    }
+
+    if let Some(v) = site_table_adp_type {
+        return Err(format!("ADP type must be string. Got '{v}'"));
+    }
+
+    if site_table.get("_atom_site_thermal_displace_type").is_some() {
+        warn!(
+            "found deprecated '_atom_site_thermal_displace_type'. Ignoring until it is implemented"
+        );
+        // try parsing anisotropic displacement anyway
+        return Ok(None);
+    }
+
+    debug!("{file_path}: site '{label}': No ADP type explicitly declared. Trying to parse from table header.");
+    if let Some(v) = site_table
+        .get("_atom_site_B_iso_or_equiv")
+        .map(|x| &x[index])
+    {
+        let v = match v {
+            Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_B_iso_or_equiv' needs to be Integer, Float or Inapplicable. Got {v}")),
+            Value::Float(v) => Some((Biso(*v), FoundUnlabeled)),
+            Value::Int(v) => Some((Biso(*v as f64), FoundUnlabeled)),
+            Value::Inapplicable => None,
+        };
+        return Ok(v);
+    }
+
+    if let Some(v) = site_table
+        .get("_atom_site_U_iso_or_equiv")
+        .map(|x| &x[index])
+    {
+        let v = match v {
+            Value::Unknown | Value::Text(_) => return Err(format!("Could not acquire atomic displacement parameters for site {label}: '_atom_site_U_iso_or_equiv' needs to be Integer, Float or Inapplicable. Got {v}")),
+            Value::Float(v) => Some((Uiso(*v), FoundUnlabeled)),
+            Value::Int(v) => Some((Uiso(*v as f64), FoundUnlabeled)),
+            Value::Inapplicable => None,
+        };
+        return Ok(v);
+    }
+
+    Ok(None)
+}
+
+impl<'a> CIFContents<'a> {
     pub fn get_symops(&self) -> Result<Vec<SymOp>, String> {
         let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
@@ -130,7 +347,8 @@ impl CIFContents {
 
     pub fn get_sites(&self) -> Result<Vec<Site>, String> {
         let Some(site_table) = self.tables.iter().find(|t: &&Table| {
-            const SITE_KEYS: [&str; 5] = [
+            const SITE_KEYS: [&str; 6] = [
+                "_atom_site_label",
                 "_atom_site_type_symbol",
                 "_atom_site_fract_x",
                 "_atom_site_fract_y",
@@ -144,12 +362,22 @@ impl CIFContents {
         let n = site_table["_atom_site_type_symbol"].len();
         let symops = self.get_symops()?;
 
+        let atom_site_aniso_table = self
+            .tables
+            .iter()
+            .find(|t: &&Table| t.contains_key("_atom_site_aniso_label"));
+
         let site_at_index = |i: usize| -> Result<Site, String> {
-            let label = &site_table["_atom_site_type_symbol"][i];
-            let sp: Species = match label {
+            let sp: Species = match &site_table["_atom_site_type_symbol"][i] {
                 Value::Text(label) => label.parse().unwrap(),
+                v => return Err(format!("Invalid _atom_site_type_symbol: {v}")),
+            };
+
+            let label = match &site_table["_atom_site_label"][i] {
+                Value::Text(label) => label,
                 _ => return Err("Invalid site label".to_string()),
             };
+
             let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
             // TODO: remove unwraps, proper error handling
             let coords = Vec3::new(
@@ -157,9 +385,37 @@ impl CIFContents {
                 site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
                 site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
             );
-            let important_fracs = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
+
+            let iso_adp =
+                extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
+            let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table)?;
+            let adp = match (iso_adp, aniso_adp) {
+                (Some((_iso_adp, how_found)), Some(aniso_adp)) => {
+                    use IsotropicDisplacementInFile::*;
+                    match how_found {
+                        FoundUnlabeled => {
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
+                            Some(aniso_adp)
+                        }
+                        FoundLabeled => {
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP, because ADP is labeled as isotropic in site table.", p = self.file_path.unwrap_or("in-mem"));
+                            Some(_iso_adp)
+                        }
+                    }
+                }
+                (Some((iso_adp, _)), None) => Some(iso_adp),
+                (None, Some(aniso_adp)) => Some(aniso_adp),
+                (None, None) => None,
+            };
+
+            debug!(
+                "{p}: site '{label}': got atomic displacement parameter of type {k}",
+                p = self.file_path.unwrap_or("in-mem"),
+                k = adp.as_ref().map(|x| x.fmt_kind()).unwrap_or("None")
+            );
+
             let coords = coords.map(|x| {
-                for frac in important_fracs {
+                for frac in IMPORTANT_FRACTIONS {
                     if (x - frac).abs() < FRAC_TOL_POS_ATOL {
                         warn!("Rounded fractional coordinate {x} to {frac}");
                         return frac;
@@ -167,15 +423,17 @@ impl CIFContents {
                 }
                 *x
             });
+
             Ok(Site {
                 species: sp,
                 coords,
                 occu,
+                displacement: adp,
             })
         };
 
         fn site_exists_periodic(site: &Site, sites: &[Site]) -> bool {
-            // adapted from pymatgen.util.coord.find_in_coord_list
+            // adapted from pymavtgen.util.coord.find_in_coord_list
             sites
                 .iter()
                 .map(|ps| {
@@ -206,6 +464,17 @@ impl CIFContents {
                     coords: op.apply(&base_site.coords),
                     species: base_site.species.clone(),
                     occu: base_site.occu,
+                    displacement: match base_site.displacement {
+                        Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
+                            base_site.displacement.clone()
+                        }
+                        Some(AtomicDisplacement::Uani(ref v)) => {
+                            Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
+                        }
+                        Some(AtomicDisplacement::Bani(ref v)) => {
+                            Some(AtomicDisplacement::Bani(op.transform_orientation(&v)))
+                        }
+                    },
                 };
 
                 if site_exists_periodic(&s, &sites) {
@@ -261,10 +530,18 @@ impl CIFContents {
 
 impl<'a> CifParser<'a> {
     pub fn new(data: &'a str) -> Self {
-        Self { c: data }
+        Self {
+            c: data,
+            file_path: None,
+        }
     }
 
-    pub fn parse(&mut self) -> Result<CIFContents, String> {
+    pub fn with_file(mut self, file_path: String) -> Self {
+        self.file_path = Some(file_path);
+        self
+    }
+
+    pub fn parse(&'a mut self) -> Result<CIFContents<'a>, String> {
         self.skip_ws_comments();
         let bn = self.parse_block_name()?.to_string();
         let mut kvs = HashMap::new();
@@ -275,7 +552,13 @@ impl<'a> CifParser<'a> {
                 break;
             }
             if self.c.starts_with(DATA_HEADER_START) {
-                unimplemented!("supporting CIFs with multiple data blocks")
+                let second_bn = self
+                    .parse_block_name()
+                    .expect("we are at the start of a data descriptor");
+
+                return Err(format!(
+                    "Multiple structures per CIF is ambiguous. First block name: '{bn}', second: '{second_bn}'"
+                ));
             }
             match self.parse_data_item()? {
                 DataItem::KV(k, v) => {
@@ -293,6 +576,7 @@ impl<'a> CifParser<'a> {
             block_name: bn,
             kvs,
             tables,
+            file_path: self.file_path.as_ref().map(|x| x.as_str()),
         })
     }
 
@@ -481,11 +765,12 @@ impl<'a> CifParser<'a> {
             // while tokens start with '_', we are reading column names
 
             kvs.push((self.parse_tag()?.to_string(), Vec::new()));
-            self.skip_whitespace();
+            self.skip_ws_comments();
         }
 
         while !self.c.starts_with('_')
             && !self.c.starts_with(LOOP_HEADER_START)
+            && !self.c.starts_with(DATA_HEADER_START)
             && !self.c.is_empty()
         {
             for (_, v) in kvs.iter_mut() {
@@ -560,7 +845,7 @@ B 2.0(32) 1.0 test",
     #[test]
     fn parse_text_field() {
         let mut p = CifParser::new(
-            "_test 
+            "_test
 ;
 Test Test Test
 test test
@@ -617,7 +902,7 @@ He2- '-2'
 loop_
 _a
 _b
-hello 1.0 
+hello 1.0
 hell  -2";
         use Value::*;
 
@@ -657,7 +942,7 @@ He2- 2.
 loop_
 _a
 _b
-hello 1.0 
+hello 1.0
 hell  -2";
         use Value::*;
 
@@ -758,6 +1043,7 @@ _cell_length_c 12
             block_name,
             kvs,
             tables,
+            ..
         } = p.parse().expect("valid cif contents");
         assert_eq!(block_name, "dummy_block_name");
         let mut table = HashMap::new();
@@ -860,9 +1146,8 @@ loop_
   Na+  Na1  1  0.00000000  0.00000000  0.25000000  0.25
   Fe-  Fe1  1  0.00000000  0.00000000  0.25000000  0.75";
 
-        let d = CifParser::new(CIF_WITH_OCCUPANCY)
-            .parse()
-            .expect("valid cif contents");
+        let mut p = CifParser::new(CIF_WITH_OCCUPANCY);
+        let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
         let mut sites = s.sites.iter();
         assert_eq!(
@@ -870,6 +1155,7 @@ loop_
                 coords: Vec3::new(0.0, 0.0, 0.25),
                 species: "Na+".parse().unwrap(),
                 occu: 0.25,
+                displacement: None,
             },
             sites.next().unwrap()
         );
@@ -879,9 +1165,77 @@ loop_
                 coords: Vec3::new(0.0, 0.0, 0.25),
                 species: "Fe-".parse().unwrap(),
                 occu: 0.75,
+                displacement: None,
             },
             sites.next().unwrap()
         );
+    }
+
+    #[test]
+    fn test_multiple_structures_should_err() {
+        let input = "data_phase_1
+_chemical_name_mineral 'phase_1'
+_cell_length_a  2.898009
+_cell_length_b  2.898009
+_cell_length_c  11.1751
+_cell_angle_alpha 90
+_cell_angle_beta  90
+_cell_angle_gamma 120
+_cell_volume 81.27959
+_symmetry_space_group_name_H-M P63/mmc
+_space_group_IT_number 194
+loop_
+_symmetry_equiv_pos_as_xyz
+	 'x, y, z '
+	 '-x, -x+y, z+1/2 '
+	 '-x, -y, z+1/2 '
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_symmetry_multiplicity
+_atom_site_adp_type
+_atom_site_U_iso_or_equiv
+Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
+O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7
+
+data_phase_2
+_chemical_name_mineral 'phase_2'
+_cell_length_a  2.898009
+_cell_length_b  2.898009
+_cell_length_c  11.1751
+_cell_angle_alpha 90
+_cell_angle_beta  90
+_cell_angle_gamma 120
+_cell_volume 81.27959
+_symmetry_space_group_name_H-M P63/mmc
+_space_group_IT_number 194
+loop_
+_symmetry_equiv_pos_as_xyz
+	 'x, y, z '
+	 '-x, -x+y, z+1/2 '
+	 '-x, -y, z+1/2 '
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_symmetry_multiplicity
+_atom_site_adp_type
+_atom_site_U_iso_or_equiv
+Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
+O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
+
+        let s = CifParser::new(input)
+            .parse()
+            .expect_err("should error on multiple structures in one cif");
+
+        assert_eq!(s, "Multiple structures per CIF is ambiguous. First block name: 'phase_1', second: 'phase_2'")
     }
 
     #[test]
@@ -911,14 +1265,189 @@ _atom_site_fract_z
 _atom_site_occupancy
 _atom_site_symmetry_multiplicity
 _atom_site_adp_type
-_atom_site_U_iso_or_equiv
+_atom_site_B_iso_or_equiv
 Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
 O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
-        let contents = CifParser::new(input).parse().unwrap();
+        let mut p = CifParser::new(input);
+        let contents = p.parse().unwrap();
         let s = Structure::try_from(&contents).unwrap();
         for site in s.sites.iter() {
             println!("{:?}", site);
         }
         assert_eq!(s.sites.len(), 4)
+    }
+
+    #[test]
+    fn test_biso_specified_but_not_present() {
+        let input = "data_biso_wrong
+_chemical_name_mineral 'bug_rock'
+_cell_length_a  2.898009
+_cell_length_b  2.898009
+_cell_length_c  11.1751
+_cell_angle_alpha 90
+_cell_angle_beta  90
+_cell_angle_gamma 120
+_cell_volume 81.27959
+_symmetry_space_group_name_H-M P63/mmc
+_space_group_IT_number 194
+loop_
+_symmetry_equiv_pos_as_xyz
+	 'x, y, z '
+	 '-x, -x+y, z+1/2 '
+	 '-x, -y, z+1/2 '
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_symmetry_multiplicity
+_atom_site_adp_type
+_atom_site_U_iso_or_equiv
+Na_e Na+1 0.3333333 0.6666667 0.75 0.45134   2 Biso 5
+O1 O-2 0.3333333 0.6666667 0.091 1   4 Biso 0.7";
+        let mut p = CifParser::new(input);
+        let contents = p.parse().unwrap();
+        let s = Structure::try_from(&contents).expect_err(
+            "this should fail because _atom_site_B_iso_or_equiv is missing in the sites table",
+        );
+        assert_eq!(s, "Site Na_e specified ADP 'Biso', but could not find '_atom_site_B_iso_or_equiv' in table.")
+    }
+
+    #[test]
+    fn test_t_direction_space_group_symop_operation() {
+        let input = "#======================================================================
+# CRYSTAL DATA
+#----------------------------------------------------------------------
+data_VESTA_phase_2
+
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2t'
+   'x, -y, z+1/2t'
+   'x+1/2t, y+1/2t, z'
+   '-x+1/2t, -y+1/2t, -z'
+   '-x+1/2t, y+1/2t, -z+1/2t'
+   'x+1/2t, -y+1/2t, z+1/2t'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("in symop t should be treated as constant and not throw error");
+    }
+
+    #[test]
+    fn parse_cif_comment_in_loop_header() {
+        let input = "data_comment_loop_header
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2'
+   'x, -y, z+1/2'
+   'x+1/2, y+1/2, z'
+   '-x+1/2, -y+1/2, -z'
+   '-x+1/2, y+1/2, -z+1/2'
+   'x+1/2, -y+1/2, z+1/2'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+# this is a comment
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("comment in loop header should be ok");
+    }
+
+    #[test]
+    fn parse_cif_comment_in_loop() {
+        let input = "data_comment_loop
+_chemical_name_common                  ''
+_cell_length_a                         4.625(14)
+_cell_length_b                         3.491(10)
+_cell_length_c                         5.080(15)
+_cell_angle_alpha                      90.000000
+_cell_angle_beta                       99.10(18)
+_cell_angle_gamma                      90.000000
+_cell_volume                           80.988710
+_space_group_name_H-M_alt              'C 2/c'
+_space_group_IT_number                 15
+
+loop_
+_space_group_symop_operation_xyz
+   'x, y, z'
+   '-x, -y, -z'
+   '-x, y, -z+1/2'
+   'x, -y, z+1/2'
+   'x+1/2, y+1/2, z'
+   '-x+1/2, -y+1/2, -z'
+   '-x+1/2, y+1/2, -z+1/2'
+   'x+1/2, -y+1/2, z+1/2'
+
+loop_
+   _atom_site_label
+   _atom_site_occupancy
+   _atom_site_fract_x
+   _atom_site_fract_y
+   _atom_site_fract_z
+   _atom_site_adp_type
+   _atom_site_B_iso_or_equiv
+   _atom_site_type_symbol
+# this is a comment
+   Cu1        1.0     0.250000     0.250000     0.000000    Biso  1.000000 Cu # this is a comment
+# another one
+   O1         1.0     0.000000     0.418400     0.250000    Biso  1.000000 O
+
+";
+        let _ = CifParser::new(input)
+            .parse()
+            .expect("comment in loop header should be ok");
     }
 }

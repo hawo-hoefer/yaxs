@@ -1,3 +1,4 @@
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug, Clone, Copy)]
@@ -10,6 +11,10 @@ impl Probability {
         }
 
         Some(Self(p))
+    }
+
+    pub fn generate_bool(&self, rng: &mut impl Rng) -> bool {
+        rng.random_range(0.0..1.0) < self.0
     }
 }
 

@@ -5,17 +5,19 @@ use itertools::Itertools;
 use log::{info, warn};
 use ndarray::{Array2, Array4};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::{
-    caglioti, e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_two_theta_rad,
-    scherrer_broadening, scherrer_broadening_edxrd, C_M_S, H_EV_S,
+    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
+    scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
 };
 use crate::noise::Noise;
 use crate::structure::Structure;
 
+use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
@@ -83,7 +85,7 @@ pub struct VFGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
     pub fractions: Vec<Option<VolumeFraction>>,
-    pub max_subset_dim: Option<usize>,
+    pub max_subset_dim: Option<ConcentrationSubset>,
 }
 
 pub fn get_weight_fractions(
@@ -96,24 +98,40 @@ pub fn get_weight_fractions(
         }
     }
 
-    // m = V * density
-    let mut sum = 0.0;
-    let mut weight_fractions = volume_fractions
+    // phi_i = V_i / V_tot
+    // V_tot = sum_i V_i
+    // V_i = rho_i * m_i
+    // V_tot = sum_i rho_i * m_i
+    // m_i = rho_i * V_i
+    // w_i = m_i / m_ges
+    //
+    // m_ges = sum_i m_i
+    // m_ges = sum_i rho_i V_i
+    //       = sum_i rho_i phi_i V_tot
+    //       = V_tot * (sum_i rho_i phi_i)
+    //
+    // w_i = rho_i * V_i / m_ges
+    //     = rho_i * V_i / (V_tot * (sum_i rho_i phi_i))
+    //     = rho_i / (sum_i rho_i phi_i) * V_i / V_tot
+    //     = rho_i / (sum_i rho_i phi_i) * phi_i
+    let mut sum_rho_i_phi_i = 0.0;
+    let mut mass_fractions = volume_fractions
         .iter()
         .zip(structures)
-        .map(|(vf, s)| {
-            let mass = s.density.expect("we check above that all are some") * vf;
-            sum += mass;
-            mass
+        .map(|(phi_i, s)| {
+            let rho_i = s.density.expect("we have all densities");
+            let rpi = rho_i * phi_i;
+            sum_rho_i_phi_i += rpi;
+            rpi
         })
         .collect_vec();
 
     // normalize again
-    for vf in weight_fractions.iter_mut() {
-        *vf /= sum;
+    for rpi in mass_fractions.iter_mut() {
+        *rpi /= sum_rho_i_phi_i;
     }
 
-    Some(weight_fractions.into())
+    Some(mass_fractions.into())
 }
 
 /// sample integers uniformly without replacement from the interval [0, max_val)
@@ -173,10 +191,96 @@ pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
     samples
 }
 
+
+#[derive(PartialEq, Clone, Debug, Serialize)]
+pub enum ConcentrationSubset {
+    MaxDim(usize),
+    Probabilities(Vec<f64>),
+}
+
+impl ConcentrationSubset {
+    pub fn roll(&self, rng: &mut impl Rng) -> usize {
+        use ConcentrationSubset::*;
+        match self {
+            MaxDim(maxdim) => {
+                if *maxdim == 0 {
+                    // should this be an error?
+                    0
+                } else {
+                    rng.random_range(1..=*maxdim)
+                }
+            }
+            Probabilities(probs) => {
+                let t = rng.random_range(0.0..=1.0);
+                let mut acc = 0.0;
+                for (i, p) in probs.iter().enumerate() {
+                    acc += p;
+                    if t <= acc {
+                        return i + 1;
+                    }
+                }
+
+                unreachable!("t is between 0 and 1")
+            }
+        }
+    }
+
+    pub fn max_subset_size(&self) -> usize {
+        match self {
+            ConcentrationSubset::MaxDim(n) => *n,
+            ConcentrationSubset::Probabilities(items) => items.len(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConcentrationSubset {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CSProxy {
+            MaxDim(usize),
+            Weights(Vec<f64>),
+        }
+
+        let p = CSProxy::deserialize(deserializer)?;
+
+        match p {
+            CSProxy::MaxDim(d) => return Ok(ConcentrationSubset::MaxDim(d)),
+            CSProxy::Weights(mut items) => {
+                for i in items.iter() {
+                    if *i < 0.0 {
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Float(*i),
+                            &"subset size weights needs to be larger than 0.",
+                        ));
+                    }
+                }
+                let sum = items.iter().sum::<f64>();
+
+                if sum == 0.0 {
+                    return Err(serde::de::Error::invalid_value(
+                        serde::de::Unexpected::Float(sum),
+                        &"Concentration subset weights need to sum to more than 0.",
+                    ));
+                }
+
+                for i in items.iter_mut() {
+                    *i /= sum;
+                }
+
+                return Ok(ConcentrationSubset::Probabilities(items));
+            }
+        }
+    }
+}
+
 impl VFGenerator {
     pub fn try_new(
-        fractions: Vec<Option<VolumeFraction>>,
-        max_subset_dim: Option<usize>,
+        mut fractions: Vec<Option<VolumeFraction>>,
+        max_subset_dim: Option<ConcentrationSubset>,
     ) -> Result<Self, String> {
         if fractions.len() == 0 {
             // no structures is ok. in that case, no volume fractions will be generated
@@ -189,26 +293,40 @@ impl VFGenerator {
         }
         let fraction_sum = fractions.iter().filter_map(|x| x.map(|x| x.0)).sum::<f64>();
         let n_free = fractions.iter().filter(|x| x.is_none()).count();
+        const ATOL: f64 = 1e-5;
 
-        if fraction_sum > 1.0 {
+        if fraction_sum > 1.0 + ATOL {
             return Err(format!(
-                "Specified fractions need to sum to less than or equal to 1.0. Got sum: {}",
+                "Specified fractions must to sum to less than or equal to 1.0. Got sum: {}",
                 fraction_sum
             ));
+        }
+        if fraction_sum > 1.0 {
+            // ignore the extra volume fraction < ATOL
+            warn!("Fraction sum is larger than 1.0 but inside the tolerance: {fraction_sum}. Reducing each set phase equally");
+            let delta = fraction_sum - 1.0;
+            let n_set = fractions.len() - n_free;
+            for fraction in fractions.iter_mut().filter_map(|x| match x {
+                Some(v) => Some(v),
+                None => None,
+            }) {
+                fraction.0 -= delta / n_set as f64;
+            }
         }
 
         if fraction_sum > 0.99 && n_free > 0 {
             warn!("Fraction sum ({fraction_sum:.3}) is close to 1. There are {n_free} non-fixed volume fractions which are strongly constrained because of this.");
         }
 
-        if n_free == 0 && fraction_sum < 1.0 - 1e-5 {
+        if n_free == 0 && fraction_sum < 1.0 - ATOL {
             // no free parameters and fraction sum smaller than 1
             return Err(format!("All structures volume fractions are fixed, but the sum of their fractions is smaller than one (delta: {d:.2e}). Make sure that the volume fractions add up to 1, or remove the specification for one fraction if you want to compute it automatically.", d = 1.0 - fraction_sum));
         }
 
-        if let Some(max_subset_dim) = max_subset_dim {
-            if max_subset_dim > n_free {
-                return Err(format!("max_subset_dim can be at most equal to the number of free phases. Expected max_subset_dim < {n_free}, got {max_subset_dim}"));
+        if let Some(max_subset_dim) = &max_subset_dim {
+            let max_subset_size = max_subset_dim.max_subset_size();
+            if max_subset_size > n_free {
+                return Err(format!("max_subset_dim can be at most equal to the number of free phases. Expected < {n_free}, got {max_subset_size}"));
             }
         }
 
@@ -240,12 +358,8 @@ impl VFGenerator {
 
         let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
 
-        let roll_n = if let Some(max_subset_dim) = self.max_subset_dim {
-            if max_subset_dim == 0 {
-                0
-            } else {
-                rng.random_range(1..=max_subset_dim)
-            }
+        let roll_n = if let Some(max_subset_dim) = &self.max_subset_dim {
+            max_subset_dim.roll(rng)
         } else {
             self.n_free
         };
@@ -327,6 +441,11 @@ impl VFGenerator {
 }
 
 pub fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
+    // TODO: revisit lorentz polarization. currently, we assume no polarization due to
+    // monochromator. is that correct?
+    // let lorentz_factor = 1.0 / (4.0 * theta_rad.sin().powi(2) * theta_rad.cos());
+    // let polarization_factor = 0.5 * (1.0 + (2.0 * theta_rad).cos().powi(2));
+
     (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
 }
 
@@ -370,17 +489,14 @@ pub trait Discretizer {
     fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
-        for PeakRenderParams {
-            pos,
-            intensity,
-            fwhm,
-            eta,
-        } in self.peak_info_iterator()
-        {
-            render_peak(pos, intensity, fwhm, eta, abstol, positions, intensities)
+        // rendering the backgrounds first allows for background scaling without fancy
+        // math or extra memory allocation
+        self.bkg().render(intensities, positions);
+
+        for p in self.peak_info_iterator() {
+            p.render(positions, intensities, abstol)
         }
 
-        self.bkg().render(intensities, positions);
         if let Some(noise) = self.noise() {
             noise.apply(intensities, self.seed());
         }
@@ -410,68 +526,104 @@ pub struct Peak {
 }
 pub type Peaks = Box<[Peak]>;
 
-/// render a pseudo-voigt peak into an xrd pattern by splitting it into a left
-/// and right half, rendering the pv-function until an intensity tolerance is
-/// reached
+impl PeakRenderParams {
+    pub fn render(self, xs: &[f32], ys: &mut [f32], abstol: f32) {
+        let n = xs.len();
+        let midpoint = ((self.pos - xs[0]) / (xs[n - 1] - xs[0]) * n as f32) as usize;
+
+        let mut i = midpoint;
+        if i > n - 1 {
+            i = n - 1
+        }
+
+        // left half
+        loop {
+            let dx = xs[i] - self.pos;
+            let di = self.intensity * pseudo_voigt(dx, self.eta, self.fwhm);
+            if di < abstol {
+                break;
+            }
+            ys[i] += di;
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+        }
+
+        // right half
+        i = midpoint + 1;
+        while i < n {
+            let dx = xs[i] - self.pos;
+            let di = self.intensity * pseudo_voigt(dx, self.eta, self.fwhm);
+            if di < abstol {
+                break;
+            }
+            ys[i] += di;
+            i += 1;
+        }
+    }
+}
+
+/// Compute Pseudo-Voigt eta from gaussian and pseudo-voigt fwhms
 ///
-/// * `pos`:
-/// * `weight`:
-/// * `fwhm`:
-/// * `eta`:
-/// * `abstol`:
-/// * `xs`:
-/// * `ys`:
-pub fn render_peak(
-    pos: f32,
-    weight: f32,
-    fwhm: f32,
-    eta: f32,
-    abstol: f32,
-    xs: &[f32],
-    ys: &mut [f32],
-) {
-    let n = xs.len();
-    let midpoint = ((pos - xs[0]) / (xs[n - 1] - xs[0]) * n as f32) as usize;
+/// use the approximation given in equation 2 of
+///
+/// Thompson, P., D. E. Cox, and J. B. Hastings.
+/// "Rietveld refinement of Debye–Scherrer synchrotron X-ray data from Al2O3."
+/// Applied Crystallography 20.2 (1987): 79-83.
+///
+/// https://doi.org/10.1107/s0021889887087090
+///
+/// * `pv_fwhm`: pseudo-voigt fwhm
+/// * `g_fwhm`: gaussian fwhm
+fn compute_pv_eta(pv_fwhm: f64, l_fwhm: f64) -> f64 {
+    let mut eta = 0.0;
 
-    let mut i = midpoint;
-    if i > n - 1 {
-        i = n - 1
+    let frac = l_fwhm / pv_fwhm;
+    let mut pf = 1.0;
+    for coef in [1.36603, -0.47719, 0.11116] {
+        pf *= frac;
+        eta += coef * pf;
     }
 
-    // left half
-    loop {
-        let dx = xs[i] - pos;
-        let di = weight * pseudo_voigt(dx, eta, fwhm);
-        if di < abstol {
-            break;
-        }
-        ys[i] += di;
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
+    return eta;
+}
 
-    // right half
-    i = midpoint + 1;
-    while i < n {
-        let dx = xs[i] - pos;
-        let di = weight * pseudo_voigt(dx, eta, fwhm);
-        if di < abstol {
-            break;
-        }
-        ys[i] += di;
-        i += 1;
+/// Compute the pseudo-voigt fwhm from fwhms of the gaussian and
+/// lorentzian components
+///
+/// uses the approximation in equation 3 of
+///
+/// Thompson, P., D. E. Cox, and J. B. Hastings.
+/// "Rietveld refinement of Debye–Scherrer synchrotron X-ray data from Al2O3."
+/// Applied Crystallography 20.2 (1987): 79-83.
+///
+/// https://doi.org/10.1107/s0021889887087090
+///
+///
+/// * `g_fwhm`: gaussian fwhm
+/// * `l_fwhm`: lorentzian fwhm
+fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
+    let mut x = g_fwhm.powi(5);
+    let mut sum = 0.0;
+    for coef in [1.0, 2.69269, 2.42843, 4.47163, 0.07842, 1.0] {
+        sum += coef * x;
+        x = x / g_fwhm * l_fwhm;
     }
+    sum.powf(0.2)
+}
+
+fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
+    let pv_fwhm = compute_pv_fwhm(g_fwhm, l_fwhm);
+    (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
 }
 
 impl Peak {
     /// Get ADXRD Peak location, intensity and fwhm
     ///
     /// * `wavelength_nm`: X-ray wavelength
-    /// * `u`: caglioti u parameter
-    /// * `v`: caglioti v parameter
-    /// * `w`: caglioti w parameter
+    /// * `caglioti`: Caglioti instrument parameters for gaussian line broadening
+    /// * `eta_size_broadening`: gaussian-lorentzian mixing parameter for size broadening
     /// * `mean_ds_nm`: mean domain size in nanometers
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
     ///   emission line's relative intensity)
@@ -479,32 +631,66 @@ impl Peak {
     pub fn get_adxrd_render_params(
         &self,
         wavelength_nm: f64,
-        u: f64,
-        v: f64,
-        w: f64,
+        instrument_parameters: &InstrumentParameters,
         mean_ds_nm: f64,
+        ds_eta: f64,
+        mustrain: f64,
+        mustrain_eta: f64,
         weight: f64,
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
-    ) -> (f32, f32, f32) {
+    ) -> PeakRenderParams {
         // bragg condition
         // lambda = 2 d sin(theta)
         // theta = asin(lambda / 2d)
         let wavelength_ams = wavelength_nm * 10.0;
-        let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
+        let theta_hkl_rad = {
+            let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
+
+            let sd_delta_theta_rad = sample_displacement_delta_theta_rad(
+                sample_displacement_mu_m,
+                goniometer_radius_mm,
+                theta_hkl_rad,
+            );
+
+            theta_hkl_rad + sd_delta_theta_rad
+        };
+
         let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
-        let fwhm = caglioti(u, v, w, theta_hkl_rad)
-            + scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+
+        // use names from GSAS for now
+        // size and microstrain broadening fwhms
+        let sgam = scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+        let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
+
+        // FWHM = sqrt(8 ln 2) sigma
+        // sigma^2 = FWHM^2 / 8 ln 2
+        #[rustfmt::skip]
+        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
+                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
+        sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
+        let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
+
+        // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
+        let g_fwhm_sq = (instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq)
+            .max(0.0000001);
+
+        // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
+        // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
+        // of theta
+        let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
+        let l_fwhm = l_fwhm.max(0.00001);
+
+        let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
+
         let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 
-        let sd_delta_two_theta_rad = sample_displacement_delta_two_theta_rad(
-            sample_displacement_mu_m,
-            goniometer_radius_mm,
-            theta_hkl_rad,
-        );
-
-        let two_theta_hkl_deg = (2.0 * theta_hkl_rad + sd_delta_two_theta_rad).to_degrees() as f32;
-        (two_theta_hkl_deg, peak_weight, fwhm as f32)
+        PeakRenderParams {
+            pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,
+            intensity: peak_weight,
+            fwhm: fwhm as f32,
+            eta: eta as f32,
+        }
     }
 
     /// Get EDXRD Peak location, intensity and fwhm
@@ -571,7 +757,12 @@ where
     let n_samples = jobs.len();
     let mut metadata = T::init_meta_data(n_samples, p);
     info!("Initialized metadata for {n_samples} sample(s).");
-
+    
+    // TODO: incorporate bkg_coefs into JobParams
+    // NOTE: currently, we are only able to render one kind of background per simulation
+    // should this ever change, we need to adapt this implementation
+    // let n_bkg_params = j.bkg().bkg_coefs();
+    // let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions, n_bkg_params);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
             let job = match job {
@@ -588,8 +779,13 @@ where
 
     // actual rendering of the patterns
     cfg_if! {
-        if #[cfg(feature = "cpu-only")] {
-            let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
+        if #[cfg(feature = "use-gpu")] {
+            use crate::discretize_cuda::discretize_peaks_cuda;
+            let intensities = discretize_peaks_cuda(jobs, xs)?;
+            let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
+                .expect("sizes must match");
+        } else {
+	    let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
             let mut peak_set = 0;
             for job in jobs {
                 // TODO: somehow encode that all samples have the same simulation type
@@ -607,11 +803,6 @@ where
                     },
                 }
             }
-        } else {
-            use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, xs)?;
-            let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
-                .expect("sizes must match");
         }
     };
 
@@ -737,7 +928,7 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, Some(2)).unwrap();
+        let gen = VFGenerator::try_new(vfs, Some(ConcentrationSubset::MaxDim(2))).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let mut n_zeroed = 0;
         for _ in 0..1000 {

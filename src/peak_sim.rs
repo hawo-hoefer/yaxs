@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
@@ -7,9 +8,14 @@ use log::{debug, info};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use crate::cfg::{apply_strain_cfg, CompactSimResults, POGenerator, SampleParameters, StrainCfg, TextureMeasurement, ToDiscretize};
+use crate::cfg::{
+    apply_strain_cfg, CompactSimResults, POGenerator, SampleParameters, StrainCfg,
+    TextureMeasurement, ToDiscretize,
+};
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
+use crate::scatter::Scatter;
+use crate::species::Atom;
 use crate::strain::Strain;
 use crate::structure::Structure;
 use crate::uninit_vec;
@@ -18,7 +24,6 @@ enum PossiblyTextureMeasurementPeaks {
     NoTexture(Peaks),
     Texture(Vec<Peaks>),
 }
-
 
 pub struct Alignment<'a> {
     pub po: &'a KDEBinghamODF,
@@ -138,6 +143,7 @@ impl WriteCtx {
         }
     }
 }
+
 /// Generate Peaks for the input structures and their physical parameters.
 ///
 /// * `sample_params`: physical parameter ranges for the structures
@@ -171,14 +177,18 @@ pub fn simulate_peaks(
 
     #[derive(Clone)]
     struct RunCtx {
-        structs: Box<[Structure]>,
+        structs: Arc<[Structure]>,
         po_gens: Box<[Option<POGenerator>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_files: Box<[String]>,
     }
 
     impl RunCtx {
-        fn run(&mut self, job: PeakSim) -> Result<PeakSimResult, String> {
+        fn run(
+            &mut self,
+            job: PeakSim,
+            scattering_parameters: &HashMap<Atom, Scatter>,
+        ) -> Result<PeakSimResult, String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
             let Some((perm_s, strain)) = apply_strain_cfg(
                 &self.strain_cfgs[job.structure],
@@ -193,7 +203,7 @@ pub fn simulate_peaks(
 
             let peaks = if let Some(t) = job.t {
                 let hkls_intensities_spacings = perm_s
-                    .get_hkl_intensities_spacings(job.min_r, job.max_r)
+                    .get_hkl_intensities_spacings(job.min_r, job.max_r, scattering_parameters)
                     .into_boxed_slice();
                 let mut peaks = Vec::new();
                 for (_, (chi, phi)) in t
@@ -211,7 +221,7 @@ pub fn simulate_peaks(
                 PossiblyTextureMeasurementPeaks::Texture(peaks)
             } else {
                 let peaks = perm_s
-                    .get_d_spacings_intensities(job.min_r, job.max_r, None)
+                    .get_d_spacings_intensities(job.min_r, job.max_r, None, scattering_parameters)
                     .into_boxed_slice();
                 PossiblyTextureMeasurementPeaks::NoTexture(peaks)
             };
@@ -244,6 +254,11 @@ pub fn simulate_peaks(
         n_threads = 1;
     }
 
+    let mut scattering_parameters = HashMap::new();
+    for s in structures.iter() {
+        s.gather_scattering_params(&mut scattering_parameters);
+    }
+
     let mut ctx = RunCtx {
         structs: structures.into(),
         po_gens: structure_po_configs,
@@ -269,7 +284,7 @@ pub fn simulate_peaks(
                 max_r,
                 t: texture_measurement,
             };
-            let p = ctx.run(job)?;
+            let p = ctx.run(job, &scattering_parameters)?;
             unsafe { results.add(p) };
         }
     } else {
@@ -282,12 +297,15 @@ pub fn simulate_peaks(
                 let job_receiver = job_receiver.clone();
 
                 let mut ctx = ctx.clone();
+                let scattering_parameters = scattering_parameters.clone();
+
                 for po_gen in ctx.po_gens.iter_mut().filter_map(|x| x.as_mut()) {
                     // just to pull n_thinning samples out of the po_gen internal Hit and Run sampler
                     // this is hopefully enough to make the samplers of every thread independent
                     let mut rng = Xoshiro256PlusPlus::seed_from_u64(rng.random());
                     _ = po_gen.sample(&mut rng);
                 }
+
 
                 std::thread::spawn(move || -> Result<(), String> {
                     loop {
@@ -298,7 +316,7 @@ pub fn simulate_peaks(
                         };
 
                         let p = ctx
-                            .run(job)
+                            .run(job, &scattering_parameters)
                             .map_err(|err| format!("Peak simulation thread {i}: {err}"))?;
                         unsafe {
                             results.add(p);
@@ -310,7 +328,9 @@ pub fn simulate_peaks(
             })
             .collect_vec();
 
-        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
+        for (struct_id, permutation_id) in
+            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
+        {
             let job = PeakSim {
                 structure: struct_id,
                 permutation: permutation_id,
@@ -339,6 +359,5 @@ pub fn simulate_peaks(
     }
 
     let results = Arc::into_inner(results).expect("no more references to write context");
-    Ok(results.make_to_discretize(ctx.structs.into(), sample_parameters, texture_measurement))
+    Ok(results.make_to_discretize(ctx.structs, sample_parameters, texture_measurement))
 }
-

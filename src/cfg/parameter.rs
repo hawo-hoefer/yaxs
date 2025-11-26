@@ -1,3 +1,4 @@
+use num_traits::Float;
 use rand::distr::uniform::SampleUniform;
 use rand::distr::Uniform;
 use rand::Rng;
@@ -44,6 +45,13 @@ impl<T> Parameter<T> {
             Parameter::Fixed(v) => *v,
             Parameter::Range(v, _) => *v,
         }
+    }
+
+    pub fn mean(&self) -> T
+    where
+        T: Float,
+    {
+        (self.upper_bound() + self.lower_bound()) / (T::one() + T::one())
     }
 }
 
@@ -140,5 +148,11 @@ coefs: [0.1, [1.2, 0.8], 0.8]
 
         let _err =
             serde_yaml::from_str::<DummyCfg>("[[1.2, 0.8], 1.2]").expect_err("invalid range");
+    }
+
+    #[test]
+    fn deserialize_parameter_enum_should_fail() {
+        let _err =
+            serde_yaml::from_str::<Parameter<f64>>("[-0.0, -0.25]").expect_err("invalid range");
     }
 }

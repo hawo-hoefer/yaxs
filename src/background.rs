@@ -1,11 +1,12 @@
 #[derive(Clone, PartialEq, Debug)]
 pub enum Background {
     None,
-    Polynomial { poly_coef: Vec<f32>, scale: f32 },
+    Chebyshev { coef: Vec<f32>, scale: f32 },
+    // Polynomial { poly_coef: Vec<f32>, scale: f32 },
     Exponential { slope: f32, scale: f32 },
 }
 
-fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
+pub fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
     let mut poly_coef = Vec::with_capacity(chebyshev_coefs.len());
     poly_coef.resize(chebyshev_coefs.len(), 0.0);
 
@@ -56,33 +57,55 @@ fn cheb2poly(chebyshev_coefs: &[f32]) -> Vec<f32> {
     }
     poly_coef
 }
+
 impl Background {
     pub fn render(&self, intensities: &mut [f32], positions: &[f32]) {
+        // assume that intensities is zeroed
         let iterator = intensities.iter_mut().zip(positions);
 
         match self {
             Background::None => (),
-            Background::Polynomial { poly_coef, scale } => {
-                for (intensity, pos) in iterator {
-                    *intensity += scale * polynomial_at(poly_coef, *pos);
+            Background::Chebyshev { coef, scale } => {
+                let poly_coef = cheb2poly(coef);
+                let mut d_max = std::f32::MIN;
+                let mut d_min = std::f32::MAX;
+                for (i, (intensity, _)) in iterator.enumerate() {
+                    let p = (i as f32 / (positions.len() - 1) as f32 - 0.5) * 2.0;
+                    // map to [-1, 1]
+                    let d = polynomial_at(&poly_coef, p);
+
+                    d_max = d_max.max(d);
+                    d_min = d_min.min(d);
+
+                    *intensity += d;
+                }
+
+                for i in intensities.iter_mut() {
+                    *i = (*i - d_min) / (d_max - d_min) * scale;
                 }
             }
             Background::Exponential { slope, scale } => {
+                let mut d_max = std::f32::MIN;
+                let mut d_min = std::f32::MAX;
                 for (intensity, pos) in iterator {
-                    *intensity += scale * exp_at(*slope, *pos);
+                    let d = exp_at(*slope, *pos);
+                    d_max = d_max.max(d);
+                    d_min = d_min.min(d);
+                    *intensity += d;
+                }
+
+                for i in intensities.iter_mut() {
+                    *i = (*i - d_min) / (d_max - d_min) * scale;
                 }
             }
         }
     }
 
-    pub fn chebyshev_polynomial(chebyshev_coefs: &[f32], scale: f32) -> Self {
-        if chebyshev_coefs.is_empty() {
-            return Self::None;
-        }
-
-        Self::Polynomial {
-            poly_coef: cheb2poly(chebyshev_coefs),
-            scale,
+    pub fn bkg_coefs(&self) -> Option<usize> {
+        match self {
+            Background::None => None,
+            Background::Chebyshev { coef, .. } => Some(coef.len() + 1),
+            Background::Exponential { .. } => Some(2),
         }
     }
 }

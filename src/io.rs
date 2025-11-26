@@ -1,6 +1,8 @@
 use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -17,10 +19,33 @@ use serde::Serialize;
 
 use crate::cfg::SimulationKind;
 use crate::cfg::TextureMeasurement;
+use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
 use crate::pattern::Intensities;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HKLDisplayMode {
+    Standard { normalized: bool },
+    Structure { normalized: bool },
+}
+
+impl FromStr for HKLDisplayMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "standard" => Ok(HKLDisplayMode::Standard { normalized: false }),
+            "structure" => Ok(HKLDisplayMode::Structure { normalized: false }),
+            "standard-n" => Ok(HKLDisplayMode::Standard { normalized: true }),
+            "structure-n" => Ok(HKLDisplayMode::Structure { normalized: true }),
+            _ => Err(format!(
+                "Invalid Mode: {s}. Expected ('standard'|'structure')[-n]."
+            )),
+        }
+    }
+}
 
 #[derive(Args, Clone)]
 pub struct Opts {
@@ -45,10 +70,10 @@ pub struct Opts {
 
     #[arg(
         long,
-        default_value_t = false,
-        help = "show simulated intensities and hkls for each phase and exit"
+        default_value = None,
+        help = "show simulated intensities and hkls for each phase and exit. Either 'standard' or 'structure'. If 'standard-n' or 'structure-n' is specified, intensities will be normalized."
     )]
-    pub display_hkls: bool,
+    pub display_hkls: Option<HKLDisplayMode>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -56,11 +81,15 @@ pub enum PatternMeta {
     Strains(Array3<f32>),
     VolumeFractions(Array2<f32>),
     WeightFractions(Array2<f32>),
-    Etas(Array1<f32>),
+    DsEtas(Array2<f32>),
+    Mustrains(Array2<f32>),
+    MustrainEtas(Array2<f32>),
     MeanDsNm(Array2<f32>),
-    CagliotiParams(Array2<f32>),
+    InstrumentParameters(Array2<f32>),
     ImpuritySum(Array1<f32>),
+    ImpurityMax(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
+    BackgroundParameters(Array2<f32>),
     BinghamODFParams {
         // patterns, active phases, quaternion
         orientations: Array3<f32>,
@@ -96,13 +125,17 @@ impl PatternMeta {
             VolumeFractions(x) => Self::push_arr(w, x, "volume_fractions", meta_names),
             WeightFractions(x) => Self::push_arr(w, x, "weight_fractions", meta_names),
             Strains(x) => Self::push_arr(w, x, "strains", meta_names),
-            Etas(x) => Self::push_arr(w, x, "etas", meta_names),
             ImpuritySum(x) => Self::push_arr(w, x, "impurity_sum", meta_names),
+            ImpurityMax(x) => Self::push_arr(w, x, "impurity_max", meta_names),
             SampleDisplacementMuM(x) => {
                 Self::push_arr(w, x, "sample_displacement_mu_m", meta_names)
             }
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
-            CagliotiParams(x) => Self::push_arr(w, x, "caglioti_params", meta_names),
+            DsEtas(x) => Self::push_arr(w, x, "ds_etas", meta_names),
+            InstrumentParameters(x) => Self::push_arr(w, x, "instrument_parameters", meta_names),
+            BackgroundParameters(x) => Self::push_arr(w, x, "background_parameters", meta_names),
+            Mustrains(x) => Self::push_arr(w, x, "mustrain", meta_names),
+            MustrainEtas(x) => Self::push_arr(w, x, "mustrain_etas", meta_names),
             BinghamODFParams { orientations, ks } => {
                 Self::push_arr(w, orientations, "bingham_odf_orientations", meta_names)?;
                 Self::push_arr(w, ks, "bingham_odf_ks", meta_names)

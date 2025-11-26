@@ -1,8 +1,9 @@
 use std::str::FromStr;
 
 use itertools::Itertools;
+use log::warn;
 
-use crate::math::linalg::{Mat4, Vec3};
+use crate::math::linalg::{Mat3, Mat4, Vec3};
 
 pub struct SymOp {
     mat: Mat4<f64>,
@@ -11,6 +12,10 @@ pub struct SymOp {
 impl SymOp {
     pub fn apply(&self, pos: &Vec3<f64>) -> Vec3<f64> {
         self.mat.homog_mul(pos)
+    }
+
+    pub fn transform_orientation(&self, ori: &Mat3<f64>) -> Mat3<f64> {
+        self.mat.homog_mul_mat(ori)
     }
 }
 
@@ -107,6 +112,18 @@ fn parse_xyz(mut s: &str) -> Result<[f64; 4], String> {
                 output[3] += coef;
                 break;
             }
+            Some('t') => {
+                // handle 't' just like a 1 and emit a warning
+                //
+                // 't' is not in the spec for CIF but for some reason
+                // is in a CIF I received which was produced using vesta.
+                // I could not reproduce vesta generating the same CIF when
+                // loading and re-saving, but they just treat it like a constant
+                // offset, so I will, too.
+                s = s.split_once('t').expect("we know the first character").1;
+                warn!("Found 't' as direction in symop. Treating as constant.");
+                output[3] += coef;
+            }
             Some(a) => {
                 return Err(format!(
                     "Invalid direction. Expected x, y, or z, but got {a}"
@@ -167,6 +184,19 @@ mod test {
     fn parse_coef_err() {
         let coef = parse_coef("1/x").expect_err("invalid coef");
         assert_eq!(coef, "Expected integer denominator of fraction while parsing symmetry operation coefficient. Got '1/x'")
+    }
+
+    #[test]
+    fn ignore_t_in_symop() {
+        let op: SymOp = "x+1/3t, -y+x, -3z+1/2t".parse().expect("valid symop");
+
+        let exp = Mat4::from_rows([
+            [1.0, 0.0, 0.0, 1.0 / 3.0],
+            [1.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -3.0, 1.0 / 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        assert_eq!(op.mat, exp);
     }
 
     #[test]

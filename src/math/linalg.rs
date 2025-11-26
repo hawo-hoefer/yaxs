@@ -22,6 +22,30 @@ pub type Vec4<T> = ColVec<T, 4>;
 pub type Mat3<T> = Mat<T, 3, 3>;
 pub type Mat4<T> = Mat<T, 4, 4>;
 
+impl<T, const ROWS: usize, const COLS: usize> std::fmt::Display for Mat<T, ROWS, COLS>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = f.precision().to_owned().unwrap_or(3);
+        let w = f.width().to_owned().unwrap_or(6);
+        write!(f, "Mat{ROWS}x{COLS}([\n")?;
+        for row in 0..ROWS {
+            write!(f, "  [")?;
+            for col in 0..COLS {
+                write!(f, "{v:w$.*}", p, w = w, v = self[(row, col)])?;
+                if col != COLS - 1 {
+                    f.write_str(", ")?;
+                }
+            }
+            f.write_str("],\n")?;
+        }
+        f.write_str("])")?;
+
+        Ok(())
+    }
+}
+
 impl<T, const ROWS: usize> std::ops::Index<usize> for ColVec<T, ROWS> {
     type Output = T;
 
@@ -716,6 +740,34 @@ impl<T> Mat<T, 4, 4> {
             g * rhs[0] + h * rhs[1] + i * rhs[2] + z,
         )
     }
+
+    /// Treating self as a homogenous matrix, transform a Mat3
+    ///
+    /// * `rhs`: vector to transform
+    pub fn homog_mul_mat(&self, rhs: &Mat3<T>) -> Mat3<T>
+    where
+        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + One + Copy + AddAssign<T>,
+    {
+        let mut m = Mat4::zeros();
+        for r in 0..rhs.rows() {
+            for c in 0..rhs.cols() {
+                m[(r, c)] = rhs[(r, c)];
+            }
+        }
+        m[(3, 3)] = T::one();
+
+        let r_ = self.matmul(&m);
+
+        let mut ret = Mat3::zeros();
+
+        for r in 0..ret.rows() {
+            for c in 0..ret.cols() {
+                ret[(r, c)] = r_[(r, c)];
+            }
+        }
+
+        ret
+    }
 }
 
 impl<T, const N: usize> Mat<T, N, N> {
@@ -999,38 +1051,6 @@ where
             seq.serialize_element(v)?;
         }
         seq.end()
-    }
-}
-
-impl<T, const ROWS: usize, const COLS: usize> std::fmt::Display for Mat<T, ROWS, COLS>
-where
-    T: std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Mat<{ROWS}, {COLS}>([")?;
-        let not_1d = ROWS > 1 && COLS > 1;
-
-        if not_1d {
-            write!(f, "\n")?;
-        }
-        for row in 0..ROWS {
-            if not_1d {
-                write!(f, "    ")?;
-            }
-            write!(f, "[")?;
-            for col in 0..COLS {
-                write!(f, "{}", self[(row, col)])?;
-                if col != COLS - 1 {
-                    write!(f, ", ")?;
-                }
-            }
-            write!(f, "]")?;
-            if not_1d {
-                write!(f, "\n")?;
-            }
-        }
-        write!(f, "])")?;
-        Ok(())
     }
 }
 

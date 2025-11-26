@@ -1,4 +1,4 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 
 /// plack's constant in ev * s = ev * hz^-1
 pub const H_EV_S: f64 = 4.135_667_696e-15f64;
@@ -18,6 +18,8 @@ pub const MU_0_N_A2: f64 = 1.25663706127e-6;
 /// vacuum permittivity in F m^-1
 pub const EPS_0_F_M1: f64 = 8.8541788188e-12;
 
+pub const SQRT_8_LN_2: f64 = 2.3548200450309493;
+
 pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
     // e = h * c / lambda
     // lambda = h * c / e
@@ -25,19 +27,11 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
     H_EV_S * C_M_S / e_kev * 1e7
 }
 
-/// Calculate Caglioti broadening for a position
-/// $FWHM(\theta) = u \tan(\theta)^2 + v \tan(\theta) + w$
-///
-/// * `u`: parameter u
-/// * `v`: parameter v
-/// * `w`: parameter w
-/// * `theta_rad`: theta in radians
-pub fn caglioti(u: f64, v: f64, w: f64, theta: f64) -> f64 {
-    u * (theta).tan().powi(2) + v * theta.tan() + w
-}
-
-// Scherrer broadening constant
-const K: f64 = 0.9;
+/// Scherrer broadening constant
+//
+/// like GSAS-II, we use the volume-weighted domain size, and therefore
+/// can set K to 1
+const K: f64 = 1.0;
 
 /// calculate scherrer broadening in angle dispersive XRD
 ///
@@ -73,29 +67,28 @@ pub fn lorentz_factor(theta_rad: f64) -> f64 {
 }
 
 pub fn gauss(dx: f32, sigma: f32) -> f32 {
-    (-0.5 * (dx / sigma).powi(2)).exp() / (TAU * sigma.powi(2)).sqrt()
+    (-0.5 * (dx / sigma).powi(2)).exp() * std::f32::consts::FRAC_2_SQRT_PI / sigma
 }
 
 pub fn lorentz(dx: f32, gamma: f32) -> f32 {
-    1.0 / ((1.0 + (dx / gamma).powi(2)) * PI * gamma)
+    gamma / ((gamma.powi(2) + dx.powi(2)) * PI)
 }
 
 pub fn pseudo_voigt(dx: f32, eta: f32, fwhm: f32) -> f32 {
     // sigma = np.sqrt(1 / (2 * np.log(2))) * 0.5 * fwhm
     // fwhm = 2 * sqrt(2 ln(2)) sigma
     // sigma = fwhm / (2 sqrt(2 ln 2))
-    let two_sqrt_ln_2 = 2.0 * (2.0f32.ln() * 2.0).sqrt();
-    let sigma = (1.0 / two_sqrt_ln_2) * fwhm;
+    let sigma = fwhm / SQRT_8_LN_2 as f32;
     let gamma = fwhm / 2.0;
     eta * lorentz(dx, gamma) + (1.0 - eta) * gauss(dx, sigma)
 }
 
-pub fn sample_displacement_delta_two_theta_rad(
+pub fn sample_displacement_delta_theta_rad(
     displacement_mu_m: f64,
     goniometer_radius_mm: f64,
     theta_rad: f64,
 ) -> f64 {
-    -2.0 * displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
+    -displacement_mu_m / (goniometer_radius_mm * 1e3) * theta_rad.cos()
 }
 
 pub mod acm757 {

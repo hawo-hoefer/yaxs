@@ -8,15 +8,16 @@ pub mod math;
 pub mod noise;
 pub mod pattern;
 pub mod preferred_orientation;
+pub mod scatter;
 pub mod site;
 pub mod species;
 pub mod structure;
-pub mod strain;
-pub mod lattice;
-pub mod peak_sim;
 pub mod symop;
+pub mod lattice;
+pub mod strain;
+pub mod peak_sim;
 
-#[cfg(not(feature = "cpu-only"))]
+#[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;
 
 #[allow(clippy::uninit_vec)]

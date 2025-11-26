@@ -26,16 +26,20 @@ use serde::{Deserialize, Serialize};
 mod texture;
 
 use crate::math::e_kev_to_lambda_ams;
-use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
+use crate::pattern::adxrd::{
+    ADXRDMeta, DiscretizeAngleDispersive, EmissionLine, InstrumentParameters,
+};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
-use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
+use crate::pattern::{
+    get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
+};
 use crate::preferred_orientation::BinghamParams;
 use crate::structure::Structure;
 use crate::strain::Strain;
 
 pub use self::texture::TextureMeasurement;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub kind: SimulationKind,
@@ -166,15 +170,58 @@ pub struct AngleDispersive {
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
-    pub caglioti: Caglioti,
-    pub background: BackgroundSpec,
+    pub instrument_parameters: Option<InstrumentParameterCfg>,
+    pub background: Option<BackgroundSpec>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CagliotiKind {
+    Raw,
+    GSAS,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Caglioti {
+pub struct InstrumentParameterCfg {
+    pub kind: Option<CagliotiKind>,
     pub u: Parameter<f64>,
     pub v: Parameter<f64>,
     pub w: Parameter<f64>,
+    pub x: Parameter<f64>,
+    pub y: Parameter<f64>,
+    pub z: Parameter<f64>,
+}
+
+impl InstrumentParameterCfg {
+    pub fn mean(&self) -> InstrumentParameters {
+        InstrumentParameters::new(
+            self.u.mean(),
+            self.v.mean(),
+            self.w.mean(),
+            self.x.mean(),
+            self.y.mean(),
+            self.z.mean(),
+        )
+    }
+
+    pub fn generate(&self, rng: &mut impl Rng) -> InstrumentParameters {
+        let mut u = self.u.generate(rng);
+        let mut v = self.v.generate(rng);
+        let mut w = self.w.generate(rng);
+        let x = self.x.generate(rng);
+        let y = self.y.generate(rng);
+        let z = self.z.generate(rng);
+
+        match self.kind.unwrap_or(CagliotiKind::Raw) {
+            CagliotiKind::Raw => (),
+            CagliotiKind::GSAS => {
+                u /= 10000.0;
+                v /= 10000.0;
+                w /= 10000.0;
+            }
+        }
+
+        InstrumentParameters::new(u, v, w, x, y, z)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -185,43 +232,90 @@ pub struct EnergyDispersive {
     pub beamline: Beamline,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
     pub noise: Option<NoiseSpec>,
     pub texture_measurement: Option<TextureMeasurement>,
+    pub randomly_scale_peaks: Option<RandomlyScalePeaks>,
 
     pub abstol: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone, Debug)]
+pub struct RandomlyScalePeaks {
+    pub scale: Parameter<f64>,
+    pub probability: Probability,
+}
+
+impl RandomlyScalePeaks {
+    pub fn scale_peak(&self, peak_weight: f64, rng: &mut impl Rng) -> f64 {
+        if self.probability.generate_bool(rng) {
+            peak_weight * self.scale.generate(rng)
+        } else {
+            peak_weight
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
-    pub max_concentration_subset_dim: Option<usize>,
+    pub concentration_subset: Option<ConcentrationSubset>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
-    pub eta: Parameter<f64>,
     pub structure_permutations: usize,
 }
 
 pub struct Sample {
-    eta: f64,
+    ds_eta: Box<[f64]>,
     mean_ds_nm: Box<[f64]>,
+    mustrain: Box<[f64]>,
+    mustrain_eta: Box<[f64]>,
     impurity_peaks: Box<[ImpurityPeak]>,
     struct_ids: Box<[usize]>,
 }
 
 impl SampleParameters {
     pub fn generate(&self, rng: &mut impl Rng) -> Sample {
-        let eta = self.eta.generate(rng);
-
         let mean_ds_nm = self
             .structures
             .iter()
             .map(|s| s.mean_ds_nm.generate(rng))
+            .collect_vec()
+            .into_boxed_slice();
+
+        let ds_eta = self
+            .structures
+            .iter()
+            .map(|x| x.ds_eta.generate(rng))
+            .collect_vec()
+            .into_boxed_slice();
+
+        let mustrain = self
+            .structures
+            .iter()
+            .map(|x| {
+                x.mustrain
+                    .as_ref()
+                    .map(|x| x.amplitude.generate(rng))
+                    .unwrap_or(0.0)
+            })
+            .collect_vec()
+            .into_boxed_slice();
+
+        let mustrain_eta = self
+            .structures
+            .iter()
+            .map(|x| {
+                x.mustrain
+                    .as_ref()
+                    .map(|x| x.eta.generate(rng))
+                    .unwrap_or(0.0)
+            })
             .collect_vec()
             .into_boxed_slice();
 
@@ -237,10 +331,12 @@ impl SampleParameters {
             .into();
 
         Sample {
-            eta,
+            ds_eta,
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
+            mustrain,
+            mustrain_eta,
         }
     }
 }
@@ -282,7 +378,7 @@ impl ToDiscretize {
         rng: &mut impl Rng,
     ) -> DiscretizeAngleDispersive {
         let AngleDispersive {
-            caglioti: Caglioti { u, v, w },
+            instrument_parameters,
             background,
             emission_lines,
             n_steps: _,
@@ -292,16 +388,19 @@ impl ToDiscretize {
         } = angle_dispersive;
 
         let Sample {
-            eta,
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
         } = self.sample_parameters.generate(rng);
 
-        let u = u.generate(rng);
-        let v = v.generate(rng);
-        let w = w.generate(rng);
-        let background = background.generate_bkg(rng);
+        let background = background
+            .as_ref()
+            .map(|x| x.generate_bkg(rng))
+            .unwrap_or(crate::background::Background::None);
+
         let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
         let vol_fractions = vf_generator.generate(rng);
@@ -324,13 +423,19 @@ impl ToDiscretize {
             meta: ADXRDMeta {
                 vol_fractions,
                 weight_fractions,
-                eta,
+
                 mean_ds_nm,
-                u,
-                v,
-                w,
-                background,
+                ds_eta,
+                mustrain,
+                mustrain_eta,
+
                 sample_displacement_mu_m,
+
+                instrument_parameters: instrument_parameters
+                    .as_ref()
+                    .map(|x| x.generate(rng))
+                    .unwrap_or(InstrumentParameters::zero()),
+                background,
             },
         }
     }
@@ -343,10 +448,12 @@ impl ToDiscretize {
         rng: &mut impl Rng,
     ) -> DiscretizeEnergyDispersive {
         let Sample {
-            eta,
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
+            ds_eta: _,
+            mustrain: _,
+            mustrain_eta: _,
         } = self.sample_parameters.generate(rng);
 
         let vol_fractions = vf_generator.generate(rng);
@@ -368,10 +475,27 @@ impl ToDiscretize {
             meta: EDXRDMeta {
                 vol_fractions,
                 weight_fractions,
-                eta,
                 mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),
+                eta: todo!(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn deser_instrument_param() {
+        let _err = serde_yaml::from_str::<InstrumentParameterCfg>(
+            "
+u: [0.0, -0.25]
+v: [-0.25, 0.0]
+w: [0.0, -0.25]
+",
+        )
+        .expect_err("invalid range parameters");
     }
 }

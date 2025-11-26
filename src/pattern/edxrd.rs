@@ -279,66 +279,64 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let n_phases = self.common.indices.len();
         match data {
             VolumeFractions(ref mut dst) => {
-                for i in 0..n_phases {
-                    dst[(pat_id, i)] = self.meta.vol_fractions[i] as f32;
-                }
-            }
-            Strains(ref mut dst) => {
-                for i in 0..n_phases {
-                    let flat_idx = self.common.idx(i);
-                    let strain = &self.common.sim_res.all_strains[flat_idx];
-
-                    for j in 0..6 {
-                        dst[(pat_id, i, j)] = strain.0[j] as f32;
+                        for i in 0..n_phases {
+                            dst[(pat_id, i)] = self.meta.vol_fractions[i] as f32;
+                        }
                     }
-                }
-            }
-            Etas(dst) => {
-                dst[pat_id] = self.meta.eta as f32;
-            }
-            MeanDsNm(dst) => {
-                for i in 0..n_phases {
-                    dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
-                }
-            }
-            ImpuritySum(dst) => {
-                dst[pat_id] = self
-                    .common
-                    .impurity_peaks
-                    .iter()
-                    .map(|x| x.peak.i_hkl as f32)
-                    .sum();
-            }
-            CagliotiParams(_) => unreachable!("No Caglioti parameters in EDXRD"),
-            SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
-            BinghamODFParams { orientations, ks } => {
-                for (i, odf_params) in (0..n_phases)
-                    .filter_map(|i| {
-                        let flat_idx = self.common.idx(i);
-                        self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
-                    })
-                    .enumerate()
-                {
-                    orientations[(pat_id, i, 0)] = odf_params.orientation[0] as f32;
-                    orientations[(pat_id, i, 1)] = odf_params.orientation[1] as f32;
-                    orientations[(pat_id, i, 2)] = odf_params.orientation[2] as f32;
-                    orientations[(pat_id, i, 3)] = odf_params.orientation[3] as f32;
+            Strains(ref mut dst) => {
+                        for i in 0..n_phases {
+                            let flat_idx = self.common.idx(i);
+                            let strain = &self.common.sim_res.all_strains[flat_idx];
 
-                    let phase_ks = &odf_params.ks;
-                    ks[(pat_id, i, 0)] = phase_ks[0] as f32;
-                    ks[(pat_id, i, 1)] = phase_ks[1] as f32;
-                    ks[(pat_id, i, 2)] = phase_ks[2] as f32;
-                    ks[(pat_id, i, 3)] = phase_ks[3] as f32;
-                }
-            }
+                            for j in 0..6 {
+                                dst[(pat_id, i, j)] = strain.0[j] as f32;
+                            }
+                        }
+                    }
+            DsEtas(_dst) => {
+                        for _ in 0..n_phases {
+                            // _dst[(pat_id, i)] = self.meta.eta as f32;
+                            todo!("adjust edxrd eta");
+                        }
+                    }
+            MeanDsNm(dst) => {
+                        for i in 0..n_phases {
+                            dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
+                        }
+                    }
+            ImpuritySum(dst) => {
+                        dst[pat_id] = self
+                            .common
+                            .impurity_peaks
+                            .iter()
+                            .map(|x| x.peak.i_hkl as f32)
+                            .sum();
+                    }
+            ImpurityMax(dst) => {
+                        dst[pat_id] = self
+                            .common
+                            .impurity_peaks
+                            .iter()
+                            .map(|x| x.peak.i_hkl as f32)
+                            .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
+                            .unwrap_or(0.0);
+                    }
+            InstrumentParameters(_) => unreachable!("No Caglioti parameters in EDXRD"),
+            SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             WeightFractions(dst) => {
-                let Some(ref wfs) = self.meta.weight_fractions else {
-                    panic!("Can only call this if weight fractions were computed before.");
-                };
-                for i in 0..n_phases {
-                    dst[(pat_id, i)] = wfs[i] as f32;
-                }
-            }
+                        let Some(ref wfs) = self.meta.weight_fractions else {
+                            panic!("Can only call this if weight fractions were computed before.");
+                        };
+                        for i in 0..n_phases {
+                            dst[(pat_id, i)] = wfs[i] as f32;
+                        }
+                    }
+            BackgroundParameters(_) => {
+                        unreachable!("EDXRD measurements are currently implemented without background")
+                    }
+            Mustrains(_dst) => todo!(),
+            MustrainEtas(_dst) => todo!(),
+            BinghamODFParams { orientations, ks } => todo!(),
         }
     }
 
@@ -347,7 +345,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
-            Etas(Array1::<f32>::zeros(n_samples)),
+            DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
             MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_samples)),
@@ -364,6 +362,10 @@ impl Discretizer for DiscretizeEnergyDispersive {
             })
         }
 
+        // TODO: check background parameters
+        // if let Some(_) = bkg_params {
+        //     unreachable!("EDXRD simulation is implemented without background")
+        // }
         v
     }
 
@@ -374,7 +376,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
 
 pub struct JobGen<T> {
     cfg: EnergyDispersive,
-    to_discretize: ToDiscretize,
+    discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
     energies: Vec<f32>,
@@ -401,7 +403,7 @@ impl<T> JobGen<T> {
         Self {
             vf_generator,
             cfg,
-            to_discretize: discretize_info,
+            discretize_info,
             sim_params,
             rng,
             energies,
@@ -421,7 +423,7 @@ where
             return None;
         }
 
-        let job = self.to_discretize.generate_edxrd_job(
+        let job = self.discretize_info.generate_edxrd_job(
             &self.vf_generator,
             &self.cfg,
             &self.sim_params,
@@ -458,7 +460,7 @@ where
 
     fn get_job_params(&self) -> JobParams {
         let textured_phases = self.sim_params.texture_measurement.as_ref().map(|_| {
-            self.to_discretize
+            self.discretize_info
                 .sample_parameters
                 .structures
                 .iter()
@@ -468,9 +470,9 @@ where
 
         JobParams {
             abstol: self.sim_params.abstol,
-            n_phases: self.to_discretize.structures.len(),
+            n_phases: self.discretize_info.structures.len(),
             has_weight_fracs: self
-                .to_discretize
+                .discretize_info
                 .structures
                 .iter()
                 .all(|s| s.density.is_some()),

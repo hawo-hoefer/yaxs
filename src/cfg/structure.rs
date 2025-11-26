@@ -44,12 +44,20 @@ pub fn apply_strain_cfg(
     }
 }
 
-#[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct Mustrain {
+    pub amplitude: Parameter<f64>,
+    pub eta: Parameter<f64>,
+}
+
+#[derive(PartialEq, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
     pub preferred_orientation: Option<POCfg>,
     pub strain: Option<StrainCfg>,
     pub volume_fraction: Option<VolumeFraction>,
+    pub mustrain: Option<Mustrain>,
     pub mean_ds_nm: Parameter<f64>,
+    pub ds_eta: Parameter<f64>,
 }
