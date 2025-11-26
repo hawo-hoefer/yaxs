@@ -28,7 +28,7 @@ use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
-use crate::preferred_orientation::{BinghamODF, BinghamParams};
+use crate::preferred_orientation::BinghamParams;
 use crate::structure::{Strain, Structure};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -7,7 +7,6 @@ use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::noise::Noise;
 use itertools::Itertools;
-use log::debug;
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -282,7 +281,6 @@ pub struct JobGen<T> {
     vf_generator: VFGenerator,
     two_thetas: Vec<f32>,
     n: usize,
-    cur_job: Option<DiscretizeAngleDispersive>,
     rng: T,
 }
 
@@ -308,7 +306,6 @@ impl<T> JobGen<T> {
             vf_generator,
             two_thetas,
             n: 0,
-            cur_job: None,
             rng,
         }
     }

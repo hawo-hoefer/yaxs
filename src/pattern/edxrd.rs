@@ -1,16 +1,14 @@
 use itertools::Itertools;
-use log::{debug, info};
 use rand::Rng;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
-use crate::cfg::{EnergyDispersive, SimulationParameters, TextureMeasurement, ToDiscretize};
+use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
 use crate::pattern::lorentz_polarization_factor;
-use crate::preferred_orientation::BinghamODF;
 
 use super::{
     DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak, PeakRenderParams,
@@ -382,7 +380,6 @@ pub struct JobGen<T> {
     energies: Vec<f32>,
     n: usize,
     rng: T,
-    cur_job: Option<DiscretizeEnergyDispersive>,
 }
 
 impl<T> JobGen<T> {
@@ -408,7 +405,6 @@ impl<T> JobGen<T> {
             sim_params,
             rng,
             energies,
-            cur_job: None,
             n: 0,
         }
     }

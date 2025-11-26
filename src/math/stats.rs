@@ -1,6 +1,5 @@
 use itertools::Itertools;
-use rand::{Rng, SeedableRng};
-use rand_xoshiro::{Xoshiro256Plus, Xoshiro256PlusPlus};
+use rand::Rng;
 use serde::Serialize;
 
 use crate::math::linalg::{ColVec, Mat};

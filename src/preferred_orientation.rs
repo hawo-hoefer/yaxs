@@ -1,5 +1,4 @@
-use crate::math::linalg::{Mat3, Vec3, Vec4};
-use rand::Rng;
+use crate::math::linalg::{Vec3, Vec4};
 
 use crate::structure::Lattice;
 
@@ -9,19 +8,20 @@ pub struct BinghamParams {
     pub ks: Vec4<f64>,
 }
 
-pub const N_SAMPLES: usize = 2048;
-
 /// orientation distribution for perferred orientation in sample coordinates
+/// approximated via Kernel density estimation
 ///
 /// * `orientation`: orientation of the distribution
-/// * `axis_aligned_bingham_dist`: axis aligned bingham distribution
+/// * `axis_aligned_bingham_dist_samples`: axis aligned bingham distribution samples
+/// * `kappa`: kernel width parmeter
 #[derive(Clone, Debug)]
-pub struct BinghamODF {
+pub struct KDEBinghamODF {
     pub params: BinghamParams,
     pub axis_aligned_bingham_dist_samples: Vec<Vec4<f64>>,
+    pub kappa: f64,
 }
 
-impl BinghamODF {
+impl KDEBinghamODF {
     /// compute the weight scaling of a hkl peak according to the domain orientation
     /// distribution described by this bingham ODF
     ///
@@ -79,8 +79,8 @@ impl BinghamODF {
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
-        let kappa = 20.0f64;
-        let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
+        let norm_constant =
+            self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()));
 
         let mut weight = 0.0;
 
@@ -98,9 +98,9 @@ impl BinghamODF {
             // for testing it should be fine, but ideally we would want to scale
             // it properly, so XRD patterns produced using PO weighting
             // are compatible with Non preferred orientation ones
-            weight += (kappa * dot_with_beam_z).exp() * norm_constant;
+            weight += (self.kappa * dot_with_beam_z).exp() * norm_constant;
         }
-        weight /= N_SAMPLES as f64;
+        weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
         weight
     }

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cfg_if::cfg_if;
 use itertools::Itertools;
-use log::{debug, info, warn};
-use ndarray::{Array2, Array3, Array4};
+use log::{info, warn};
+use ndarray::{Array2, Array4};
 use rand::Rng;
 
 use crate::background::Background;

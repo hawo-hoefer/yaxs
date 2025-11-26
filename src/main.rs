@@ -8,14 +8,12 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::math::linalg::{ColVec, Mat4};
-use yaxs::math::stats::BinghamDistribution;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
 
-use yaxs::cfg::{Config, POCfg, SimulationKind, StructureDef};
+use yaxs::cfg::{Config, SimulationKind, StructureDef};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
     SimulationMetadata,

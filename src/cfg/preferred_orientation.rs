@@ -7,24 +7,39 @@ use crate::math::linalg::{ColVec, Mat, Mat4, Vec4};
 use crate::math::stats::{
     sample_unit_quaternion_subgroup_algorithm, BinghamDistribution, HitAndRunPolytopeSampler,
 };
-use crate::pattern::{
-    uniform_sample_no_replacement_knuth, uniform_sample_no_replacement_knuth_arr,
-};
-use crate::preferred_orientation::{BinghamODF, BinghamParams, N_SAMPLES};
+use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
+
+#[derive(Deserialize, Serialize, Copy, Clone, PartialEq, Debug)]
+pub struct KDEApprox {
+    n: usize,
+    kappa: f64,
+}
+
+impl Default for KDEApprox {
+    fn default() -> Self {
+        Self {
+            n: 2048,
+            kappa: 20.0,
+        }
+    }
+}
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
 pub enum POCfg {
     FullEpitaxialGrowth {
         k_max: f64,
         strength: Parameter<f64>,
+        sampling: Option<KDEApprox>,
     },
     SingleAxis {
         k_max: f64,
         strength: Parameter<f64>,
+        sampling: Option<KDEApprox>,
     },
     DirectBingham {
         k: Vec4<f64>,
         orientation: Vec4<f64>,
+        sampling: Option<KDEApprox>,
     },
 }
 
@@ -32,30 +47,41 @@ pub enum POCfg {
 pub enum POGenerator {
     FullEpitaxialGrowth {
         sampler: HitAndRunPolytopeSampler<13, 4>,
+        sampling: KDEApprox,
     },
     SingleAxis {
         sampler: HitAndRunPolytopeSampler<14, 3>,
+        sampling: KDEApprox,
     },
     Exact {
         k: Vec4<f64>,
         orientation: Vec4<f64>,
+        sampling: KDEApprox,
     },
 }
 
 impl POGenerator {
-    pub fn sample(&mut self, rng: &mut impl Rng) -> BinghamODF {
-        let (k, orientation) = match self {
-            POGenerator::FullEpitaxialGrowth { sampler } => {
+    pub fn sample(&mut self, rng: &mut impl Rng) -> KDEBinghamODF {
+        let (k, orientation, sampling) = match self {
+            POGenerator::FullEpitaxialGrowth { sampler, sampling } => {
                 let orientation = sample_unit_quaternion_subgroup_algorithm(rng);
-                (sampler.sample(rng), orientation)
+                (sampler.sample(rng), orientation, sampling)
             }
-            POGenerator::SingleAxis { sampler } => {
+            POGenerator::SingleAxis { sampler, sampling } => {
                 // k4 = k2 + k3 - k1
                 let k123 = sampler.sample(rng);
                 let orientation = sample_unit_quaternion_subgroup_algorithm(rng);
-                (k123.extend(k123[1] + k123[2] - k123[0]), orientation)
+                (
+                    k123.extend(k123[1] + k123[2] - k123[0]),
+                    orientation,
+                    sampling,
+                )
             }
-            POGenerator::Exact { k, orientation } => (k.clone(), orientation.clone()),
+            POGenerator::Exact {
+                k,
+                orientation,
+                sampling,
+            } => (k.clone(), orientation.clone(), sampling),
         };
 
         let mut indices = [0, 1, 2, 3];
@@ -66,14 +92,15 @@ impl POGenerator {
 
         let bingham_dist = BinghamDistribution::try_new(k.clone(), Mat4::identity())
             .expect("identity matrix is OK");
-        let mut bingham_samples = Vec::with_capacity(N_SAMPLES);
+        let mut bingham_samples = Vec::with_capacity(sampling.n);
         for _ in 0..bingham_samples.capacity() {
             bingham_samples.push(bingham_dist.sample(rng));
         }
 
-        BinghamODF {
+        KDEBinghamODF {
             params: BinghamParams { orientation, ks: k },
             axis_aligned_bingham_dist_samples: bingham_samples,
+            kappa: sampling.kappa,
         }
     }
 }
@@ -91,7 +118,11 @@ impl POCfg {
         // around produced sensible results for distributions over orientations,
         // so we're going with that until we encounter problems.
         match self {
-            FullEpitaxialGrowth { k_max, strength } => {
+            FullEpitaxialGrowth {
+                k_max,
+                strength,
+                sampling,
+            } => {
                 #[rustfmt::skip]
                 let a = Mat::from_rows([
                     // upper bounds
@@ -132,9 +163,16 @@ impl POCfg {
                     0.0, 0.0, // bipolar
                 ]);
                 let sampler = HitAndRunPolytopeSampler::try_new(a, b, 10000, 100, rng)?;
-                Ok(POGenerator::FullEpitaxialGrowth { sampler })
+                Ok(POGenerator::FullEpitaxialGrowth {
+                    sampler,
+                    sampling: sampling.unwrap_or_default(),
+                })
             }
-            SingleAxis { k_max, strength } => {
+            SingleAxis {
+                k_max,
+                strength,
+                sampling,
+            } => {
                 // corresponds to the circular mode of the bingham distribution
                 // k1 + k4 = k2 + k3
                 // k4 = k2 + k3 - k1
@@ -206,11 +244,19 @@ impl POCfg {
                     0.0, 0.0, // circular
                 ]);
                 let sampler = HitAndRunPolytopeSampler::try_new(a, b, 1000000, 1000, rng)?;
-                Ok(POGenerator::SingleAxis { sampler })
+                Ok(POGenerator::SingleAxis {
+                    sampler,
+                    sampling: sampling.unwrap_or_default(),
+                })
             }
-            DirectBingham { k, orientation } => Ok(POGenerator::Exact {
+            DirectBingham {
+                k,
+                orientation,
+                sampling,
+            } => Ok(POGenerator::Exact {
                 k: k.clone(),
                 orientation: orientation.clone(),
+                sampling: sampling.unwrap_or_default(),
             }),
         }
     }

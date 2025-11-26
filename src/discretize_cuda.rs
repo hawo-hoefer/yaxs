@@ -2,7 +2,6 @@ use std::cell::UnsafeCell;
 use std::ffi::{c_char, c_int, CStr};
 use std::sync::Arc;
 
-use itertools::Itertools;
 use log::{debug, error, info};
 
 use crate::background::Background;
@@ -341,7 +340,7 @@ where
     }
 
     let mut start_idx = 0;
-    for (i, job) in jobs.iter().enumerate() {
+    for job in jobs.iter() {
         let n_peaks = job.n_peaks_tot();
         patterns.push(ffi::CUDAPattern { start_idx, n_peaks });
         start_idx += n_peaks;

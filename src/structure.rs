@@ -16,9 +16,9 @@ use crate::cfg::{
 };
 use crate::cif::CIFContents;
 use crate::math::e_kev_to_lambda_ams;
-use crate::math::linalg::{Mat, Mat3, Vec3};
+use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::{BinghamODF, BinghamParams};
+use crate::preferred_orientation::{KDEBinghamODF, BinghamParams};
 use crate::site::Site;
 use crate::uninit_vec;
 
@@ -563,7 +563,7 @@ enum PossiblyTextureMeasurementPeaks {
 
 struct PeakSimResult {
     strain: Strain,
-    po: Option<BinghamODF>,
+    po: Option<KDEBinghamODF>,
     peaks: PossiblyTextureMeasurementPeaks,
     struct_id: usize,
     permutation_id: usize,
@@ -675,7 +675,7 @@ impl WriteCtx {
 }
 
 pub struct Alignment<'a> {
-    pub po: &'a BinghamODF,
+    pub po: &'a KDEBinghamODF,
     pub phi: f64,
     pub chi: f64,
 }
