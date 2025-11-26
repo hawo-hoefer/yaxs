@@ -33,7 +33,8 @@ use crate::pattern::{
     get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
 };
 use crate::preferred_orientation::MarchDollase;
-use crate::structure::{Strain, Structure};
+use crate::structure::Structure;
+use crate::strain::Strain;
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
