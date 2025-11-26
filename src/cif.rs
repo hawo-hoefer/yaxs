@@ -6,7 +6,8 @@ use log::warn;
 
 use crate::site::Site;
 use crate::species::Species;
-use crate::structure::{Lattice, SGClass};
+use crate::structure::SGClass;
+use crate::lattice::Lattice;
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive

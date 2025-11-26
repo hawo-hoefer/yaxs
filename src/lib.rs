@@ -12,6 +12,7 @@ pub mod site;
 pub mod species;
 pub mod structure;
 pub mod strain;
+pub mod lattice;
 pub mod symop;
 
 #[cfg(not(feature = "cpu-only"))]

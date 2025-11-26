@@ -1,6 +1,6 @@
 use crate::math::linalg::{Vec3, Vec4};
 
-use crate::structure::Lattice;
+use crate::lattice::Lattice;
 
 #[derive(Clone, Debug)]
 pub struct BinghamParams {
