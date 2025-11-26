@@ -1,7 +1,8 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::structure::{Strain, Structure};
+use crate::structure::Structure;
+use crate::strain::Strain;
 
 use super::{POCfg, Parameter, VolumeFraction};
 

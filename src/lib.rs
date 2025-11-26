@@ -11,6 +11,7 @@ pub mod preferred_orientation;
 pub mod site;
 pub mod species;
 pub mod structure;
+pub mod strain;
 pub mod symop;
 
 #[cfg(not(feature = "cpu-only"))]

@@ -30,7 +30,8 @@ use crate::pattern::adxrd::{ADXRDMeta, DiscretizeAngleDispersive, EmissionLine};
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{get_weight_fractions, ImpurityPeak, Peaks, RenderCommon, VFGenerator};
 use crate::preferred_orientation::BinghamParams;
-use crate::structure::{Strain, Structure};
+use crate::structure::Structure;
+use crate::strain::Strain;
 
 pub use self::texture::TextureMeasurement;
 
