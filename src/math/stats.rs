@@ -414,7 +414,6 @@ pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
     max_val: usize,
     rng: &mut impl Rng,
 ) -> [usize; N] {
-    // TODO: does this belong in stats?
     let mut samples = [0; N];
     let mut t = 0;
 
@@ -432,3 +431,30 @@ pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
 
     samples
 }
+
+/// sample integers uniformly without replacement from the interval [0, max_val)
+///
+/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
+///
+/// * `n`: number of samples
+/// * `max_val`: upper bound of the
+/// * `rng`: random number generator
+pub fn uniform_sample_no_replacement_knuth(
+    n: usize,
+    max_val: usize,
+    rng: &mut impl Rng,
+) -> Vec<usize> {
+    let mut samples = Vec::with_capacity(n);
+    let mut t = 0;
+    while samples.len() < n {
+        let u = rng.random_range(0.0..=1.0);
+        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
+            t += 1;
+        } else {
+            samples.push(t);
+            t += 1;
+        }
+    }
+    samples
+}
+

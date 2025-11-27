@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::background::Background;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
+use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
     e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
     scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
@@ -132,33 +133,6 @@ pub fn get_weight_fractions(
     }
 
     Some(mass_fractions.into())
-}
-
-/// sample integers uniformly without replacement from the interval [0, max_val)
-///
-/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
-///
-/// * `n`: number of samples
-/// * `max_val`: upper bound of the
-/// * `rng`: random number generator
-pub fn uniform_sample_no_replacement_knuth(
-    n: usize,
-    max_val: usize,
-    rng: &mut impl Rng,
-) -> Vec<usize> {
-    // TODO: does this belong in stats?
-    let mut samples = Vec::with_capacity(n);
-    let mut t = 0;
-    while samples.len() < n {
-        let u = rng.random_range(0.0..=1.0);
-        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
-            t += 1;
-        } else {
-            samples.push(t);
-            t += 1;
-        }
-    }
-    samples
 }
 
 #[derive(PartialEq, Clone, Debug, Serialize)]
