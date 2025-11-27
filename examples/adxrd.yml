@@ -37,15 +37,13 @@ sample_parameters:
       strain: !Maximum 0.005
       mean_ds_nm: 15.0
       ds_eta: [0.0, 1.0]
-      mustrain: [0, 1000]
-      mustrain_eta: [0.0, 1.0]
+      mustrain: {amplitude: [0, 1000], eta: [0.0, 1.0]}
       # volume_fraction: 0.4
     - path: ./cif/Na2CO3.cif
       strain: !Maximum 0.005
       mean_ds_nm: 15.0
       ds_eta: [0.0, 1.0]
-      mustrain: 0.0
-      mustrain_eta: 0.0
+      mustrain: {amplitude: 0, eta: 0}
       preferred_orientation:
         hkl: [1, 1, 1]
         r: 0.8
@@ -53,8 +51,7 @@ sample_parameters:
       strain: !Maximum 0.005
       mean_ds_nm: 15.0
       ds_eta: [0.0, 1.0]
-      mustrain: 0.0
-      mustrain_eta: 0.0
+      mustrain: {amplitude: 0, eta: 0}
 
 
 simulation_parameters:
