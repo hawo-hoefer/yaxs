@@ -19,6 +19,7 @@ sample_parameters:
       preferred_orientation: !DirectBingham
         k: [1000, 0.5, 0.5, 1.0]
         orientation: [0, 1, 0, 0]
+        sampling: {n: 128, kappa: 20}
 
 simulation_parameters:
   normalize: false
