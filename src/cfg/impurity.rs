@@ -7,6 +7,7 @@ use crate::pattern::{ImpurityPeak, Peak};
 use super::{Parameter, Probability};
 
 #[derive(Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 /// Specification for a phenomenological impurity peak
 ///
 /// * `d_hkl_ams`: d_hkl for the peak

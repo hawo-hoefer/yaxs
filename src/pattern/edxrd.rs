@@ -23,6 +23,7 @@ use super::{
 /// * `n_wiggler_magnets`: number of wiggler magnets
 /// * `distance_from_device_m`: distance of sample from device in m
 #[derive(Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Beamline {
     #[serde(skip_serializing)]
     e_crit_kev: f64,

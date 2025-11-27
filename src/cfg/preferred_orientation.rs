@@ -25,6 +25,7 @@ impl Default for KDEApprox {
 }
 
 #[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub enum POCfg {
     FullEpitaxialGrowth {
         k_max: f64,

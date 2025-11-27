@@ -136,6 +136,7 @@ pub fn get_weight_fractions(
 }
 
 #[derive(PartialEq, Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum ConcentrationSubset {
     MaxDim(usize),
     Probabilities(Vec<f64>),

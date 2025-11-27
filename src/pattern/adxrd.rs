@@ -22,8 +22,9 @@ pub struct ADXRDMeta {
     pub background: Background,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
 #[repr(C)]
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EmissionLine {
     // wavelength in amstrong
     pub wavelength_ams: f64,

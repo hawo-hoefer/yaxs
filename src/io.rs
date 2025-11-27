@@ -143,6 +143,7 @@ impl PatternMeta {
 }
 
 #[derive(Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Extra {
     pub cfg: SimulationKind,
     pub max_phases: usize,

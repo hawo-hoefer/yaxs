@@ -1,6 +1,5 @@
 use itertools::Itertools;
 use rand::Rng;
-use serde::Serialize;
 
 use crate::math::linalg::{ColVec, Mat};
 
@@ -57,7 +56,7 @@ pub fn std_normal_box_muller_tf(rng: &mut impl Rng) -> f64 {
 }
 
 /// A bingham distribution over elements of $S^{N-1}$
-#[derive(PartialEq, Debug, Clone, Serialize)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct BinghamDistribution<const N: usize> {
     a: Mat<f64, N, N>,
     k: ColVec<f64, N>,
@@ -66,7 +65,7 @@ pub struct BinghamDistribution<const N: usize> {
 
 /// Angular Centered Gaussian Distribution
 /// also called projected normal distribution
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct ACGDistribution<const N: usize> {
     omega: Mat<f64, N, N>,
     l: Mat<f64, N, N>,
