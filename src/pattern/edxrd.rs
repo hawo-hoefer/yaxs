@@ -299,10 +299,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     }
                 }
             }
-            DsEtas(_dst) => {
-                for _ in 0..n_phases {
-                    // _dst[(pat_id, i)] = self.meta.eta as f32;
-                    todo!("adjust edxrd eta");
+            DsEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
                 }
             }
             MeanDsNm(dst) => {
@@ -379,10 +378,13 @@ impl Discretizer for DiscretizeEnergyDispersive {
         use PatternMeta::*;
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
-            DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
-            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
             VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            Mustrains(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_samples)),
+            ImpurityMax(Array1::<f32>::zeros(n_samples)),
         ];
         if p.has_weight_fracs {
             v.push(WeightFractions(Array2::<f32>::zeros((
