@@ -75,10 +75,11 @@ impl KDEBinghamODF {
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
-        // just sample many orientations (in beamline coordinates) and compute
+        // sample many orientations (in beamline coordinates) and compute
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
+        // Von Mises-Fisher distribution normalization constant
         let norm_constant =
             self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()));
 
@@ -89,17 +90,14 @@ impl KDEBinghamODF {
                 .quaternion_multiplication(&domain_orientation_sample_coords);
             let hkl_in_beam_coords =
                 domain_orientation_beam_coords.quaternion_transform(&hkl_in_domain_coords);
+            // bingham_beam * domain_sample * hkl_domain * domain_beam^-1
             let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
-            // ad-hoc kernel density estimation
 
             // kernel density estimation using the von Mises-Fisher distribution
-            // but without the scaling factor
-            //
-            // for testing it should be fine, but ideally we would want to scale
-            // it properly, so XRD patterns produced using PO weighting
-            // are compatible with Non preferred orientation ones
-            weight += (self.kappa * dot_with_beam_z).exp() * norm_constant;
+            // normalization is applied below
+            weight += (self.kappa * dot_with_beam_z).exp();
         }
+        weight *= norm_constant;
         weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
         weight
