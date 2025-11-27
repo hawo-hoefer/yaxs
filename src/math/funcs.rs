@@ -47,6 +47,13 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
 
 /// calculate scherrer broadening in energy dispersive XRD
 ///
+/// The method is also described in 
+/// Gerward, Leif, S. Mo/rup, and H. Topso/e. 
+/// "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns." 
+/// Journal of Applied Physics 47.3 (1976): 822-825.
+///
+/// DOI: <https://doi.org/10.1063/1.322714>
+///
 /// * `wavelength`: wavelength in nanometers
 /// * `theta_rad`: theta in radians
 /// * `mean_ds`: mean domain size in nanometers

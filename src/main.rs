@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::InstrumentParameters;
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor, PeakRenderParams};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
@@ -298,6 +298,8 @@ fn main() {
                                 f_lorentz,
                                 mean_ds_nm,
                                 ds_eta,
+                                0.0,
+                                0.0,
                                 1.0,
                                 &energy_dispersive.beamline,
                             );

@@ -652,7 +652,7 @@ impl Peak {
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
-        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
+        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(2) * weight) as f32;
 
         PeakRenderParams {
             pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,
@@ -674,6 +674,8 @@ impl Peak {
         f_lorentz: f64,
         mean_ds_nm: f64,
         ds_eta: f64,
+        mustrain: f64,
+        mustrain_eta: f64,
         weight: f64,
         beamline: &Beamline,
     ) -> PeakRenderParams
@@ -702,10 +704,18 @@ where {
             * beamline_intensity
             * weight;
 
-        let fwhm = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
+        let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
+        // Gerward, Leif, S. Mo/rup, and H. Topso/e. 
+        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns." 
+        // Journal of Applied Physics 47.3 (1976): 822-825.
+        //
+        // DOI: <https://doi.org/10.1063/1.322714>
+        let mustrain_broad = mustrain * e_kev * 2.0;
 
-        let g_fwhm = (1.0 - ds_eta) * fwhm;
-        let l_fwhm = (1.0 - ds_eta) * fwhm;
+        let g_fwhm = ((1.0 - ds_eta) * size_broad * size_broad
+            + (1.0 - mustrain_eta) * mustrain_broad)
+            .sqrt();
+        let l_fwhm = ds_eta * size_broad + mustrain_eta * mustrain_broad;
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm, l_fwhm);
 

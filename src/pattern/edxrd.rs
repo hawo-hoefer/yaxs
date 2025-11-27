@@ -219,8 +219,16 @@ impl Discretizer for DiscretizeEnergyDispersive {
             mustrain_eta,
         } = &self.meta;
 
-        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm, ds_eta)
-            .map(move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta)| {
+        itertools::izip!(
+            0..self.common.n_phases(),
+            vol_fractions,
+            mean_ds_nm,
+            ds_eta,
+            mustrain,
+            mustrain_eta
+        )
+        .map(
+            move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
                 self.common.sim_res.all_simulated_peaks[flat_idx]
                     .iter()
@@ -230,22 +238,27 @@ impl Discretizer for DiscretizeEnergyDispersive {
                             f_lorentz,
                             *phase_mean_ds_nm,
                             *phase_ds_eta,
+                            *mus_phase,
+                            *mus_eta_phase,
                             *vf,
                             &self.beamline,
                         )
                     })
-            })
-            .flatten()
-            .chain(self.common.impurity_peaks.iter().map(move |ip| {
-                ip.peak.get_edxrd_render_params(
-                    *theta_rad,
-                    f_lorentz,
-                    ip.mean_ds_nm,
-                    ip.eta,
-                    1.0,
-                    &self.beamline,
-                )
-            }))
+            },
+        )
+        .flatten()
+        .chain(self.common.impurity_peaks.iter().map(move |ip| {
+            ip.peak.get_edxrd_render_params(
+                *theta_rad,
+                f_lorentz,
+                ip.mean_ds_nm,
+                ip.eta,
+                0.0,
+                0.0,
+                1.0,
+                &self.beamline,
+            )
+        }))
     }
 
     fn n_peaks_tot(&self) -> usize {
