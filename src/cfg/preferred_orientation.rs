@@ -10,6 +10,7 @@ use crate::math::stats::{
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct KDEApprox {
     n: usize,
     kappa: f64,

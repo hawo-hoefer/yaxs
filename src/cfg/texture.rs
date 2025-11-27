@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
+#[serde(deny_unknown_fields)]
 pub struct Linspace {
     pub range: (f64, f64),
     pub steps: usize,
@@ -51,6 +52,7 @@ impl IntoIterator for Linspace {
 
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
+#[serde(deny_unknown_fields)]
 pub struct TextureMeasurement {
     pub phi: Linspace,
     pub chi: Linspace,

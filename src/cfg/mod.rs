@@ -162,6 +162,7 @@ impl SimulationKind {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AngleDispersive {
     pub emission_lines: Box<[EmissionLine]>,
 
@@ -181,6 +182,7 @@ pub enum CagliotiKind {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct InstrumentParameterCfg {
     pub kind: Option<CagliotiKind>,
     pub u: Parameter<f64>,
@@ -225,6 +227,7 @@ impl InstrumentParameterCfg {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EnergyDispersive {
     pub n_steps: usize,
     pub energy_range_kev: (f64, f64),

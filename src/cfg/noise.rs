@@ -5,6 +5,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub enum NoiseSpec {
     Gaussian {
         sigma: Parameter<f64>,
