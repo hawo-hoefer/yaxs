@@ -2,7 +2,6 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -19,7 +18,6 @@ use serde::Serialize;
 
 use crate::cfg::SimulationKind;
 use crate::cfg::TextureMeasurement;
-use crate::math::linalg::Vec3;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
