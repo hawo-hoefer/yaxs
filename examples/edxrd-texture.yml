@@ -11,11 +11,11 @@ kind: !EnergyDispersive
       distance_from_device_m: 100
 
 sample_parameters:
-  eta: 0.5
   structure_permutations: 1
   structures:
     - path: ./cif/Ir_53813.cif
-      mean_ds_nm: 500.0
+      mean_ds_nm: 50.0
+      ds_eta: 0.5
       preferred_orientation: !DirectBingham
         k: [1000, 0.5, 0.5, 1.0]
         orientation: [0, 1, 0, 0]
