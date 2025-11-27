@@ -402,6 +402,7 @@ pub struct JobParams {
     pub has_weight_fracs: bool,
     pub textured_phases: Option<usize>,
     pub texture_measurement: Option<TextureMeasurement>,
+    pub bkg_params: Option<usize>,
 }
 
 pub struct PeakRenderParams {
@@ -724,11 +725,6 @@ where
     let mut metadata = T::init_meta_data(n_samples, p);
     info!("Initialized metadata for {n_samples} sample(s).");
 
-    // TODO: incorporate bkg_coefs into JobParams
-    // NOTE: currently, we are only able to render one kind of background per simulation
-    // should this ever change, we need to adapt this implementation
-    // let n_bkg_params = j.bkg().bkg_coefs();
-    // let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions, n_bkg_params);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
             let job = match job {

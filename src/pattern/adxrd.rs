@@ -1,4 +1,7 @@
-use super::{DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams, RenderCommon, VFGenerator};
+use super::{
+    DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams,
+    RenderCommon, VFGenerator,
+};
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -421,6 +424,7 @@ where
                 .all(|s| s.density.is_some()),
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
+            bkg_params: self.cfg.background.as_ref().map(|x| x.n_coefs()),
         }
     }
 }

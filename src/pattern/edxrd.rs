@@ -396,10 +396,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
             })
         }
 
-        // TODO: check background parameters
-        // if let Some(_) = bkg_params {
-        //     unreachable!("EDXRD simulation is implemented without background")
-        // }
+        if let Some(_) = p.bkg_params {
+            unreachable!("Backgrounds are currently not supported in EDXRD");
+        }
         v
     }
 
@@ -512,6 +511,7 @@ where
                 .all(|s| s.density.is_some()),
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
+            bkg_params: None,
         }
     }
 }

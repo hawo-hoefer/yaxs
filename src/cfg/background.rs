@@ -16,6 +16,13 @@ pub enum BackgroundSpec {
 }
 
 impl BackgroundSpec {
+    pub fn n_coefs(&self) -> usize {
+        match self {
+            BackgroundSpec::Chebyshev { coefs, .. } => coefs.len() + 1,
+            BackgroundSpec::Exponential { .. } => 2,
+        }
+    }
+
     pub fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
             BackgroundSpec::Chebyshev { ref coefs, scale } => {
