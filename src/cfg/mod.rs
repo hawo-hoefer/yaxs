@@ -34,8 +34,8 @@ use crate::pattern::{
     get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
 };
 use crate::preferred_orientation::BinghamParams;
-use crate::structure::Structure;
 use crate::strain::Strain;
+use crate::structure::Structure;
 
 pub use self::texture::TextureMeasurement;
 
@@ -451,9 +451,9 @@ impl ToDiscretize {
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
-            ds_eta: _,
-            mustrain: _,
-            mustrain_eta: _,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
         } = self.sample_parameters.generate(rng);
 
         let vol_fractions = vf_generator.generate(rng);
@@ -477,7 +477,9 @@ impl ToDiscretize {
                 weight_fractions,
                 mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),
-                eta: todo!(),
+                ds_eta,
+                mustrain,
+                mustrain_eta,
             },
         }
     }

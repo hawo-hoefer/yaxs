@@ -323,7 +323,7 @@ impl Structure {
                 let w = po.weight(&hkl, &self.lat, chi, phi);
                 i_hkl *= w;
             }
-            let d_hkl = 1.0 / g_hkl;
+
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
             let (ref mut i_hkl_map, ref mut hkls_map) = agg
                 .entry(d_spacing)

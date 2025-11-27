@@ -191,7 +191,9 @@ pub struct EDXRDMeta {
     pub vol_fractions: Box<[f64]>,
     pub weight_fractions: Option<Box<[f64]>>,
     pub mean_ds_nm: Box<[f64]>,
-    pub eta: f64,
+    pub ds_eta: Box<[f64]>,
+    pub mustrain: Box<[f64]>,
+    pub mustrain_eta: Box<[f64]>,
     pub theta_rad: f64,
 }
 
@@ -210,9 +212,11 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let EDXRDMeta {
             vol_fractions,
             mean_ds_nm,
-            eta,
+            ds_eta,
             theta_rad,
             weight_fractions: _,
+            mustrain,
+            mustrain_eta,
         } = &self.meta;
 
         itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
@@ -279,64 +283,92 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let n_phases = self.common.indices.len();
         match data {
             VolumeFractions(ref mut dst) => {
-                        for i in 0..n_phases {
-                            dst[(pat_id, i)] = self.meta.vol_fractions[i] as f32;
-                        }
-                    }
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.vol_fractions[i] as f32;
+                }
+            }
             Strains(ref mut dst) => {
-                        for i in 0..n_phases {
-                            let flat_idx = self.common.idx(i);
-                            let strain = &self.common.sim_res.all_strains[flat_idx];
+                for i in 0..n_phases {
+                    let flat_idx = self.common.idx(i);
+                    let strain = &self.common.sim_res.all_strains[flat_idx];
 
-                            for j in 0..6 {
-                                dst[(pat_id, i, j)] = strain.0[j] as f32;
-                            }
-                        }
+                    for j in 0..6 {
+                        dst[(pat_id, i, j)] = strain.0[j] as f32;
                     }
+                }
+            }
             DsEtas(_dst) => {
-                        for _ in 0..n_phases {
-                            // _dst[(pat_id, i)] = self.meta.eta as f32;
-                            todo!("adjust edxrd eta");
-                        }
-                    }
+                for _ in 0..n_phases {
+                    // _dst[(pat_id, i)] = self.meta.eta as f32;
+                    todo!("adjust edxrd eta");
+                }
+            }
             MeanDsNm(dst) => {
-                        for i in 0..n_phases {
-                            dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
-                        }
-                    }
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
+                }
+            }
             ImpuritySum(dst) => {
-                        dst[pat_id] = self
-                            .common
-                            .impurity_peaks
-                            .iter()
-                            .map(|x| x.peak.i_hkl as f32)
-                            .sum();
-                    }
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .sum();
+            }
             ImpurityMax(dst) => {
-                        dst[pat_id] = self
-                            .common
-                            .impurity_peaks
-                            .iter()
-                            .map(|x| x.peak.i_hkl as f32)
-                            .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
-                            .unwrap_or(0.0);
-                    }
+                dst[pat_id] = self
+                    .common
+                    .impurity_peaks
+                    .iter()
+                    .map(|x| x.peak.i_hkl as f32)
+                    .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
+                    .unwrap_or(0.0);
+            }
             InstrumentParameters(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             WeightFractions(dst) => {
-                        let Some(ref wfs) = self.meta.weight_fractions else {
-                            panic!("Can only call this if weight fractions were computed before.");
-                        };
-                        for i in 0..n_phases {
-                            dst[(pat_id, i)] = wfs[i] as f32;
-                        }
-                    }
+                let Some(ref wfs) = self.meta.weight_fractions else {
+                    panic!("Can only call this if weight fractions were computed before.");
+                };
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = wfs[i] as f32;
+                }
+            }
             BackgroundParameters(_) => {
-                        unreachable!("EDXRD measurements are currently implemented without background")
-                    }
-            Mustrains(_dst) => todo!(),
-            MustrainEtas(_dst) => todo!(),
-            BinghamODFParams { orientations, ks } => todo!(),
+                unreachable!("EDXRD measurements are currently implemented without background")
+            }
+            Mustrains(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain[i] as f32;
+                }
+            }
+            MustrainEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain_eta[i] as f32;
+                }
+            }
+            BinghamODFParams { orientations, ks } => {
+                for (i, bingham_odf) in (0..n_phases)
+                    .filter_map(|i| {
+                        let flat_idx = self.common.idx(i);
+                        self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
+                    })
+                    .enumerate()
+                {
+                    orientations[(pat_id, i, 0)] = bingham_odf.orientation[0] as f32;
+                    orientations[(pat_id, i, 1)] = bingham_odf.orientation[1] as f32;
+                    orientations[(pat_id, i, 2)] = bingham_odf.orientation[2] as f32;
+                    orientations[(pat_id, i, 3)] = bingham_odf.orientation[3] as f32;
+
+                    let phase_ks = &bingham_odf.ks;
+
+                    ks[(pat_id, i, 0)] = phase_ks[0] as f32;
+                    ks[(pat_id, i, 1)] = phase_ks[1] as f32;
+                    ks[(pat_id, i, 2)] = phase_ks[2] as f32;
+                    ks[(pat_id, i, 3)] = phase_ks[3] as f32;
+                }
+            }
         }
     }
 
