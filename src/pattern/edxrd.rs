@@ -219,43 +219,32 @@ impl Discretizer for DiscretizeEnergyDispersive {
             mustrain_eta,
         } = &self.meta;
 
-        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
-            .map(move |(phase_idx, vf, phase_mean_ds_nm)| {
+        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm, ds_eta)
+            .map(move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta)| {
                 let flat_idx = self.common.idx(phase_idx);
                 self.common.sim_res.all_simulated_peaks[flat_idx]
                     .iter()
                     .map(move |peak: &Peak| {
-                        let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+                        peak.get_edxrd_render_params(
                             *theta_rad,
                             f_lorentz,
                             *phase_mean_ds_nm,
+                            *phase_ds_eta,
                             *vf,
                             &self.beamline,
-                        );
-                        PeakRenderParams {
-                            pos: e_hkl_kev,
-                            intensity: peak_weight,
-                            fwhm,
-                            eta: *eta as f32,
-                        }
+                        )
                     })
             })
             .flatten()
             .chain(self.common.impurity_peaks.iter().map(move |ip| {
-                let (e_hkl_kev, _, fwhm) = ip.peak.get_edxrd_render_params(
+                ip.peak.get_edxrd_render_params(
                     *theta_rad,
                     f_lorentz,
                     ip.mean_ds_nm,
+                    ip.eta,
                     1.0,
                     &self.beamline,
-                );
-                let peak_weight = ip.peak.i_hkl;
-                PeakRenderParams {
-                    pos: e_hkl_kev,
-                    intensity: peak_weight as f32,
-                    fwhm,
-                    eta: ip.eta as f32,
-                }
+                )
             }))
     }
 

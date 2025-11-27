@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::InstrumentParameters;
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor, PeakRenderParams};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
@@ -293,17 +293,18 @@ fn main() {
                         SimulationKind::EnergyDispersive(energy_dispersive) => {
                             let theta_rad = energy_dispersive.theta_deg.to_radians();
                             let f_lorentz = lorentz_polarization_factor(theta_rad);
-                            let (pos, intens, fwhm) = p.get_edxrd_render_params(
+                            let rp = p.get_edxrd_render_params(
                                 theta_rad,
                                 f_lorentz,
                                 mean_ds_nm,
+                                ds_eta,
                                 1.0,
                                 &energy_dispersive.beamline,
                             );
 
-                            let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
+                            let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
 
-                            (pos, intens)
+                            (rp.pos, intens)
                         }
                     };
 

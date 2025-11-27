@@ -161,37 +161,6 @@ pub fn uniform_sample_no_replacement_knuth(
     samples
 }
 
-/// sample integers uniformly without replacement from the interval [0, max_val)
-///
-/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
-///
-/// * `n`: number of samples
-/// * `max_val`: upper bound of the sampling range
-/// * `rng`: random number generator
-pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
-    max_val: usize,
-    rng: &mut impl Rng,
-) -> [usize; N] {
-    // TODO: does this belong in stats?
-    let mut samples = [0; N];
-    let mut t = 0;
-
-    let mut n = 0;
-    while n < N {
-        let u = rng.random_range(0.0..=1.0);
-        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
-            t += 1;
-        } else {
-            samples[n] = t;
-            n += 1;
-            t += 1;
-        }
-    }
-
-    samples
-}
-
-
 #[derive(PartialEq, Clone, Debug, Serialize)]
 pub enum ConcentrationSubset {
     MaxDim(usize),
@@ -704,9 +673,10 @@ impl Peak {
         theta_rad: f64,
         f_lorentz: f64,
         mean_ds_nm: f64,
+        ds_eta: f64,
         weight: f64,
         beamline: &Beamline,
-    ) -> (f32, f32, f32)
+    ) -> PeakRenderParams
 where {
         // here, we apply intensity corrections to each peak, and
         // convert positions from d_hkl in Amstrong to energy in keV
@@ -722,6 +692,7 @@ where {
         // ev * e-10
         // g_hkl in ams = m^-10
         let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+
         let beamline_intensity = beamline.get_intensity(e_kev);
         let polarization_correction = edxrd_polarization_factor_horizontal_plane(theta_rad);
         let peak_weight = self.i_hkl
@@ -731,8 +702,19 @@ where {
             * beamline_intensity
             * weight;
 
-        let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, mean_ds_nm);
-        (e_kev as f32, peak_weight as f32, fwhm as f32)
+        let fwhm = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
+
+        let g_fwhm = (1.0 - ds_eta) * fwhm;
+        let l_fwhm = (1.0 - ds_eta) * fwhm;
+
+        let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm, l_fwhm);
+
+        PeakRenderParams {
+            pos: e_kev as f32,
+            intensity: peak_weight as f32,
+            fwhm: fwhm as f32,
+            eta: eta as f32,
+        }
     }
 }
 
@@ -757,7 +739,7 @@ where
     let n_samples = jobs.len();
     let mut metadata = T::init_meta_data(n_samples, p);
     info!("Initialized metadata for {n_samples} sample(s).");
-    
+
     // TODO: incorporate bkg_coefs into JobParams
     // NOTE: currently, we are only able to render one kind of background per simulation
     // should this ever change, we need to adapt this implementation
@@ -785,7 +767,7 @@ where
             let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
                 .expect("sizes must match");
         } else {
-	    let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
+        let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
             let mut peak_set = 0;
             for job in jobs {
                 // TODO: somehow encode that all samples have the same simulation type

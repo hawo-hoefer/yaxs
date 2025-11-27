@@ -45,18 +45,24 @@ pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
     (K * wavelength / (theta.cos() * mean_ds)).to_degrees()
 }
 
-/// calculate scherrer broadening in energy dispersive XRD from
-/// Ellmer, K., et al. Measurement Science and Technology 14.3 (2003): 336
-/// DOI: <https://doi.org/10.1088/0957-0233/14/3/313>
+/// calculate scherrer broadening in energy dispersive XRD
 ///
 /// * `wavelength`: wavelength in nanometers
 /// * `theta_rad`: theta in radians
 /// * `mean_ds`: mean domain size in nanometers
-pub fn scherrer_broadening_edxrd(d_hkl: f64, e_kev: f64, mean_ds: f64) -> f64 {
-    // from the paper above:
-    // mean_ds = K d_hkl E / fwhm
-    // fwhm = K d_Hkl E / mean_ds
-    K * d_hkl * e_kev / mean_ds
+pub fn scherrer_broadening_edxrd(theta_rad: f64, mean_ds: f64) -> f64 {
+    // $$\begin{align}
+    // \tau     &= \frac{K \lambda}{\beta \cos(\theta)} \\
+    // \lambda  &= \frac{hc}{E} \\
+    // \beta    &= \frac{\Delta E}{E} \tan(\theta) \\
+    // \tau     &= \frac{K \lambda}{ (\frac{\Delta E}{E} \tan(\theta) \cos(\theta))} \\
+    // \tau     &= \frac{K \lambda}{ (\frac{\Delta E}{E} \sin(\theta))} \\
+    // \tau     &= \frac{K h c}{E (\frac{\Delta E}{E} \sin(\theta))} \\
+    // \tau     &= \frac{K h c}{(\Delta E \sin(\theta))} \\
+    // \Delta E &= \frac{K h c}{\tau\sin\theta}
+    // \end{align}$$
+
+    return K * C_M_S * H_EV_S * 1e6 / (mean_ds * theta_rad.sin())
 }
 
 /// compute the lorentz polarization factor
