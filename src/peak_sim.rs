@@ -306,7 +306,6 @@ pub fn simulate_peaks(
                     _ = po_gen.sample(&mut rng);
                 }
 
-
                 std::thread::spawn(move || -> Result<(), String> {
                     loop {
                         let job: PeakSim = match job_receiver.recv() {
