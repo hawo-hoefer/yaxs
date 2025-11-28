@@ -21,8 +21,7 @@ are fixed for all simulations, while parameters specified as ranges will be samp
 | eta                       | both          |
 | max structure strain      | value         |
 | structure permuations     | value         |
-| preferred orientation hkl | value         |
-| preferred orientation r   | both          |
+| bingham texture           | (see below)   |
 | emission line wavelength  | value         |
 | emission line weight      | value         |
 | caglioti parameters       | both          |
@@ -126,9 +125,10 @@ sample_parameters:
                                                         # configuration using march-dollase model
     - path: phase-1.cif                                 # path to phase's cif, no preferred orientation here
     - path: phase-2-with-preferred-orientation.cif
-      preferred_orientation:                            # march parameters for preferred orientation (optional)
-        hkl: [1, 1, 1]                                  # axis of preferred orientation
-        r: 0.9                                          # march parameter
+      preferred_orientation: !DirectBingham             # (see below)
+        k: [1000, 0.5, 0.5, 1.0]
+        orientation: [0, 1, 0, 0]
+        sampling: {n: 128, kappa: 20}
       strain: !Maximum 0.01                             # optional strain specification
       volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
     - path: phase-3.cif
@@ -154,7 +154,7 @@ The optional field `impurities` contains a list of impurity peaks. They may be u
 
 ### Structure Definition
 The `structures` field specifies a list of phases and their modifications. 
-Preferred orientation and strain can be specified using fixed or range parameters,
+Strain can be specified using fixed or range parameters,
 and each phase's volume fraction may be fixed to specified values.
 
 ### Specifying Strain
@@ -193,6 +193,43 @@ Parameter ranges may be used to specify sampling ranges, but note that this may 
 non-invertible strain tensors. The order of the parameters is 
 `A[1, 1]`, `A[2, 1]`, `A[2, 2]`, `A[3, 1]`, `A[3, 2]`, `A[3, 3]`.
 
+### Specifyng Preferred Orientation
+Preferred orientation may be (optionally) specified using orientation distribution functions for the domains of each phase.
+
+Currently, three variants are implemented: 
+- Full epitaxial growth `FullEpitaxialGrowth`
+```yaml
+preferred_orientation: !FullEpitaxialGrowth
+    k_max: 1000                     # maximum value for bingham parameters
+    strength: [0, 1000]             # strength of the preferred orientation
+    sampling: {n: 1024, kappa: 20}  # sampling parameters for kernel density estimation
+```
+- Single axis alignment `SingleAxis`
+```yaml
+preferred_orientation: !SingleAxis
+    k_max: 1000          # maximum value for the bingham parameter
+    strength: [0, 1000]  # strength of preferred orientation
+    sampling: ...
+```
+- Directly specified bingham parameters `DirectBingham`
+```yaml
+preferred_orientation: !DirectBingham
+    k: [10, 2, 1, 0]                          # literal k parameters of axis aligned bingham distribution
+    orientation: [0.966, 0.149, 0.149, 0.149] # quaternion specifying rotation
+    sampling: ...
+```
+
+The bingham distribution parameters are saved in model output data. For each sample, 
+four Bingham distribution parameters (k) are generated. These are the diagonal entries
+of the bingham distribution matrix (we use a diagonal matrix).
+Additionally, an orientation is generated, specifying how the bingham distribution
+is rotated.
+
+To compute weighting of peaks according to a samples orientation distribution function, 
+it's Bingham distribution is sampled. The distribution of HKL directions are approximated
+using a kernel density estimation over directions (using a Von Mises-Fisher-Distribution).
+The KDE-Parameters n (number of samples) and kappa (kernel width) can be specified using
+the `sampling` key.
 
 ## 3. Simulation Parameters
 Here, simulation specific parameters are set.
@@ -205,6 +242,13 @@ simulation_parameters:
   randomly_scale_peaks:
     scale: [0.5, 1.5]
     probability: 0.5
+  texture_measurement:
+    phi: 
+      range: [-45, 45]
+      steps: 91
+    chi: 
+      range: [-45, 45]
+      steps: 10
 ```
 
 ### Randomly Scale Peak Intensities
@@ -215,3 +259,7 @@ but that may be beneficial for neural network training. This form of augmentatio
 make training for quantification more robust, as the network should in theory be pushed
 towards considering all peaks instead of only the largest few. Excessive (and non-balanced)
 scaling may also cause problems, so use at your own risk.
+
+### Texture measurement
+If phases have preferred orientation, goniometer phi and chi angles may be rastered. Activating Texture measurement produces `phi.steps * chi.steps` XRD patterns for each sample.
+Specify texture measurement settings as shown above.
