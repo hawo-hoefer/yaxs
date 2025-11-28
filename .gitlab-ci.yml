@@ -8,7 +8,7 @@ build:
   image: rust:1.83-bullseye
   before_script:
     - apt update -y
-    - apt install cmake -y
+    - apt install cmake clang -y
   script: 
     - cargo build --no-default-features
   artifacts:
