@@ -7,6 +7,8 @@ build:
   stage: build
   image: rust:1.83-bullseye
   script: 
+    - sudo apt update
+    - sudo apt install cmake
     - cargo build --no-default-features
   artifacts:
     paths:
