@@ -7,7 +7,7 @@ build:
   stage: build
   image: rust:1.83-bullseye
   script: 
-    - cargo build -F cpu-only
+    - cargo build --no-default-features
   artifacts:
     paths:
       - target
@@ -17,11 +17,11 @@ rustdoc:
   dependencies: [build]
   image: rust:1.83-bullseye
   script: 
-    - cargo doc -F cpu-only
+    - cargo doc --no-default-features
 
 test:
   stage: test
   dependencies: [build]
   image: rust:1.83-bullseye
   script:
-    - cargo test -F cpu-only
+    - cargo test --no-default-features
