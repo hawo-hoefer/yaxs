@@ -11,14 +11,14 @@ build:
     - apt install cmake clang -y
   script: 
     - cargo build --no-default-features
-  artifacts:
-    paths:
-      - target
 
 rustdoc:
   stage: doc
   dependencies: [build]
   image: rust:1.83-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
   script: 
     - cargo doc --no-default-features
 
@@ -26,5 +26,8 @@ test:
   stage: test
   dependencies: [build]
   image: rust:1.83-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
   script:
     - cargo test --no-default-features
