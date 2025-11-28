@@ -7,7 +7,7 @@ use log::{debug, error, info};
 use crate::background::cheb2poly;
 use crate::background::Background;
 use crate::noise::Noise;
-use crate::pattern::{Discretizer, PeakRenderParams};
+use crate::pattern::{DiscretizeSample, Discretizer, PeakRenderParams};
 use crate::uninit_vec;
 
 use self::ffi::Uniform;
@@ -186,29 +186,57 @@ extern "C" fn c_debug_handler(msg: *const c_char) {
     debug!("CUDA: {}", msg.to_str().expect("valid utf-8"));
 }
 
-pub fn discretize_peaks_cuda<T>(jobs: Vec<T>, two_thetas: &[f32]) -> Result<Vec<f32>, String>
+pub fn discretize_peaks_cuda<T>(
+    mut jobs: Vec<DiscretizeSample<T>>,
+    two_thetas: &[f32],
+) -> Result<Vec<f32>, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
     debug!("Collecting peak rendering info for CUDA-based rendering");
     use self::ffi::BkgSOA;
 
-    let n_peaks_tot: usize = jobs.iter().map(|job| job.n_peaks_tot()).sum();
+    let n_peaks_tot: usize = jobs
+        .iter()
+        .map(|job| match job {
+            DiscretizeSample::Standard(job) => job.n_peaks_tot(),
+            DiscretizeSample::TextureMeasurement(items) => {
+                items.iter().map(|x| x.n_peaks_tot()).sum()
+            }
+        })
+        .sum();
 
-    let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(jobs.len());
+    let num_peak_sets = jobs.iter().map(|job| job.n_patterns()).sum();
+
+    let jobs = {
+        let mut jobs_flat = Vec::with_capacity(num_peak_sets);
+        for job in jobs.drain(..) {
+            match job {
+                DiscretizeSample::Standard(j) => jobs_flat.push(j),
+                DiscretizeSample::TextureMeasurement(mut items) => {
+                    jobs_flat.extend(items.drain(..));
+                }
+            }
+        }
+        jobs_flat
+    };
+
+    let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(num_peak_sets);
     let mut ctx = Arc::new(RenderCtx::new(n_peaks_tot));
 
-    let mut rng_state = Vec::<u64>::with_capacity(jobs.len() * 4);
+    let mut rng_state = Vec::<u64>::with_capacity(num_peak_sets * 4);
 
-    let (noise_kind, mut noise_data) = match jobs.first().expect("at least one job").noise() {
+    let fjob = jobs.first().expect("at least one discretization job");
+
+    let (noise_kind, mut noise_data) = match fjob.noise() {
         Some(Noise::Uniform { .. }) => {
-            let mut data = Vec::<f64>::with_capacity(2 * jobs.len());
-            data.resize(2 * jobs.len(), 0.0);
+            let mut data = Vec::<f64>::with_capacity(2 * num_peak_sets);
+            data.resize(2 * num_peak_sets, 0.0);
             (ffi::NoiseKind::Uniform, data)
         }
         Some(Noise::Gaussian { .. }) => {
-            let mut data = Vec::<f64>::with_capacity(jobs.len());
-            data.resize(jobs.len(), 0.0);
+            let mut data = Vec::<f64>::with_capacity(num_peak_sets);
+            data.resize(num_peak_sets, 0.0);
             (ffi::NoiseKind::Gaussian, data)
         }
         None => (ffi::NoiseKind::NoiseNone, Vec::new()),
@@ -216,20 +244,19 @@ where
 
     let mut bkg_scales = Vec::new();
     let (mut bkg_soa, normalize) = {
-        let fjob = jobs.first().expect("at least one discretization job");
         let soa = match fjob.bkg() {
             Background::None => BkgSOA::None,
             Background::Chebyshev { ref coef, .. } => {
-                bkg_scales.reserve_exact(jobs.len());
+                bkg_scales.reserve_exact(num_peak_sets);
                 let poly = cheb2poly(coef);
                 BkgSOA::Polynomial {
                     degree: poly.len(),
-                    all_coef: Vec::with_capacity(coef.len() * jobs.len()),
+                    all_coef: Vec::with_capacity(coef.len() * num_peak_sets),
                 }
             }
             Background::Exponential { .. } => {
-                bkg_scales.reserve_exact(jobs.len());
-                BkgSOA::Exponential(Vec::with_capacity(jobs.len()))
+                bkg_scales.reserve_exact(num_peak_sets);
+                BkgSOA::Exponential(Vec::with_capacity(num_peak_sets))
             }
         };
         (soa, fjob.normalize())
@@ -287,10 +314,10 @@ where
                 // c-style polymorphism going on here (noise_kind and noise_data are basically a
                 // tagged union)
                 //
-                // in case of uniform noise, noise_data is an array of length 2 * jobs.len()
+                // in case of uniform noise, noise_data is an array of length 2 * num_peak_sets
                 // the first half contains each pattern's minimum noise amplitude
                 // the second half contains each pattern's maximum noise amplitude
-                // 0                        jobs.len()               2 * jobs.len()
+                // 0                        num_peak_sets               2 * num_peak_sets
                 // |                        |                        |
                 // v                        v                        v
                 // +------------------------+------------------------+

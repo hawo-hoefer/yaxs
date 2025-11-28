@@ -90,3 +90,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - low priority
 - [ ] fix 'invalid resource handle' bug in CUDA when compiling with rustc 1.89
 - [ ] surface roughness intensity correction Suortti (J. Appl. Cryst, 5,325-331, 1972)
+- [ ] finish up merge of main branch into bingham texture:
+    - [ ] complete all related TODOs
+    - [ ] writing data to files needs to be implemented properly (mustrain etc is missing)
+    - [ ] improve speed some more, i think there are easy gains to be had

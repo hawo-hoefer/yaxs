@@ -1,123 +1,105 @@
-use crate::math::linalg::Vec3;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Serialize};
+use crate::math::linalg::{Vec3, Vec4};
 
-use crate::structure::Lattice;
+use crate::lattice::Lattice;
 
-const HKL_NORM_TOL: f64 = 1e-3;
-
-pub struct BinghamODF {}
-
-#[derive(PartialEq, Debug, Serialize, Clone)]
-pub struct MarchDollase {
-    // miller index h
-    pub hkl: Vec3<f64>,
-    // march parameter
-    pub r: f64,
+#[derive(Clone, Debug)]
+pub struct BinghamParams {
+    pub orientation: Vec4<f64>,
+    pub ks: Vec4<f64>,
 }
 
-/// compute the march pole density function
+/// orientation distribution for perferred orientation in sample coordinates
+/// approximated via Kernel density estimation
 ///
-/// * `alpha`: angle to HKL vector in radians
-/// * `r`: shape parameter of the march functino
-fn march(alpha: f64, r: f64) -> f64 {
-    (r.powi(2) * alpha.cos().powi(2) + alpha.sin().powi(2) / r).powf(-1.5)
+/// * `orientation`: orientation of the distribution
+/// * `axis_aligned_bingham_dist_samples`: axis aligned bingham distribution samples
+/// * `kappa`: kernel width parmeter
+#[derive(Clone, Debug)]
+pub struct KDEBinghamODF {
+    pub params: BinghamParams,
+    pub axis_aligned_bingham_dist_samples: Vec<Vec4<f64>>,
+    pub kappa: f64,
 }
 
-impl MarchDollase {
-    pub fn new(hkl: Vec3<f64>, r: f64) -> Result<Self, String> {
-        Ok(Self { hkl, r })
-    }
-
-    /// compute march-dollase scaling of peak intensities
-    /// Using equation (1) from Zolotoyabko, E. (2009). J. Appl. Cryst. 42, 513-518.
-    /// DOI: <https://doi.org/10.1107/S0021889809013727>
+impl KDEBinghamODF {
+    /// compute the weight scaling of a hkl peak according to the domain orientation
+    /// distribution described by this bingham ODF
     ///
-    /// * `hkl`: hkl vector for scaling
-    /// * `lat`: lattice to scale for
-    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice) -> f64 {
-        if self.r == 1.0 {
-            // short circuit if no preferred orientation is given via the r parameter
-            return 1.0;
+    /// * `hkl`: hkl vector
+    /// * `lat`: lattice for hkl vector
+    /// * `chi`: goniometer chi in degrees
+    /// * `phi`: goniometer phi in degrees
+    /// * `rng`: random number generator
+    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice, chi: f64, phi: f64) -> f64 {
+        // how do we rotate around chi and phi
+        // for edxrd ?
+        // how about adxrd -> is that even a thing?
+        //
+        // Beam z axis is chi rotation (beam direction)
+        // Beam y axis is phi rotation (up direction)
+        // Beam x axis is perpendicular to beam and up (duh!)
+        //
+        // orientation distribution is relative to sample coordinates
+        // therefore transform beam to sample coordinates using chi and phi
+        //
+        // detector
+        //  \
+        //    -
+        //     \ scattered   ^             ^
+        //       -     ray   | phi         | y
+        //         \         |             |
+        //           -       |             |
+        //      theta  \     |     z, chi  |
+        // - - - - - - - [sample]<---------o x
+        //
+        // for the orientation transformation from beam to sample:
+        // first, the rotate around z by chi
+        // then, rotate round y by phi
+        //
+        // XRD methods measure d-spacings in the direction of the Beam Z-Axis
+
+        let rot_z = Vec4::quat_from_angle_axis(0.0, 0.0, 1.0, chi.to_radians());
+        let rot_y = Vec4::quat_from_angle_axis(0.0, 1.0, 0.0, phi.to_radians());
+
+        let beam_to_sample = rot_z.quaternion_multiplication(&rot_y);
+        let sample_to_beam = beam_to_sample.quaternion_reciprocal();
+
+        // bingham distribution describes orientations of domains relative to sample
+        //
+        // transform bingham distribution's orientation from sample to beam coords
+
+        let bingham_alignment_in_beam =
+            sample_to_beam.quaternion_multiplication(&self.params.orientation);
+
+        let hkl_in_domain_coords = lat.mat.matmul(&hkl);
+        // now, we need to compute how well the distribution over physical hkl
+        // directions aligns with the direction (beam z unit vector)
+        //
+        // sample many orientations (in beamline coordinates) and compute
+        // the dot product of beam direction (beam coords z axis) with the hkl
+        // vector in that orientation
+
+        // Von Mises-Fisher distribution normalization constant
+        let norm_constant =
+            self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()));
+
+        let mut weight = 0.0;
+
+        for domain_orientation_sample_coords in self.axis_aligned_bingham_dist_samples.iter() {
+            let domain_orientation_beam_coords = bingham_alignment_in_beam
+                .quaternion_multiplication(&domain_orientation_sample_coords);
+            let hkl_in_beam_coords =
+                domain_orientation_beam_coords.quaternion_transform(&hkl_in_domain_coords);
+            // bingham_beam * domain_sample * hkl_domain * domain_beam^-1
+            let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
+
+            // kernel density estimation using the von Mises-Fisher distribution
+            // normalization is applied below
+            weight += (self.kappa * dot_with_beam_z).exp();
         }
+        weight *= norm_constant;
+        weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
-        let hkl_real = lat.mat.matmul(hkl);
-        let direction_real = lat.mat.matmul(&self.hkl);
-
-        let num = hkl_real.dot(&direction_real);
-        let denom = direction_real.magnitude() * hkl_real.magnitude();
-
-        let alpha_rad = if ((num / denom).abs() - 1.0).abs() < HKL_NORM_TOL {
-            0.0
-        } else {
-            (num / denom).acos()
-        };
-
-        march(alpha_rad, self.r)
-    }
-}
-
-impl<'de> Deserialize<'de> for MarchDollase {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Hkl,
-            R,
-        }
-
-        struct MarchDollaseVisitor;
-        impl<'de> Visitor<'de> for MarchDollaseVisitor {
-            type Value = MarchDollase;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct MarchDollase")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let mut hkl = None;
-                let mut r = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::R => {
-                            if r.is_some() {
-                                return Err(de::Error::duplicate_field("r"));
-                            }
-                            r = Some(map.next_value()?);
-                        }
-                        Field::Hkl => {
-                            if hkl.is_some() {
-                                return Err(de::Error::duplicate_field("hkl"));
-                            }
-                            hkl = Some(map.next_value()?);
-                        }
-                    }
-                }
-
-                let hkl = hkl.ok_or_else(|| de::Error::missing_field("hkl"))?;
-                let r = r.ok_or_else(|| de::Error::missing_field("r"))?;
-                if r < 0.0 {
-                    return Err(de::Error::invalid_value(
-                        de::Unexpected::Float(r),
-                        &"r needs to be larger than 0.",
-                    ));
-                }
-
-                let ret = MarchDollase::new(hkl, r).map_err(|err| {
-                    de::Error::invalid_value(de::Unexpected::Float(r), &err.as_str())
-                })?;
-
-                Ok(ret)
-            }
-        }
-        const FIELDS: &[&str] = &["hkl", "r"];
-        deserializer.deserialize_struct("MarchDollase", FIELDS, MarchDollaseVisitor)
+        weight
     }
 }

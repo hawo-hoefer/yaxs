@@ -4,6 +4,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub enum BackgroundSpec {
     Chebyshev {
         coefs: Vec<Parameter<f32>>,
@@ -16,6 +17,13 @@ pub enum BackgroundSpec {
 }
 
 impl BackgroundSpec {
+    pub fn n_coefs(&self) -> usize {
+        match self {
+            BackgroundSpec::Chebyshev { coefs, .. } => coefs.len() + 1,
+            BackgroundSpec::Exponential { .. } => 2,
+        }
+    }
+
     pub fn generate_bkg(&self, rng: &mut impl Rng) -> Background {
         match self {
             BackgroundSpec::Chebyshev { ref coefs, scale } => {

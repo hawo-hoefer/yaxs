@@ -1,155 +1,23 @@
 use itertools::Itertools;
-use log::{debug, info};
 use num_complex::Complex;
-use rand_xoshiro::Xoshiro256PlusPlus;
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
-use std::sync::Arc;
 
 use ordered_float::NotNan;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 
-use crate::cfg::{apply_strain_cfg, CompactSimResults, SampleParameters, StrainCfg};
-use crate::cfg::{MarchDollaseCfg, ToDiscretize};
 use crate::cif::CIFContents;
+use crate::lattice::Lattice;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
-use crate::pattern::{Peak, Peaks};
-use crate::preferred_orientation::MarchDollase;
+use crate::pattern::Peak;
+use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
 use crate::site::Site;
 use crate::species::Atom;
-use crate::uninit_vec;
+use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Lattice {
-    pub mat: Mat3<f64>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Strain(pub [f64; 6]);
-
-impl std::fmt::Display for Strain {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Strain(")?;
-        for (i, a) in self.0.iter().enumerate() {
-            if i != self.0.len() - 1 {
-                write!(f, "{}, ", a)?;
-            } else {
-                write!(f, "{}", a)?;
-            }
-        }
-        write!(f, ")")
-    }
-}
-impl Strain {
-    pub fn from_diag(a: f64, b: f64, c: f64) -> Self {
-        Self([a, 0.0, b, 0.0, 0.0, c])
-    }
-
-    pub fn new_verified(data: [f64; 6]) -> Option<Self> {
-        // TODO: find a better way to do this. we may not actually need to try calculating the inverse
-
-        // strain is ok if we can take the inverse of the strain matrix
-        // use this to verify user input
-        let v = Self(data);
-        if v.to_mat3().try_inverse().is_some() {
-            return Some(v);
-        }
-        None
-    }
-
-    pub fn from_mat3(mat: &Mat3<f64>) -> Self {
-        Self([
-            mat[(0, 0)],
-            mat[(1, 0)],
-            mat[(1, 1)],
-            mat[(2, 0)],
-            mat[(2, 1)],
-            mat[(2, 2)],
-        ])
-    }
-
-    pub fn none() -> Self {
-        Self([1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
-    }
-
-    pub fn to_mat3(&self) -> Mat3<f64> {
-        let mut ret = Mat3::zeros();
-        ret[(0, 0)] = self.0[0];
-
-        ret[(1, 0)] = self.0[1];
-        ret[(0, 1)] = self.0[1];
-
-        ret[(1, 1)] = self.0[2];
-
-        ret[(2, 0)] = self.0[3];
-        ret[(0, 2)] = self.0[3];
-
-        ret[(2, 1)] = self.0[4];
-        ret[(1, 2)] = self.0[4];
-
-        ret[(2, 2)] = self.0[5];
-
-        ret
-    }
-}
-
-impl Lattice {
-    fn recip_lattice_crystallographic(&self) -> Lattice {
-        Self {
-            mat: self.mat.try_inverse().unwrap().transpose(),
-        }
-    }
-
-    fn recip_lattice(&self) -> Lattice {
-        Self {
-            mat: self
-                .mat
-                .try_inverse()
-                .unwrap()
-                .transpose()
-                .scale(2.0 * std::f64::consts::PI),
-        }
-    }
-
-    /// Returns the volume of this [`Lattice`] in amstrong cubed.
-    pub fn volume(&self) -> f64 {
-        self.mat
-            .row(0)
-            .cross(&self.mat.row(1))
-            .dot(&self.mat.row(2))
-            .abs()
-    }
-
-    pub fn abc(&self) -> Vec3<f64> {
-        let mut values = [0.0; 3];
-        for i in 0..self.mat.rows() {
-            values[i] = self.mat.row(i).magnitude();
-        }
-        Vec3::new(values[0], values[1], values[2])
-    }
-}
-
-impl std::fmt::Display for Lattice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Lattice(")?;
-        for ri in 0..self.mat.rows() {
-            writeln!(
-                f,
-                "  {:5.2}, {:5.2}, {:5.2}",
-                self.mat[(ri, 0)],
-                self.mat[(ri, 1)],
-                self.mat[(ri, 2)]
-            )?;
-        }
-        writeln!(f, ")")
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 /// A phase's crystallographic structure
@@ -299,68 +167,96 @@ impl Structure {
         ret
     }
 
-    /// scan lattice for crystallographic planes with given d-spacings
-    /// compute peak intensities and d-spacings corresponding to the lattice planes
-    /// miller indices are **not** returned
-    ///
-    /// * `min_r`: minimum d-spacing to consider
-    /// * `max_r`: maximum d-spacing to consider
-    /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_d_spacings_intensities(
+    pub fn structure_factor(
+        &self,
+        hkl: Vec3<f64>,
+        pos: Vec3<f64>,
+        d_hkl: f64,
+        scattering_parameters: &HashMap<Atom, Scatter>,
+    ) -> Complex<f64> {
+        let mut f_hkl = Complex::new(0.0, 0.0);
+
+        // n lambda = 2 d sin(theta) | n = 1
+        // lambda = 2 d sin(theta)
+        // 1 / (2 d) = sin(theta) / lambda
+        let sin_theta_over_lambda = 1.0 / (2.0 * d_hkl);
+
+        for site in &self.sites {
+            // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
+            let g_dot_r: f64 = site.coords.dot(&hkl);
+            let dw_factor = site
+                .displacement
+                .as_ref()
+                .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
+                .unwrap_or(1.0);
+
+            for atom in &site.species {
+                let scatter = &scattering_parameters[atom];
+                let fs = scatter.eval(sin_theta_over_lambda);
+
+                // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
+                let f_part = fs
+                    * site.occu
+                    * dw_factor
+                    * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
+                f_hkl += f_part;
+            }
+        }
+        f_hkl
+    }
+
+    pub fn get_hkl_intensities_spacings(
         &self,
         min_r: f64,
         max_r: f64,
-        po: Option<&MarchDollase>,
         scattering_parameters: &HashMap<Atom, Scatter>,
-    ) -> Vec<Peak> {
-        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
-
+    ) -> Vec<(Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
+        let mut agg = Vec::new();
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
 
-            // n lambda = 2 d sin(theta) | n = 1
-            // lambda = 2 d sin(theta)
-            // 1 / (2 d) = sin(theta) / lambda
-            let sin_theta_over_lambda = 1.0 / (2.0 * d_hkl);
-
-            let mut f_hkl = Complex::new(0.0, 0.0);
-            for site in &self.sites {
-                // g_dot_r = np.dot(frac_coords, np.transpose([hkl])).T[0]
-                let g_dot_r: f64 = site.coords.dot(&hkl);
-                let dw_factor = site
-                    .displacement
-                    .as_ref()
-                    .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
-                    .unwrap_or(1.0);
-
-                for atom in &site.species {
-                    let scatter = &scattering_parameters[atom];
-                    let fs = scatter.eval(sin_theta_over_lambda);
-
-                    // f_hkl = np.sum(fs * occus * np.exp(2j * np.pi * g_dot_r) * dw_correction)
-                    let f_part = fs
-                        * site.occu
-                        * dw_factor
-                        * Complex::new(0.0, std::f64::consts::TAU * g_dot_r).exp();
-                    f_hkl += f_part;
-                }
-            }
+            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
-            let mut i_hkl = (f_hkl * f_hkl.conj()).re;
+            let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
 
-            if let Some(po) = po {
-                let w = po.weight(&hkl, &self.lat);
-                i_hkl *= w;
-            }
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
+            agg.push((hkl, i_hkl, d_spacing));
+        }
+
+        agg
+    }
+
+    pub fn apply_alignment_to_hkls_intensities<'a>(
+        &self,
+        input: &[(Vec3<f64>, NotNan<f64>, NotNan<f64>)],
+        alignment: Option<Alignment<'a>>,
+    ) -> Vec<Peak> {
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+
+        for (hkl, i_hkl, d_hkl) in input {
+            let mut i_hkl = *i_hkl;
+
+            if let Some(Alignment { po, phi, chi }) = alignment {
+                let w =
+                    NotNan::new(po.weight(&hkl, &self.lat, chi, phi)).expect("weight is not nan");
+                i_hkl = i_hkl * w;
+            }
+
             let (ref mut i_hkl_map, ref mut hkls_map) = agg
-                .entry(d_spacing)
+                .entry(*d_hkl)
                 .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
             *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
             hkls_map.push(hkl.map(|x| *x as i16))
         }
 
+        self.compress_aggregated_hkls(agg)
+    }
+
+    pub fn compress_aggregated_hkls(
+        &self,
+        agg: HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
+    ) -> Vec<Peak> {
         let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
             return Vec::new();
         };
@@ -398,22 +294,66 @@ impl Structure {
         compressed
     }
 
+    /// scan lattice for crystallographic planes with given d-spacings
+    /// compute peak intensities and d-spacings corresponding to the lattice planes
+    /// miller indices are **not** returned
+    ///
+    /// * `min_r`: minimum d-spacing to consider
+    /// * `max_r`: maximum d-spacing to consider
+    /// * `alignment`: optional preferred orientation as Bingham Orientation distribution function
+    ///         relative to the beam direction
+    pub fn get_d_spacings_intensities<'a>(
+        &self,
+        min_r: f64,
+        max_r: f64,
+        alignment: Option<Alignment<'a>>,
+        scattering_parameters: &HashMap<Atom, Scatter>,
+    ) -> Vec<Peak> {
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+
+        // TODO: update this to use the new version
+        for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            let d_hkl = 1.0 / g_hkl;
+            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
+
+            // # Intensity for hkl is modulus square of structure factor
+            let mut i_hkl = (f_hkl * f_hkl.conj()).re;
+
+            if let Some(Alignment { po, phi, chi }) = alignment {
+                let w = po.weight(&hkl, &self.lat, chi, phi);
+                i_hkl *= w;
+            }
+
+            let d_spacing = NotNan::new(d_hkl).expect("not nan");
+            let (ref mut i_hkl_map, ref mut hkls_map) = agg
+                .entry(d_spacing)
+                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
+            *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
+            hkls_map.push(hkl.map(|x| *x as i16))
+        }
+
+        self.compress_aggregated_hkls(agg)
+    }
+
     /// compute peak positions and intensities for angle dispersive XRD
     ///
     /// * `wavelength_ams`: wavelength for peaks in Amstrong
     /// * `two_theta_range`: two theta range to search for peaks in degrees
     /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_adxrd_peaks(
+    /// * `goniometer_pos`: goniometer angles phi and chi in radians
+    ///    chi is the angle of rotation around the beam, and
+    ///    phi is the angle of rotation around the axis vertical to the beam
+    pub fn get_adxrd_peaks<'a>(
         &self,
         wavelength_ams: f64,
         two_theta_range: &(f64, f64),
-        po: Option<&MarchDollase>,
+        alignment: Option<Alignment<'a>>,
         scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po, scattering_parameters)
+        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -421,11 +361,11 @@ impl Structure {
     /// * `theta_deg`: fixed angle of sample to beam
     /// * `energy_kev_range`: energy range in keV to consider for d-spacings
     /// * `po`: preferred orientation march-dollase parameters, if desired
-    pub fn get_edxrd_peaks(
+    pub fn get_edxrd_peaks<'a>(
         &self,
         theta_deg: f64,
         energy_kev_range: &(f64, f64),
-        po: Option<&MarchDollase>,
+        alignment: Option<Alignment<'a>>,
         scattering_parameters: &mut HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
         let lambda_0 = e_kev_to_lambda_ams(energy_kev_range.1);
@@ -436,7 +376,7 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, po, scattering_parameters)
+        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
     }
 
     pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
@@ -453,323 +393,11 @@ impl Structure {
     }
 }
 
-impl<'a> Lattice {
-    pub fn iter_hkls(
-        &'a self,
-        min_r: f64,
-        max_r: f64,
-    ) -> impl Iterator<Item = (Vec3<f64>, Vec3<f64>, f64)> + use<'a> {
-        const RADIUS_TOL: f64 = 1e-8;
-        let recip_lat = self.recip_lattice_crystallographic();
-        let recp_len = recip_lat.recip_lattice().abc();
-
-        let r_cells = max_r + 1e-8;
-        let r_max = (recp_len.scale((r_cells + 0.15) / (2.0 * std::f64::consts::PI)))
-            .map(|x| x.ceil() as i32);
-        let global_min = -max_r - RADIUS_TOL;
-        let global_max = max_r + RADIUS_TOL;
-
-        let n_min = -r_max.clone();
-        let n_max = r_max;
-        (n_min[0]..n_max[0])
-            .cartesian_product(n_min[1]..n_max[1])
-            .cartesian_product(n_min[2]..n_max[2])
-            .filter_map(move |((a, b), c)| -> Option<_> {
-                let hkl = Vec3::new(a as f64, b as f64, c as f64);
-                let pos = recip_lat.mat.matmul(&hkl);
-                let g_hkl = pos.magnitude();
-
-                // currently, we produce XRD patterns like pymatgen
-                // Neighbor mapping from pymatgen.core.lattice.get_points_in_spheres
-                // does not seem to have any effect if center_coords is the 0-vector
-                // As far as I can tell, it only applies when center_coords are something
-                // other than the 0-vector so we will ignore it for now.
-                // i tested this using a modification of their code and random cifs from
-                // the COD-database
-                if (g_hkl < max_r + RADIUS_TOL && g_hkl > min_r - RADIUS_TOL)
-                    && g_hkl > 0.0
-                    && pos
-                        .iter_values()
-                        .map(|&x| (x > global_min) && (x < global_max))
-                        .all(|x| x)
-                {
-                    Some((hkl, pos, g_hkl))
-                } else {
-                    None
-                }
-            })
-    }
-}
-
-struct PeakSimResult {
-    strain: Strain,
-    po: Option<MarchDollase>,
-    peaks: Peaks,
-    struct_id: usize,
-    permutation_id: usize,
-}
-
-struct WriteCtx {
-    inner: UnsafeCell<Inner>,
-}
-
-struct Inner {
-    strain: Vec<Strain>,
-    pos: Vec<Option<MarchDollase>>,
-    peaks: Vec<MaybeUninit<Peaks>>,
-    ok: Vec<bool>,
-    n_permutations: usize,
-}
-
-unsafe impl Sync for WriteCtx {}
-
-impl WriteCtx {
-    pub fn new(n_structs: usize, n_permutations: usize) -> Self {
-        Self {
-            inner: UnsafeCell::new(Inner {
-                strain: unsafe { uninit_vec(n_structs * n_permutations) },
-                pos: unsafe { uninit_vec(n_structs * n_permutations) },
-                peaks: unsafe { uninit_vec(n_structs * n_permutations) },
-                ok: unsafe { uninit_vec(n_structs * n_permutations) },
-                n_permutations,
-            }),
-        }
-    }
-
-    pub unsafe fn add(&self, p: PeakSimResult) {
-        let Inner {
-            strain,
-            pos,
-            peaks,
-            ok,
-            n_permutations,
-        } = unsafe { &mut *(self.inner.get()) };
-
-        let idx = p.struct_id * (*n_permutations) + p.permutation_id;
-
-        strain[idx] = p.strain;
-        pos[idx] = p.po;
-        peaks[idx] = MaybeUninit::new(p.peaks);
-        ok[idx] = true
-    }
-
-    pub fn make_to_discretize(
-        self,
-        structures: Arc<[Structure]>,
-        sample_parameters: SampleParameters,
-    ) -> ToDiscretize {
-        let Inner {
-            strain,
-            pos,
-            mut peaks,
-            ok,
-            n_permutations,
-        } = self.inner.into_inner();
-
-        // TODO: make this return a result instead so we can error gracefully
-        assert!(ok.iter().all(|x| *x));
-
-        ToDiscretize {
-            structures,
-            sample_parameters,
-            sim_res: Arc::new(CompactSimResults {
-                all_simulated_peaks: peaks
-                    .drain(..)
-                    .map(|x| unsafe { x.assume_init() })
-                    .collect(),
-                all_strains: strain.into(),
-                all_preferred_orientations: pos.into(),
-                n_permutations,
-            }),
-        }
-    }
-}
-
-/// Generate Peaks for the input structures and their physical parameters.
-///
-/// * `sample_params`: physical parameter ranges for the structures
-/// * `structures`: structures to simulate peaks for
-/// * `rng`: random number generator to use
-///
-/// * `sample_params`: the user specified sample parameters
-/// * `structures`: the structures to simulate
-/// * `structure_po_configs`: preferred orientation configuration for all structures
-/// * `structure_strain_configs`: strain configurations for each of the structures
-/// * `structure_files`: file paths to the structure's cifs
-/// * `rng`: rng to use
-pub fn simulate_peaks(
-    (min_r, max_r): (f64, f64),
-    sample_parameters: SampleParameters,
-    structures: Box<[Structure]>,
-    structure_po_configs: Box<[Option<MarchDollaseCfg>]>,
-    structure_strain_configs: Box<[Option<StrainCfg>]>,
-    structure_files: Box<[String]>,
-    rng: &mut impl Rng,
-) -> Result<ToDiscretize, String> {
-    struct PeakSim {
-        structure: usize,
-        permutation: usize,
-        seed: u64,
-        min_r: f64,
-        max_r: f64,
-    }
-
-    struct RunCtx {
-        structs: Arc<[Structure]>,
-        po_cfgs: Box<[Option<MarchDollaseCfg>]>,
-        strain_cfgs: Box<[Option<StrainCfg>]>,
-        structure_files: Box<[String]>,
-    }
-
-    impl RunCtx {
-        fn run(
-            &self,
-            job: PeakSim,
-            scattering_param_cache: &HashMap<Atom, Scatter>,
-        ) -> Result<PeakSimResult, String> {
-            let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
-            let Some((perm_s, strain)) = apply_strain_cfg(
-                &self.strain_cfgs[job.structure],
-                &self.structs[job.structure],
-                &mut rng,
-            ) else {
-                return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]));
-            };
-            let po_cfg = &self.po_cfgs[job.structure];
-            let po = po_cfg.as_ref().map(|cfg| cfg.generate(&mut rng));
-
-            let peaks = perm_s
-                .get_d_spacings_intensities(
-                    job.min_r,
-                    job.max_r,
-                    po.as_ref(),
-                    scattering_param_cache,
-                )
-                .into_boxed_slice();
-
-            Ok(PeakSimResult {
-                strain,
-                po,
-                peaks,
-                struct_id: job.structure,
-                permutation_id: job.permutation,
-            })
-        }
-    }
-
-    let n_structs = structures.len();
-    let n_permutations = sample_parameters.structure_permutations;
-
-    let mut scattering_parameters = HashMap::<Atom, Scatter>::new();
-    for struct_id in 0..n_structs {
-        structures[struct_id].gather_scattering_params(&mut scattering_parameters);
-    }
-
-    enum Task {
-        Job(PeakSim),
-        Stop,
-    }
-
-    let ctx = Arc::new(RunCtx {
-        structs: structures.into(),
-        po_cfgs: structure_po_configs,
-        strain_cfgs: structure_strain_configs,
-        structure_files,
-    });
-
-    let results = Arc::new(WriteCtx::new(n_structs, n_permutations));
-
-    let mut n_threads: usize = std::thread::available_parallelism()
-        .map(|x| x.into())
-        .unwrap_or(1);
-
-    if n_structs * n_permutations < 50 {
-        info!("Small number of simulations. Using single-threaded mode.");
-        n_threads = 1;
-    }
-
-    if n_threads == 1 {
-        info!("Running single-threaded peak simulation");
-        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
-            let job = PeakSim {
-                structure: struct_id,
-                permutation: permutation_id,
-                seed: rng.random(),
-                min_r,
-                max_r,
-            };
-            let p = ctx.run(job, &scattering_parameters)?;
-            unsafe { results.add(p) };
-        }
-    } else {
-        let (job_sender, job_receiver) = crossbeam_channel::unbounded();
-        info!("Launching {n_threads} threads for peak simulation");
-
-        let handles = (0..n_threads)
-            .map(|i| {
-                let ctx = Arc::clone(&ctx);
-                let results = Arc::clone(&results);
-                let job_receiver = job_receiver.clone();
-                let scattering_parameters = scattering_parameters.clone();
-                std::thread::spawn(move || -> Result<(), String> {
-                    loop {
-                        let job: PeakSim = match job_receiver.recv() {
-                            Ok(Task::Stop) => break,
-                            Ok(Task::Job(v)) => v,
-                            Err(_) => break,
-                        };
-
-                        let p = ctx
-                            .run(job, &scattering_parameters)
-                            .map_err(|err| format!("Peak simulation thread {i}: {err}"))?;
-                        unsafe {
-                            results.add(p);
-                        }
-                    }
-                    debug!("Peak simulation thread {i} finished.");
-                    Ok(())
-                })
-            })
-            .collect_vec();
-
-        for (struct_id, permutation_id) in
-            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
-        {
-            let job = PeakSim {
-                structure: struct_id,
-                permutation: permutation_id,
-                seed: rng.random(),
-                min_r,
-                max_r,
-            };
-            let _ = job_sender.send(Task::Job(job));
-        }
-
-        debug!("Sending stop signal to peak simulation threads");
-        for _ in 0..n_threads {
-            job_sender
-                .send(Task::Stop)
-                .map_err(|err| format!("Could not send stop signal for peak simulation: '{err}'"))?
-        }
-
-        for handle in handles {
-            handle.join().map_err(|err| {
-                format!("Could not join peak simulation thread: '{err:?}'. Exiting...")
-            })??;
-        }
-
-        debug!("All simulation threads joined")
-    }
-
-    let results = Arc::into_inner(results).expect("no more references to write context");
-    let ctx = Arc::into_inner(ctx).expect("no more references to simulation ctx");
-    Ok(results.make_to_discretize(ctx.structs, sample_parameters))
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::cif::CifParser;
+    use crate::lattice::Lattice;
     use crate::pattern::adxrd::InstrumentParameters;
     use crate::pattern::PeakRenderParams;
 

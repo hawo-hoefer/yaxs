@@ -203,7 +203,16 @@ fn main() {
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
         vf_constraints.push(*volume_fraction);
         strain_cfgs.push(strain.clone());
-        pref_o.push(po.clone());
+        let po_gen = po.as_ref().map(|x| {
+            x.try_into_generator(&mut rng).unwrap_or_else(|x| {
+                error!(
+                    "Could not get preferred orientation generator for {p}: {x}",
+                    p = struct_path.display()
+                );
+                std::process::exit(1);
+            })
+        });
+        pref_o.push(po_gen);
         structures.push(structure);
     }
 
@@ -227,6 +236,7 @@ fn main() {
             strain_cfgs.into(),
             structure_paths.clone().into(),
             cfg.sample_parameters.clone(),
+            cfg.simulation_parameters.texture_measurement,
             &mut rng,
         )
         .unwrap_or_else(|err| {
@@ -283,17 +293,20 @@ fn main() {
                         SimulationKind::EnergyDispersive(energy_dispersive) => {
                             let theta_rad = energy_dispersive.theta_deg.to_radians();
                             let f_lorentz = lorentz_polarization_factor(theta_rad);
-                            let (pos, intens, fwhm) = p.get_edxrd_render_params(
+                            let rp = p.get_edxrd_render_params(
                                 theta_rad,
                                 f_lorentz,
                                 mean_ds_nm,
+                                ds_eta,
+                                0.0,
+                                0.0,
                                 1.0,
                                 &energy_dispersive.beamline,
                             );
 
-                            let intens = pseudo_voigt(0.0, 0.5, fwhm) * intens;
+                            let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
 
-                            (pos, intens)
+                            (rp.pos, intens)
                         }
                     };
 
@@ -386,17 +399,12 @@ fn main() {
     let params = cfg.simulation_parameters;
     let extra = io::Extra {
         max_phases: cfg.sample_parameters.structures.len(),
+        texture: params.texture_measurement,
         encoding: cfg
             .sample_parameters
             .structures
             .iter()
             .map(|StructureDef { path, .. }| path.to_string())
-            .collect_vec(),
-        preferred_orientation_hkl: cfg
-            .sample_parameters
-            .structures
-            .iter()
-            .map(|x| x.preferred_orientation.as_ref().map(|po| po.hkl.clone()))
             .collect_vec(),
         cfg: cfg.kind.clone(),
     };
@@ -439,13 +447,7 @@ where
             jobs.push(job);
         }
         let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(
-            jobs,
-            xs,
-            gen.abstol(),
-            gen.n_phases(),
-            gen.with_weight_fractions(),
-        )?;
+        let (intensities, pattern_metadata) = render_jobs(jobs, xs, &gen.get_job_params())?;
         let mut data_path = std::path::PathBuf::new();
         data_path.push(&args.io.output_path);
         data_path.push("data.npz");

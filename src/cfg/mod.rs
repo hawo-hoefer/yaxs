@@ -12,17 +12,18 @@ use std::sync::Arc;
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::{debug, info};
-use parameter::Parameter;
+pub use parameter::Parameter;
 use probability::Probability;
 
 pub use noise::NoiseSpec;
-pub use preferred_orientation::MarchDollaseCfg;
+pub use preferred_orientation::{POCfg, POGenerator};
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
 
 use itertools::Itertools;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+mod texture;
 
 use crate::math::e_kev_to_lambda_ams;
 use crate::pattern::adxrd::{
@@ -32,8 +33,11 @@ use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{
     get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
 };
-use crate::preferred_orientation::MarchDollase;
-use crate::structure::{Strain, Structure};
+use crate::preferred_orientation::BinghamParams;
+use crate::strain::Strain;
+use crate::structure::Structure;
+
+pub use self::texture::TextureMeasurement;
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
@@ -102,10 +106,11 @@ impl SimulationKind {
     pub fn simulate_peaks(
         &self,
         structures: Box<[Structure]>,
-        pref_o: Box<[Option<MarchDollaseCfg>]>,
+        pref_o: Box<[Option<POGenerator>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_paths: Box<[String]>,
         sample_parameters: SampleParameters,
+        texture_measurement: Option<TextureMeasurement>,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
         let (min_r, max_r) = self.get_r_range();
@@ -143,19 +148,21 @@ impl SimulationKind {
         }
 
         debug!("d-spacing range: [{},{}]", min_r, max_r);
-        crate::structure::simulate_peaks(
+        crate::peak_sim::simulate_peaks(
             (min_r, max_r),
             sample_parameters,
             structures,
             pref_o,
             strain_cfgs,
             structure_paths,
+            texture_measurement,
             rng,
         )
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AngleDispersive {
     pub emission_lines: Box<[EmissionLine]>,
 
@@ -175,6 +182,7 @@ pub enum CagliotiKind {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct InstrumentParameterCfg {
     pub kind: Option<CagliotiKind>,
     pub u: Parameter<f64>,
@@ -219,6 +227,7 @@ impl InstrumentParameterCfg {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EnergyDispersive {
     pub n_steps: usize,
     pub energy_range_kev: (f64, f64),
@@ -226,18 +235,19 @@ pub struct EnergyDispersive {
     pub beamline: Beamline,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
     pub n_patterns: usize,
     pub noise: Option<NoiseSpec>,
+    pub texture_measurement: Option<TextureMeasurement>,
     pub randomly_scale_peaks: Option<RandomlyScalePeaks>,
 
     pub abstol: f32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct RandomlyScalePeaks {
     pub scale: Parameter<f64>,
     pub probability: Probability,
@@ -259,6 +269,7 @@ pub struct SampleParameters {
     pub structures: Vec<StructureDef>,
     pub concentration_subset: Option<ConcentrationSubset>,
     pub impurities: Option<Vec<ImpuritySpec>>,
+
     pub structure_permutations: usize,
 }
 
@@ -333,11 +344,19 @@ impl SampleParameters {
     }
 }
 
+/// A structure of arrays containing simulated peak positions and corresponding simulation
+/// parameters      
+///
+/// * `all_simulated_peaks`:
+/// * `all_strains`:
+/// * `all_preferred_orientations`:
+/// * `n_permutations`:
 pub struct CompactSimResults {
     pub all_simulated_peaks: Box<[Peaks]>,
     pub all_strains: Box<[Strain]>,
-    pub all_preferred_orientations: Box<[Option<MarchDollase>]>,
+    pub all_preferred_orientations: Box<[Option<BinghamParams>]>,
     pub n_permutations: usize,
+    pub texture_measurement: Option<TextureMeasurement>,
 }
 
 impl CompactSimResults {
@@ -435,9 +454,9 @@ impl ToDiscretize {
             mean_ds_nm,
             impurity_peaks,
             struct_ids,
-            ds_eta: _,
-            mustrain: _,
-            mustrain_eta: _,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
         } = self.sample_parameters.generate(rng);
 
         let vol_fractions = vf_generator.generate(rng);
@@ -461,7 +480,9 @@ impl ToDiscretize {
                 weight_fractions,
                 mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),
-                eta: todo!(),
+                ds_eta,
+                mustrain,
+                mustrain_eta,
             },
         }
     }

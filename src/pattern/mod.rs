@@ -2,14 +2,15 @@ use std::sync::Arc;
 
 use cfg_if::cfg_if;
 use itertools::Itertools;
-use log::warn;
-use ndarray::Array2;
+use log::{info, warn};
+use ndarray::{Array2, Array4};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::background::Background;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
+use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
     e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
     scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
@@ -21,24 +22,47 @@ use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
-use crate::cfg::{CompactSimResults, VolumeFraction};
+use crate::cfg::{CompactSimResults, TextureMeasurement, VolumeFraction};
 
 pub mod adxrd;
 pub mod edxrd;
 
+// TODO: Somehow encode that all samples have the same of measurement in
+// the type system
+pub enum DiscretizeSample<T> {
+    Standard(T),
+    TextureMeasurement(Vec<T>),
+}
+
+impl<T> DiscretizeSample<T> {
+    pub fn n_patterns(&self) -> usize {
+        match self {
+            DiscretizeSample::Standard(_) => 1,
+            DiscretizeSample::TextureMeasurement(items) => items.len(),
+        }
+    }
+}
+
 pub trait DiscretizeJobGenerator {
     type Item;
 
-    fn next(&mut self) -> Option<Self::Item>;
+    fn next(&mut self) -> Option<DiscretizeSample<Self::Item>>;
     fn remaining(&self) -> usize;
     fn xs(&self) -> &[f32];
-    fn n_phases(&self) -> usize;
-    fn abstol(&self) -> f32;
-    fn with_weight_fractions(&self) -> bool;
+    fn get_job_params(&self) -> JobParams;
 }
 
+/// rendering resources for a single phase. these are essentially indices into
+/// long vectors of all simulated data
+///
+/// * `sim_res`:
+/// * `indices`:
+/// * `impurity_peaks`:
+/// * `random_seed`:
+/// * `noise`:
+#[derive(Clone)]
 pub struct RenderCommon {
-    // all simulated peaks for all phases in order [structure, structure permutations]
+    // all simulated peaks for all phases in order [structure, structure permutations, (texture_measurement_idx)]
     pub sim_res: Arc<CompactSimResults>,
     // indices to select from simulated peaks, length is number of structures
     pub indices: Box<[usize]>,
@@ -111,34 +135,8 @@ pub fn get_weight_fractions(
     Some(mass_fractions.into())
 }
 
-/// sample integers uniformly without replacement from the interval [0, max_val)
-///
-/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
-///
-/// * `n`: number of samples
-/// * `max_val`: upper bound of the
-/// * `rng`: random number generator
-pub fn uniform_sample_no_replacement_knuth(
-    n: usize,
-    max_val: usize,
-    rng: &mut impl Rng,
-) -> Vec<usize> {
-    // TODO: does this belong in stats?
-    let mut samples = Vec::with_capacity(n);
-    let mut t = 0;
-    while samples.len() < n {
-        let u = rng.random_range(0.0..=1.0);
-        if (max_val - t) as f64 * u >= (n - samples.len()) as f64 {
-            t += 1;
-        } else {
-            samples.push(t);
-            t += 1;
-        }
-    }
-    samples
-}
-
 #[derive(PartialEq, Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
 pub enum ConcentrationSubset {
     MaxDim(usize),
     Probabilities(Vec<f64>),
@@ -399,6 +397,15 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
     (theta_rad * 2.0).cos().powi(2)
 }
 
+pub struct JobParams {
+    pub abstol: f32,
+    pub n_phases: usize,
+    pub has_weight_fracs: bool,
+    pub textured_phases: Option<usize>,
+    pub texture_measurement: Option<TextureMeasurement>,
+    pub bkg_params: Option<usize>,
+}
+
 pub struct PeakRenderParams {
     pub pos: f32,
     pub intensity: f32,
@@ -424,12 +431,7 @@ pub trait Discretizer {
     }
 
     fn write_meta_data(&self, key: &mut PatternMeta, pat_id: usize);
-    fn init_meta_data(
-        n_patterns: usize,
-        n_phases: usize,
-        with_weight_fractions: bool,
-        bkg_params: Option<usize>,
-    ) -> Vec<PatternMeta>;
+    fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta>;
 
     fn discretize_into(&self, intensities: &mut [f32], positions: &[f32], abstol: f32) {
         // rendering the backgrounds first allows for background scaling without fancy
@@ -626,7 +628,7 @@ impl Peak {
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
-        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
+        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(2) * weight) as f32;
 
         PeakRenderParams {
             pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,
@@ -647,9 +649,12 @@ impl Peak {
         theta_rad: f64,
         f_lorentz: f64,
         mean_ds_nm: f64,
+        ds_eta: f64,
+        mustrain: f64,
+        mustrain_eta: f64,
         weight: f64,
         beamline: &Beamline,
-    ) -> (f32, f32, f32)
+    ) -> PeakRenderParams
 where {
         // here, we apply intensity corrections to each peak, and
         // convert positions from d_hkl in Amstrong to energy in keV
@@ -665,6 +670,7 @@ where {
         // ev * e-10
         // g_hkl in ams = m^-10
         let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+
         let beamline_intensity = beamline.get_intensity(e_kev);
         let polarization_correction = edxrd_polarization_factor_horizontal_plane(theta_rad);
         let peak_weight = self.i_hkl
@@ -674,47 +680,103 @@ where {
             * beamline_intensity
             * weight;
 
-        let fwhm = scherrer_broadening_edxrd(self.d_hkl, e_kev, mean_ds_nm);
-        (e_kev as f32, peak_weight as f32, fwhm as f32)
+        let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
+        // Gerward, Leif, S. Mo/rup, and H. Topso/e. 
+        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns." 
+        // Journal of Applied Physics 47.3 (1976): 822-825.
+        //
+        // DOI: <https://doi.org/10.1063/1.322714>
+        let mustrain_broad = mustrain * e_kev * 2.0;
+
+        let g_fwhm = ((1.0 - ds_eta) * size_broad * size_broad
+            + (1.0 - mustrain_eta) * mustrain_broad)
+            .sqrt();
+        let l_fwhm = ds_eta * size_broad + mustrain_eta * mustrain_broad;
+
+        let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm, l_fwhm);
+
+        PeakRenderParams {
+            pos: e_kev as f32,
+            intensity: peak_weight as f32,
+            fwhm: fwhm as f32,
+            eta: eta as f32,
+        }
     }
 }
 
+pub enum Intensities {
+    /// One sample is just a single XRD measurement. the dimensions are
+    /// therefore [n_samples, pattern_steps]
+    Standard(Array2<f32>),
+    /// For Texture Measurements, one sample is represented by n * m
+    /// Xrd patterns, where n and m are the resolution in phi and chi, respectively
+    /// therefore, the resolution must be [n_samples, phi_steps, chi_steps, pattern_steps]
+    TextureMeasurement(Array4<f32>),
+}
+
 pub fn render_jobs<T>(
-    jobs: Vec<T>,
-    two_thetas: &[f32],
-    #[allow(unused)] atol: f32,
-    n_phases: usize,
-    with_weight_fractions: bool,
-) -> Result<(Array2<f32>, Vec<PatternMeta>), String>
+    jobs: Vec<DiscretizeSample<T>>,
+    xs: &[f32],
+    p: &JobParams,
+) -> Result<(Intensities, Vec<PatternMeta>), String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    let n = jobs.len();
-    let j = jobs.first().expect("at least one job");
+    let n_samples = jobs.len();
+    let mut metadata = T::init_meta_data(n_samples, p);
+    info!("Initialized metadata for {n_samples} sample(s).");
 
-    // NOTE: currently, we are only able to render one kind of background per simulation
-    // should this ever change, we need to adapt this implementation
-    let n_bkg_params = j.bkg().bkg_coefs();
-    let mut metadata = T::init_meta_data(jobs.len(), n_phases, with_weight_fractions, n_bkg_params);
     for (i, job) in jobs.iter().enumerate() {
         for m in metadata.iter_mut() {
+            let job = match job {
+                DiscretizeSample::Standard(job) => job,
+                DiscretizeSample::TextureMeasurement(items) => items
+                    .first()
+                    .expect("at least one pattern in texture measurement"),
+            };
             job.write_meta_data(m, i)
         }
     }
+
+    let n_peak_sets = jobs.iter().map(|x| x.n_patterns()).sum();
 
     // actual rendering of the patterns
     cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, two_thetas)?;
-            let intensities = ndarray::Array2::from_shape_vec((n, two_thetas.len()), intensities)
+            let intensities = discretize_peaks_cuda(jobs, xs)?;
+            let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
                 .expect("sizes must match");
         } else {
-            let mut intensities = Array2::<f32>::zeros((n, two_thetas.len()));
-            for (mut pattern, job) in intensities.outer_iter_mut().zip(jobs) {
-                job.discretize_into(pattern.as_slice_mut().unwrap(), &two_thetas, atol);
+        let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
+            let mut peak_set = 0;
+            for job in jobs {
+                // TODO: somehow encode that all samples have the same simulation type
+                // in the type system
+                match job {
+                    DiscretizeSample::Standard(job) => {
+                        job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
+                        peak_set += 1;
+                    },
+                    DiscretizeSample::TextureMeasurement(items) => {
+                        for job in items.iter() {
+                            job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
+                            peak_set += 1;
+                        }
+                    },
+                }
             }
         }
+    };
+
+    let intensities = if let Some(t) = p.texture_measurement {
+        Intensities::TextureMeasurement(
+            intensities
+                .into_shape_with_order((n_samples, t.chi.steps, t.phi.steps, xs.len()))
+                .expect("shapes match"),
+        )
+    } else {
+        Intensities::Standard(intensities)
     };
 
     Ok((intensities, metadata))

@@ -2,7 +2,6 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -18,10 +17,11 @@ use ndarray_npy::WritableElement;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
-use crate::math::linalg::Vec3;
+use crate::cfg::TextureMeasurement;
 use crate::pattern::render_jobs;
 use crate::pattern::DiscretizeJobGenerator;
 use crate::pattern::Discretizer;
+use crate::pattern::Intensities;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HKLDisplayMode {
@@ -88,7 +88,12 @@ pub enum PatternMeta {
     ImpurityMax(Array1<f32>),
     SampleDisplacementMuM(Array1<f32>),
     BackgroundParameters(Array2<f32>),
-    MarchParameter(Array2<f32>), // for now, we're only going to allow one march parameter (and orientation) per phase
+    BinghamODFParams {
+        // patterns, active phases, quaternion
+        orientations: Array3<f32>,
+        // patterns, active phases, 4 ks
+        ks: Array3<f32>,
+    },
 }
 
 impl PatternMeta {
@@ -126,20 +131,24 @@ impl PatternMeta {
             MeanDsNm(x) => Self::push_arr(w, x, "mean_ds_nm", meta_names),
             DsEtas(x) => Self::push_arr(w, x, "ds_etas", meta_names),
             InstrumentParameters(x) => Self::push_arr(w, x, "instrument_parameters", meta_names),
-            MarchParameter(x) => Self::push_arr(w, x, "march_param_r", meta_names),
             BackgroundParameters(x) => Self::push_arr(w, x, "background_parameters", meta_names),
             Mustrains(x) => Self::push_arr(w, x, "mustrain", meta_names),
             MustrainEtas(x) => Self::push_arr(w, x, "mustrain_etas", meta_names),
+            BinghamODFParams { orientations, ks } => {
+                Self::push_arr(w, orientations, "bingham_odf_orientations", meta_names)?;
+                Self::push_arr(w, ks, "bingham_odf_ks", meta_names)
+            }
         }
     }
 }
 
 #[derive(Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Extra {
     pub cfg: SimulationKind,
     pub max_phases: usize,
+    pub texture: Option<TextureMeasurement>,
     pub encoding: Vec<String>,
-    pub preferred_orientation_hkl: Vec<Option<Vec3<f64>>>,
 }
 
 #[derive(Serialize)]
@@ -159,7 +168,7 @@ where
     T: AsRef<Path>,
 {
     Write {
-        intensities: Array2<f32>,
+        intensities: Intensities,
         meta: Vec<PatternMeta>,
         path: T,
     },
@@ -168,7 +177,7 @@ where
 
 pub fn write_to_npz(
     path: impl AsRef<Path>,
-    intensities: &Array2<f32>,
+    intensities: &Intensities,
     meta: &[PatternMeta],
     compress: bool,
     progress: usize,
@@ -198,38 +207,18 @@ pub fn write_to_npz(
             .map_err(|err| err.to_string())?;
     }
 
-    w.add_array("intensities", intensities)
-        .map_err(|err| err.to_string())?;
+    match intensities {
+        Intensities::Standard(intensities) => {
+            w.add_array("intensities", intensities)
+                .map_err(|err| err.to_string())?;
+        }
+        Intensities::TextureMeasurement(intensities) => {
+            w.add_array("intensities", intensities)
+                .map_err(|err| err.to_string())?;
+        }
+    }
     let data_names = vec!["intensities".to_string()];
     Ok((data_names, meta_names))
-}
-
-/// render a chunk of angle dispersive XRD patterns
-///
-/// # Errors
-///
-/// This function will return an error if the writing thread has died and cannot be sent to
-pub fn render_chunk_and_queue_write_in_thread<D, T>(
-    jobs: Vec<D>,
-    two_thetas: &[f32],
-    path: T,
-    send: Sender<Arc<WriteJob<T>>>,
-    abstol: f32,
-    n_structs: usize,
-    with_weight_fractions: bool,
-) -> Result<(), String>
-where
-    T: AsRef<Path> + Send + Sync,
-    D: Discretizer + Send + Sync + 'static,
-{
-    let (intensities, meta) =
-        render_jobs(jobs, two_thetas, abstol, n_structs, with_weight_fractions)?;
-    send.send(Arc::new(WriteJob::Write {
-        intensities,
-        meta,
-        path,
-    }))
-    .map_err(|err| err.to_string())
 }
 
 /// prepare an output directory for saving generated XRD patterns
@@ -282,9 +271,9 @@ pub fn render_write_chunked<T>(
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    let l = gen.remaining();
-    let chunk_size = io_opts.chunk_size.unwrap_or(l);
-    let n_chunks = l / chunk_size + (l % chunk_size > 0) as usize;
+    let samples = gen.remaining();
+    let chunk_size = io_opts.chunk_size.unwrap_or(samples);
+    let n_chunks = samples / chunk_size + (samples % chunk_size > 0) as usize;
     info!("Rendering {n_chunks} chunks of {chunk_size} patterns each");
     let pad_width = if n_chunks > 1 {
         1 + (n_chunks - 1).ilog10()
@@ -338,7 +327,7 @@ where
     let mut i = 0;
 
     let mut datafiles = Vec::new();
-    while i < l {
+    while i < samples {
         let chunk_file_name = format!(
             "data_{:0width$}.npz",
             i / chunk_size,
@@ -360,16 +349,13 @@ where
         chunk_path.push(&chunk_file_name);
         datafiles.push(chunk_file_name);
 
-        render_chunk_and_queue_write_in_thread(
-            chunk,
-            gen.xs(),
-            chunk_path,
-            tx.clone(),
-            gen.abstol(),
-            gen.n_phases(),
-            gen.with_weight_fractions(),
-        )
-        .map_err(|err| format!("Could not queue write job: {err}."))?;
+        let (intensities, meta) = render_jobs(chunk, gen.xs(), &gen.get_job_params())?;
+        tx.send(Arc::new(WriteJob::Write {
+            intensities,
+            meta,
+            path: chunk_path,
+        }))
+        .map_err(|err| format!("Could not queue write job: {}", err.to_string()))?;
 
         i += actual_chunk_size;
     }

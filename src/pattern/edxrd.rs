@@ -11,7 +11,8 @@ use crate::noise::Noise;
 use crate::pattern::lorentz_polarization_factor;
 
 use super::{
-    DiscretizeJobGenerator, Discretizer, Peak, PeakRenderParams, RenderCommon, VFGenerator,
+    DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak, PeakRenderParams,
+    RenderCommon, VFGenerator,
 };
 
 /// Wiggler Beamline Parameters
@@ -22,6 +23,7 @@ use super::{
 /// * `n_wiggler_magnets`: number of wiggler magnets
 /// * `distance_from_device_m`: distance of sample from device in m
 #[derive(Serialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Beamline {
     #[serde(skip_serializing)]
     e_crit_kev: f64,
@@ -190,10 +192,13 @@ pub struct EDXRDMeta {
     pub vol_fractions: Box<[f64]>,
     pub weight_fractions: Option<Box<[f64]>>,
     pub mean_ds_nm: Box<[f64]>,
-    pub eta: f64,
+    pub ds_eta: Box<[f64]>,
+    pub mustrain: Box<[f64]>,
+    pub mustrain_eta: Box<[f64]>,
     pub theta_rad: f64,
 }
 
+#[derive(Clone)]
 pub struct DiscretizeEnergyDispersive {
     pub common: RenderCommon,
     pub beamline: Beamline,
@@ -208,49 +213,53 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let EDXRDMeta {
             vol_fractions,
             mean_ds_nm,
-            eta,
+            ds_eta,
             theta_rad,
             weight_fractions: _,
+            mustrain,
+            mustrain_eta,
         } = &self.meta;
 
-        itertools::izip!(0..self.common.n_phases(), vol_fractions, mean_ds_nm,)
-            .map(move |(phase_idx, vf, phase_mean_ds_nm)| {
+        itertools::izip!(
+            0..self.common.n_phases(),
+            vol_fractions,
+            mean_ds_nm,
+            ds_eta,
+            mustrain,
+            mustrain_eta
+        )
+        .map(
+            move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
                 self.common.sim_res.all_simulated_peaks[flat_idx]
                     .iter()
                     .map(move |peak: &Peak| {
-                        let (e_hkl_kev, peak_weight, fwhm) = peak.get_edxrd_render_params(
+                        peak.get_edxrd_render_params(
                             *theta_rad,
                             f_lorentz,
                             *phase_mean_ds_nm,
+                            *phase_ds_eta,
+                            *mus_phase,
+                            *mus_eta_phase,
                             *vf,
                             &self.beamline,
-                        );
-                        PeakRenderParams {
-                            pos: e_hkl_kev,
-                            intensity: peak_weight,
-                            fwhm,
-                            eta: *eta as f32,
-                        }
+                        )
                     })
-            })
-            .flatten()
-            .chain(self.common.impurity_peaks.iter().map(move |ip| {
-                let (e_hkl_kev, _, fwhm) = ip.peak.get_edxrd_render_params(
-                    *theta_rad,
-                    f_lorentz,
-                    ip.mean_ds_nm,
-                    1.0,
-                    &self.beamline,
-                );
-                let peak_weight = ip.peak.i_hkl;
-                PeakRenderParams {
-                    pos: e_hkl_kev,
-                    intensity: peak_weight as f32,
-                    fwhm,
-                    eta: ip.eta as f32,
-                }
-            }))
+            },
+        )
+        .flatten()
+        .chain(self.common.impurity_peaks.iter().map(move |ip| {
+            ip.peak.get_edxrd_render_params(
+                *theta_rad,
+                f_lorentz,
+                ip.mean_ds_nm,
+                ip.eta,
+                0.0,
+                0.0,
+                1.0,
+                &self.beamline,
+            )
+        }))
     }
 
     fn n_peaks_tot(&self) -> usize {
@@ -291,10 +300,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     }
                 }
             }
-            DsEtas(_dst) => {
-                for _ in 0..n_phases {
-                    // _dst[(pat_id, i)] = self.meta.eta as f32;
-                    todo!("adjust edxrd eta");
+            DsEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.ds_eta[i] as f32;
                 }
             }
             MeanDsNm(dst) => {
@@ -321,13 +329,6 @@ impl Discretizer for DiscretizeEnergyDispersive {
             }
             InstrumentParameters(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
-            MarchParameter(dst) => {
-                for i in 0..n_phases {
-                    let flat_idx = self.common.idx(i);
-                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
-                    dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
-                }
-            }
             WeightFractions(dst) => {
                 let Some(ref wfs) = self.meta.weight_fractions else {
                     panic!("Can only call this if weight fractions were computed before.");
@@ -339,43 +340,67 @@ impl Discretizer for DiscretizeEnergyDispersive {
             BackgroundParameters(_) => {
                 unreachable!("EDXRD measurements are currently implemented without background")
             }
-            Mustrains(_dst) => todo!(),
-            MustrainEtas(_dst) => todo!(),
+            Mustrains(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain[i] as f32;
+                }
+            }
+            MustrainEtas(dst) => {
+                for i in 0..n_phases {
+                    dst[(pat_id, i)] = self.meta.mustrain_eta[i] as f32;
+                }
+            }
+            BinghamODFParams { orientations, ks } => {
+                for (i, bingham_odf) in (0..n_phases)
+                    .filter_map(|i| {
+                        let flat_idx = self.common.idx(i);
+                        self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
+                    })
+                    .enumerate()
+                {
+                    orientations[(pat_id, i, 0)] = bingham_odf.orientation[0] as f32;
+                    orientations[(pat_id, i, 1)] = bingham_odf.orientation[1] as f32;
+                    orientations[(pat_id, i, 2)] = bingham_odf.orientation[2] as f32;
+                    orientations[(pat_id, i, 3)] = bingham_odf.orientation[3] as f32;
+
+                    let phase_ks = &bingham_odf.ks;
+
+                    ks[(pat_id, i, 0)] = phase_ks[0] as f32;
+                    ks[(pat_id, i, 1)] = phase_ks[1] as f32;
+                    ks[(pat_id, i, 2)] = phase_ks[2] as f32;
+                    ks[(pat_id, i, 3)] = phase_ks[3] as f32;
+                }
+            }
         }
     }
 
-    fn init_meta_data(
-        n_patterns: usize,
-        n_phases: usize,
-        with_weight_fractions: bool,
-        bkg_params: Option<usize>,
-    ) -> Vec<PatternMeta> {
+    fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
         let mut v = vec![
-            Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
-            VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
-            ImpuritySum(Array1::<f32>::zeros(n_patterns)),
-            ImpurityMax(Array1::<f32>::zeros(n_patterns)),
+            Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
+            VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            Mustrains(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            ImpuritySum(Array1::<f32>::zeros(n_samples)),
+            ImpurityMax(Array1::<f32>::zeros(n_samples)),
         ];
-
-        if with_weight_fractions {
+        if p.has_weight_fracs {
             v.push(WeightFractions(Array2::<f32>::zeros((
-                n_patterns, n_phases,
+                n_samples, p.n_phases,
             ))))
         }
-
-        if with_weight_fractions {
-            v.push(WeightFractions(Array2::<f32>::zeros((
-                n_patterns, n_phases,
-            ))));
+        if let Some(n) = p.textured_phases {
+            v.push(BinghamODFParams {
+                orientations: Array3::zeros((n_samples, n, 4)),
+                ks: Array3::zeros((n_samples, n, 4)),
+            })
         }
 
-        if let Some(_) = bkg_params {
-            unreachable!("EDXRD simulation is implemented without background")
+        if let Some(_) = p.bkg_params {
+            unreachable!("Backgrounds are currently not supported in EDXRD");
         }
         v
     }
@@ -429,7 +454,7 @@ where
 {
     type Item = DiscretizeEnergyDispersive;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<DiscretizeSample<Self::Item>> {
         if self.n >= self.sim_params.n_patterns {
             return None;
         }
@@ -441,9 +466,24 @@ where
             &mut self.rng,
         );
 
+        let ret = match self.sim_params.texture_measurement {
+            Some(t) => {
+                let mut ret = Vec::new();
+                for offset in 0..t.stride() {
+                    let mut job = job.clone();
+                    for idx in job.common.indices.iter_mut() {
+                        *idx += offset;
+                    }
+                    ret.push(job.clone());
+                }
+                DiscretizeSample::TextureMeasurement(ret)
+            }
+            None => DiscretizeSample::Standard(job),
+        };
+
         self.n += 1;
 
-        Some(job)
+        Some(ret)
     }
 
     fn remaining(&self) -> usize {
@@ -454,18 +494,27 @@ where
         &self.energies
     }
 
-    fn n_phases(&self) -> usize {
-        self.discretize_info.structures.len()
-    }
+    fn get_job_params(&self) -> JobParams {
+        let textured_phases = self.sim_params.texture_measurement.as_ref().map(|_| {
+            self.discretize_info
+                .sample_parameters
+                .structures
+                .iter()
+                .map(|ref x| x.preferred_orientation.as_ref().map(|_| 1).unwrap_or(0))
+                .sum()
+        });
 
-    fn abstol(&self) -> f32 {
-        self.sim_params.abstol
-    }
-
-    fn with_weight_fractions(&self) -> bool {
-        self.discretize_info
-            .structures
-            .iter()
-            .all(|s| s.density.is_some())
+        JobParams {
+            abstol: self.sim_params.abstol,
+            n_phases: self.discretize_info.structures.len(),
+            has_weight_fracs: self
+                .discretize_info
+                .structures
+                .iter()
+                .all(|s| s.density.is_some()),
+            textured_phases,
+            texture_measurement: self.sim_params.texture_measurement,
+            bkg_params: None,
+        }
     }
 }

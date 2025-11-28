@@ -6,22 +6,28 @@ stages:
 build:
   stage: build
   image: rust:1.83-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
   script: 
-    - cargo build -F cpu-only
-  artifacts:
-    paths:
-      - target
+    - cargo build --no-default-features
 
 rustdoc:
   stage: doc
   dependencies: [build]
   image: rust:1.83-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
   script: 
-    - cargo doc -F cpu-only
+    - cargo doc --no-default-features
 
 test:
   stage: test
   dependencies: [build]
   image: rust:1.83-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
   script:
-    - cargo test -F cpu-only
+    - cargo test --no-default-features

@@ -6,7 +6,8 @@ use log::{debug, warn};
 
 use crate::site::{AtomicDisplacement, Site};
 use crate::species::Species;
-use crate::structure::{Lattice, SGClass};
+use crate::structure::SGClass;
+use crate::lattice::Lattice;
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive

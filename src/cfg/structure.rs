@@ -1,9 +1,10 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::structure::{Strain, Structure};
+use crate::structure::Structure;
+use crate::strain::Strain;
 
-use super::{MarchDollaseCfg, Parameter, VolumeFraction};
+use super::{POCfg, Parameter, VolumeFraction};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum StrainCfg {
@@ -53,7 +54,7 @@ pub struct Mustrain {
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,
-    pub preferred_orientation: Option<MarchDollaseCfg>,
+    pub preferred_orientation: Option<POCfg>,
     pub strain: Option<StrainCfg>,
     pub volume_fraction: Option<VolumeFraction>,
     pub mustrain: Option<Mustrain>,

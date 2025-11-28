@@ -1,4 +1,7 @@
-use super::{DiscretizeJobGenerator, Discretizer, PeakRenderParams, RenderCommon, VFGenerator};
+use super::{
+    DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams,
+    RenderCommon, VFGenerator,
+};
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -19,8 +22,9 @@ pub struct ADXRDMeta {
     pub background: Background,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
 #[repr(C)]
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EmissionLine {
     // wavelength in amstrong
     pub wavelength_ams: f64,
@@ -73,6 +77,7 @@ impl InstrumentParameters {
     }
 }
 
+#[derive(Clone)]
 pub struct DiscretizeAngleDispersive {
     pub common: RenderCommon,
     pub emission_lines: Box<[EmissionLine]>,
@@ -220,11 +225,25 @@ impl Discretizer for DiscretizeAngleDispersive {
                     .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
                     .unwrap_or(0.0);
             }
-            MarchParameter(dst) => {
-                for i in 0..n_phases {
-                    let flat_idx = self.common.idx(i);
-                    let po = &self.common.sim_res.all_preferred_orientations[flat_idx];
-                    dst[(pat_id, i)] = po.as_ref().map_or(1.0, |x| x.r) as f32;
+            BinghamODFParams { orientations, ks } => {
+                for (i, bingham_odf) in (0..n_phases)
+                    .filter_map(|i| {
+                        let flat_idx = self.common.idx(i);
+                        self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
+                    })
+                    .enumerate()
+                {
+                    orientations[(pat_id, i, 0)] = bingham_odf.orientation[0] as f32;
+                    orientations[(pat_id, i, 1)] = bingham_odf.orientation[1] as f32;
+                    orientations[(pat_id, i, 2)] = bingham_odf.orientation[2] as f32;
+                    orientations[(pat_id, i, 3)] = bingham_odf.orientation[3] as f32;
+
+                    let phase_ks = &bingham_odf.ks;
+
+                    ks[(pat_id, i, 0)] = phase_ks[0] as f32;
+                    ks[(pat_id, i, 1)] = phase_ks[1] as f32;
+                    ks[(pat_id, i, 2)] = phase_ks[2] as f32;
+                    ks[(pat_id, i, 3)] = phase_ks[3] as f32;
                 }
             }
             WeightFractions(dst) => {
@@ -264,38 +283,33 @@ impl Discretizer for DiscretizeAngleDispersive {
         }
     }
 
-    fn init_meta_data(
-        n_patterns: usize,
-        n_phases: usize,
-        with_weight_fractions: bool,
-        bkg_params: Option<usize>,
-    ) -> Vec<PatternMeta> {
+    fn init_meta_data(n_samples: usize, p: &JobParams) -> Vec<PatternMeta> {
         use ndarray::{Array1, Array2, Array3};
         use PatternMeta::*;
         let mut v = vec![
-            Strains(Array3::<f32>::zeros((n_patterns, n_phases, 6))),
-            InstrumentParameters(Array2::<f32>::zeros((n_patterns, 6))),
-            MeanDsNm(Array2::<f32>::zeros((n_patterns, n_phases))),
-            DsEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
-            Mustrains(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MustrainEtas(Array2::<f32>::zeros((n_patterns, n_phases))),
-            VolumeFractions(Array2::<f32>::zeros((n_patterns, n_phases))),
-            MarchParameter(Array2::<f32>::zeros((n_patterns, n_phases))),
-            ImpuritySum(Array1::<f32>::zeros(n_patterns)),
-            SampleDisplacementMuM(Array1::<f32>::zeros(n_patterns)),
-            ImpurityMax(Array1::<f32>::zeros(n_patterns)),
+            Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
+            InstrumentParameters(Array2::<f32>::zeros((n_samples, 6))),
+            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            Mustrains(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            ImpuritySum(Array1::<f32>::zeros(n_samples)),
+            SampleDisplacementMuM(Array1::<f32>::zeros(n_samples)),
+            ImpurityMax(Array1::<f32>::zeros(n_samples)),
         ];
 
-        if with_weight_fractions {
+        if p.has_weight_fracs {
             v.push(WeightFractions(Array2::<f32>::zeros((
-                n_patterns, n_phases,
-            ))));
+                n_samples, p.n_phases,
+            ))))
         }
 
-        if let Some(bkg_params) = bkg_params {
-            v.push(BackgroundParameters(Array2::<f32>::zeros((
-                n_patterns, bkg_params,
-            ))));
+        if let Some(n) = p.textured_phases {
+            v.push(BinghamODFParams {
+                orientations: Array3::zeros((n_samples, n, 4)),
+                ks: Array3::zeros((n_samples, n, 4)),
+            })
         }
         v
     }
@@ -352,21 +366,35 @@ where
 {
     type Item = DiscretizeAngleDispersive;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<DiscretizeSample<Self::Item>> {
         if self.n >= self.sim_params.n_patterns {
             return None;
         }
 
-        let job = self.discretize_info.generate_adxrd_job(
+        let mut job = self.discretize_info.generate_adxrd_job(
             &self.vf_generator,
             &self.cfg,
             &self.sim_params,
             &mut self.rng,
         );
 
+        let ret = match self.sim_params.texture_measurement {
+            Some(t) => {
+                let mut ret = Vec::new();
+                for _ in 0..t.stride() {
+                    for idx in job.common.indices.iter_mut() {
+                        *idx += 1;
+                    }
+                    ret.push(job.clone());
+                }
+                DiscretizeSample::TextureMeasurement(ret)
+            }
+            None => DiscretizeSample::Standard(job),
+        };
+
         self.n += 1;
 
-        Some(job)
+        Some(ret)
     }
 
     fn remaining(&self) -> usize {
@@ -377,18 +405,27 @@ where
         &self.two_thetas
     }
 
-    fn n_phases(&self) -> usize {
-        self.discretize_info.structures.len()
-    }
+    fn get_job_params(&self) -> JobParams {
+        let textured_phases = self.sim_params.texture_measurement.as_ref().map(|_| {
+            self.discretize_info
+                .sample_parameters
+                .structures
+                .iter()
+                .map(|x| x.preferred_orientation.as_ref().map(|_| 1).unwrap_or(0))
+                .sum()
+        });
 
-    fn abstol(&self) -> f32 {
-        self.sim_params.abstol
-    }
-
-    fn with_weight_fractions(&self) -> bool {
-        self.discretize_info
-            .structures
-            .iter()
-            .all(|s| s.density.is_some())
+        JobParams {
+            n_phases: self.discretize_info.structures.len(),
+            abstol: self.sim_params.abstol,
+            has_weight_fracs: self
+                .discretize_info
+                .structures
+                .iter()
+                .all(|s| s.density.is_some()),
+            textured_phases,
+            texture_measurement: self.sim_params.texture_measurement,
+            bkg_params: self.cfg.background.as_ref().map(|x| x.n_coefs()),
+        }
     }
 }
