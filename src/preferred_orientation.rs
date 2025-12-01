@@ -94,7 +94,11 @@ impl KDEBinghamODF {
         let samples = self
             .axis_aligned_bingham_dist_samples
             .iter()
-            .map(|bingham_to_domain| beam_to_bingham.quaternion_multiplication(bingham_to_domain))
+            .map(|bingham_to_domain| {
+                beam_to_bingham
+                    .quaternion_multiplication(bingham_to_domain)
+                    .unit_quaternion_recip_unchecked()
+            })
             .collect_vec();
 
         KDEBinghamODF::new(
@@ -108,15 +112,13 @@ impl KDEBinghamODF {
     pub fn weight_aligned(&self, hkl: &Vec3<f64>, lat: &Lattice) -> f64 {
         let mut weight = 0.0;
 
-        let hkl_in_domain_coords = lat.mat.matmul(&hkl);
+        let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
 
-        for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
-            let domain_to_beam = bingham_to_domain.unit_quaternion_recip_unchecked();
+        for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
             let hkl_in_beam_coords =
                 domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
 
-            let mag = hkl_in_beam_coords.magnitude();
-            let dot_with_beam_z = hkl_in_beam_coords[2] / mag;
+            let dot_with_beam_z = hkl_in_beam_coords[2];
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
@@ -144,7 +146,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.quaternion_multiplication(sample_to_bingham);
 
-        let hkl_in_domain_coords = lat.mat.matmul(&hkl);
+        let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
@@ -158,10 +160,9 @@ impl KDEBinghamODF {
         for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
             let beam_to_domain = beam_to_bingham.quaternion_multiplication(&bingham_to_domain);
             let domain_to_beam = beam_to_domain.unit_quaternion_recip_unchecked();
-            let hkl_in_beam_coords =
-                domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
+            let hkl_in_beam_coords = domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
 
-            let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
+            let dot_with_beam_z = hkl_in_beam_coords[2];
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
