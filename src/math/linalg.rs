@@ -374,13 +374,19 @@ impl<T> Vec4<T> {
     {
         let v = ColVec::<_, 4>::new(T::zero(), v[0], v[1], v[2]);
 
-        let recip = self.quaternion_reciprocal();
-
-        let q_tf = self
-            .quaternion_hamilton_product(&v)
-            .quaternion_hamilton_product(&recip);
+        let q_tf = self.quaternion_transform_quaternion(&v);
 
         ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
+    }
+
+    pub fn quaternion_transform_quaternion(&self, v: &Self) -> Self
+    where
+        T: Float,
+    {
+        let recip = self.quaternion_reciprocal();
+
+        self.quaternion_hamilton_product(&v)
+            .quaternion_hamilton_product(&recip)
     }
 }
 
@@ -1340,5 +1346,57 @@ mod test {
 
         assert!(c.dot(&v0).abs() < 1e-15);
         assert!(c.dot(&v1).abs() < 1e-15);
+    }
+
+    #[test]
+    fn quaternion_conjugate_inverse() {
+        let q = Vec4::new(1.0, -1.0, 2.4, 3.3);
+        let qconj = q.quaternion_conjugate();
+        assert_eq!(qconj.quaternion_conjugate(), q);
+    }
+
+    #[test]
+    fn quaternion_conjugate_norm() {
+        let q = Vec4::new(1.0, -1.0, 2.4, 3.3);
+        let qconj = q.quaternion_conjugate();
+        let prod = q.quaternion_multiplication(&qconj);
+        let atol = 1e-7;
+        assert!(prod[1].abs() < atol);
+        assert!(prod[2].abs() < atol);
+        assert!(prod[3].abs() < atol);
+
+        assert!((prod[0] - q.magnitude().powi(2)).abs() < 1e-7)
+    }
+
+    #[test]
+    fn quaternion_reciprocal_identity() {
+        let r0 = Vec4::quat_from_angle_axis(0.3, 2.0, 1.0, 32.0.to_radians());
+        let r1 = r0.quaternion_reciprocal();
+        let prod = r0.quaternion_multiplication(&r1);
+        assert_eq!(prod[0], 1.0);
+        assert_eq!(prod[1], 0.0);
+        assert_eq!(prod[2], 0.0);
+        assert_eq!(prod[3], 0.0);
+    }
+
+    #[test]
+    fn quaternion_angle_axis() {
+        let atol = 1e-3;
+        let q = Vec4::quat_from_angle_axis(0.0, 1.0, 0.0, 32.0.to_radians());
+        assert!((q[0] - 0.961).abs() < atol, "{}, {}", q[0], 0.961);
+        assert!((q[1] - 0.0).abs() < atol, "{}, {}", q[1], 0.0);
+        assert!((q[2] - 0.276).abs() < atol, "{}, {}", q[2], 0.276);
+        assert!((q[3] - 0.0).abs() < atol, "{}, {}", q[0], 0.0);
+    }
+
+    #[test]
+    fn quaternion_rot() {
+        let atol = 1e-6;
+        let q = Vec4::quat_from_angle_axis(0.0, 1.0, 0.0, 32.0.to_radians());
+        let rot = q.quaternion_transform(&Vec3::new(5.0, 7.0, 1.0));
+
+        assert!((rot[0] - 4.77016).abs() < atol, "{}, {}", rot[0], 4.77016);
+        assert!((rot[1] - 7.0).abs() < atol, "{}, {}", rot[1], 7.0);
+        assert!((rot[2] - -1.801548).abs() < atol, "{}, {}", rot[2], -1.8015);
     }
 }
