@@ -7,7 +7,7 @@ use crate::math::linalg::{ColVec, Mat, Mat4, Vec4};
 use crate::math::stats::{
     sample_unit_quaternion_subgroup_algorithm, BinghamDistribution, HitAndRunPolytopeSampler,
 };
-use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
+use crate::preferred_orientation::KDEBinghamODF;
 
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -99,11 +99,7 @@ impl POGenerator {
             bingham_samples.push(bingham_dist.sample(rng));
         }
 
-        KDEBinghamODF {
-            params: BinghamParams { orientation, ks: k },
-            axis_aligned_bingham_dist_samples: bingham_samples,
-            kappa: sampling.kappa,
-        }
+        KDEBinghamODF::new(orientation, k, bingham_samples, sampling.kappa)
     }
 }
 

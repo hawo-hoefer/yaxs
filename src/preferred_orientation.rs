@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::math::linalg::{Vec3, Vec4};
 
 use crate::lattice::Lattice;
@@ -18,6 +20,7 @@ pub struct BinghamParams {
 pub struct KDEBinghamODF {
     pub params: BinghamParams,
     pub axis_aligned_bingham_dist_samples: Vec<Vec4<f64>>,
+    pub norm_const: f64,
     pub kappa: f64,
 }
 
@@ -62,33 +65,47 @@ fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Vec4<f64> {
 }
 
 impl KDEBinghamODF {
+    pub fn new(
+        orientation: Vec4<f64>,
+        ks: Vec4<f64>,
+        bingham_samples: Vec<Vec4<f64>>,
+        kappa: f64,
+    ) -> Self {
+        let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
+        Self {
+            params: BinghamParams { orientation, ks },
+            axis_aligned_bingham_dist_samples: bingham_samples,
+            norm_const: norm_constant,
+            kappa,
+        }
+    }
+
     /// create a copy of self with rotated coordinates according to goniometer chi and phi
     ///
     /// this may be useful if weight needs to be called many times for different phi and chi
     pub fn with_orientation(&self, chi: f64, phi: f64) -> KDEBinghamODF {
-        let mut ret = self.clone();
-
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
-
         let beam_to_sample = get_beam_to_sample_tf(chi, phi);
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.quaternion_multiplication(sample_to_bingham);
 
-        for bingham_to_domain in ret.axis_aligned_bingham_dist_samples.iter_mut() {
-            *bingham_to_domain = beam_to_bingham.quaternion_multiplication(bingham_to_domain);
-        }
+        let samples = self
+            .axis_aligned_bingham_dist_samples
+            .iter()
+            .map(|bingham_to_domain| beam_to_bingham.quaternion_multiplication(bingham_to_domain))
+            .collect_vec();
 
-        ret.params.orientation = Vec4::new(1.0, 0.0, 0.0, 0.0);
-
-        ret
+        KDEBinghamODF::new(
+            Vec4::new(1.0, 0.0, 0.0, 0.0),
+            self.params.ks.clone(),
+            samples,
+            self.kappa,
+        )
     }
 
     pub fn weight_aligned(&self, hkl: &Vec3<f64>, lat: &Lattice) -> f64 {
-        let norm_constant =
-            self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()));
-
         let mut weight = 0.0;
 
         let hkl_in_domain_coords = lat.mat.matmul(&hkl);
@@ -106,7 +123,7 @@ impl KDEBinghamODF {
             weight += (self.kappa * dot_with_beam_z).exp();
         }
 
-        weight *= norm_constant;
+        weight *= self.norm_const;
         weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
         weight
     }
@@ -136,15 +153,13 @@ impl KDEBinghamODF {
         // vector in that orientation
 
         // Von Mises-Fisher distribution normalization constant
-        let norm_constant =
-            self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()));
-
         let mut weight = 0.0;
 
         for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
             let beam_to_domain = beam_to_bingham.quaternion_multiplication(&bingham_to_domain);
             let domain_to_beam = beam_to_domain.unit_quaternion_recip_unchecked();
-            let hkl_in_beam_coords = domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
+            let hkl_in_beam_coords =
+                domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
 
             let dot_with_beam_z = hkl_in_beam_coords.normalize()[2];
 
@@ -152,7 +167,7 @@ impl KDEBinghamODF {
             // normalization is applied below
             weight += (self.kappa * dot_with_beam_z).exp();
         }
-        weight *= norm_constant;
+        weight *= self.norm_const;
         weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
         weight
