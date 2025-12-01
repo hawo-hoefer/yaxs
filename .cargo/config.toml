@@ -3,3 +3,6 @@ features = []
 
 [rust-analyzer.cargo]
 features = []
+
+[build]
+rustflags = ["-Cforce-frame-pointers=yes", "-Ctarget-cpu=native"]

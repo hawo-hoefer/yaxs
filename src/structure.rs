@@ -237,10 +237,8 @@ impl Structure {
         for (hkl, i_hkl, d_hkl) in input {
             let mut i_hkl = *i_hkl;
 
-            if let Some(Alignment { po, phi, chi }) = alignment {
-                let w =
-                    NotNan::new(po.weight(&hkl, &self.lat, chi, phi)).expect("weight is not nan");
-                i_hkl = i_hkl * w;
+            if let Some(ref a) = alignment {
+                i_hkl = i_hkl * a.weight(&hkl, &self.lat);
             }
 
             let (ref mut i_hkl_map, ref mut hkls_map) = agg
@@ -311,7 +309,6 @@ impl Structure {
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        // TODO: update this to use the new version
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
             let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
@@ -319,9 +316,8 @@ impl Structure {
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
 
-            if let Some(Alignment { po, phi, chi }) = alignment {
-                let w = po.weight(&hkl, &self.lat, chi, phi);
-                i_hkl *= w;
+            if let Some(ref a) = alignment {
+                i_hkl *= *a.weight(&hkl, &self.lat);
             }
 
             let d_spacing = NotNan::new(d_hkl).expect("not nan");

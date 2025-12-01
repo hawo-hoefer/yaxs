@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use log::{debug, info};
+use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -12,6 +13,8 @@ use crate::cfg::{
     apply_strain_cfg, CompactSimResults, POGenerator, SampleParameters, StrainCfg,
     TextureMeasurement, ToDiscretize,
 };
+use crate::lattice::Lattice;
+use crate::math::linalg::Vec3;
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 use crate::scatter::Scatter;
@@ -25,10 +28,28 @@ enum PossiblyTextureMeasurementPeaks {
     Texture(Vec<Peaks>),
 }
 
-pub struct Alignment<'a> {
-    pub po: &'a KDEBinghamODF,
-    pub phi: f64,
-    pub chi: f64,
+pub enum Alignment<'a> {
+    Raw {
+        po: &'a KDEBinghamODF,
+        phi: f64,
+        chi: f64,
+    },
+    Precomputed {
+        po: &'a KDEBinghamODF,
+    },
+}
+
+impl<'a> Alignment<'a> {
+    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice) -> NotNan<f64> {
+        match self {
+            Alignment::Raw { po, phi, chi } => {
+                NotNan::new(po.weight(hkl, lat, *chi, *phi)).expect("weight is not nan")
+            }
+            Alignment::Precomputed { po } => {
+                NotNan::new(po.weight_aligned(hkl, lat)).expect("weight is not NaN")
+            }
+        }
+    }
 }
 
 struct PeakSimResult {
@@ -212,9 +233,12 @@ pub fn simulate_peaks(
                     .cartesian_product(t.phi.into_iter())
                     .enumerate()
                 {
+                    let transformed_po = po.as_ref().map(|x| x.with_orientation(chi, phi));
                     let p = perm_s.apply_alignment_to_hkls_intensities(
                         &hkls_intensities_spacings,
-                        po.as_ref().map(|x| Alignment { po: x, chi, phi }),
+                        transformed_po
+                            .as_ref()
+                            .map(|x| Alignment::Precomputed { po: x }),
                     );
                     peaks.push(p.into_boxed_slice());
                 }

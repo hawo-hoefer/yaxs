@@ -11,7 +11,7 @@ kind: !EnergyDispersive
       distance_from_device_m: 100
 
 sample_parameters:
-  structure_permutations: 1
+  structure_permutations: 4
   structures:
     - path: ./cif/Ir_53813.cif
       mean_ds_nm: 50.0
@@ -19,7 +19,7 @@ sample_parameters:
       preferred_orientation: !DirectBingham
         k: [1000, 0.5, 0.5, 1.0]
         orientation: [0, 1, 0, 0]
-        sampling: {n: 128, kappa: 20}
+        sampling: {n: 1024, kappa: 20}
 
 simulation_parameters:
   normalize: false

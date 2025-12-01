@@ -179,7 +179,7 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
     /// ```
     pub fn normalize_inplace(&mut self)
     where
-        T: Float,
+        T: Float + MulAssign,
     {
         self.scale_inplace(T::one() / self.magnitude());
     }
@@ -312,7 +312,7 @@ impl<T> Vec4<T> {
     /// treating self as a quaternion, compute the hamiltonian product
     ///
     /// * `rhs`: right hand side of hamiltonian product
-    pub fn quaternion_hamilton_product(&self, rhs: &Self) -> Self
+    pub fn quaternion_multiplication(&self, rhs: &Self) -> Self
     where
         T: Mul<T, Output = T> + Add<T, Output = T> + Sub<T, Output = T> + Copy,
     {
@@ -332,35 +332,22 @@ impl<T> Vec4<T> {
         Self::new(self[0], -self[1], -self[2], -self[3])
     }
 
+    pub fn unit_quaternion_recip_unchecked(&self) -> Self
+    where
+        T: Float + MulAssign,
+    {
+        self.quaternion_conjugate()
+    }
+
     /// treating self as a quaternion, compute the reciprocal
     pub fn quaternion_reciprocal(&self) -> Self
     where
-        T: Float,
+        T: Float + MulAssign,
     {
         let mut conjug = self.quaternion_conjugate();
         let mag = conjug.magnitude();
         conjug.scale_inplace(T::one() / (mag * mag));
         conjug
-    }
-
-    // TODO: test this
-    pub fn quaternion_multiplication(&self, rhs: &Self) -> Self
-    where
-        T: Float + AddAssign<T>,
-    {
-        // x | 1   i   j   k
-        // --+--------------
-        // 1 | 1   i   j   k
-        // i | i  -1   k  -j
-        // j | j  -k  -1   i
-        // k | k   j  -i  -1
-        let mat = self.matmul(&rhs.transpose());
-        let x = mat[(0, 0)] - mat[(1, 1)] - mat[(2, 2)] - mat[(3, 3)];
-        let y = mat[(0, 1)] + mat[(1, 0)] + mat[(2, 3)] - mat[(3, 2)];
-        let z = mat[(0, 2)] + mat[(2, 0)] - mat[(1, 3)] + mat[(3, 1)];
-        let w = mat[(0, 3)] + mat[(3, 0)] + mat[(1, 2)] - mat[(2, 1)];
-
-        Self::new(x, y, z, w)
     }
 
     /// interpreting self as a quaternion, rotate v
@@ -370,7 +357,7 @@ impl<T> Vec4<T> {
     /// * `v`: vector to rotate
     pub fn quaternion_transform(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
     where
-        T: Float,
+        T: Float + MulAssign,
     {
         let v = ColVec::<_, 4>::new(T::zero(), v[0], v[1], v[2]);
 
@@ -379,14 +366,40 @@ impl<T> Vec4<T> {
         ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
     }
 
+    /// interpreting self as a quaternion, rotate v
+    ///
+    /// $$v' = q v q^{-1}$$
+    ///
+    /// * `v`: vector to rotate
+    pub fn unit_quaternion_transform_unchecked(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
+    where
+        T: Float + MulAssign,
+    {
+        let v = ColVec::<_, 4>::new(T::zero(), v[0], v[1], v[2]);
+
+        let q_tf = self.quaternion_unit_quat_tf_unchecked(&v);
+
+        ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
+    }
+
+    pub fn quaternion_unit_quat_tf_unchecked(&self, v: &Self) -> Self
+    where
+        T: Float + MulAssign,
+    {
+        let recip = self.unit_quaternion_recip_unchecked();
+
+        self.quaternion_multiplication(&v)
+            .quaternion_multiplication(&recip)
+    }
+
     pub fn quaternion_transform_quaternion(&self, v: &Self) -> Self
     where
-        T: Float,
+        T: Float + MulAssign,
     {
         let recip = self.quaternion_reciprocal();
 
-        self.quaternion_hamilton_product(&v)
-            .quaternion_hamilton_product(&recip)
+        self.quaternion_multiplication(&v)
+            .quaternion_multiplication(&recip)
     }
 }
 
@@ -585,10 +598,12 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// ```
     pub fn scale_inplace(&mut self, s: T)
     where
-        T: Mul<T, Output = T> + Copy,
+        T: MulAssign + Copy,
     {
-        for v in self.iter_values_mut() {
-            *v = *v * s;
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                self[(row, col)] *= s;
+            }
         }
     }
 
@@ -1373,10 +1388,10 @@ mod test {
         let r0 = Vec4::quat_from_angle_axis(0.3, 2.0, 1.0, 32.0.to_radians());
         let r1 = r0.quaternion_reciprocal();
         let prod = r0.quaternion_multiplication(&r1);
-        assert_eq!(prod[0], 1.0);
-        assert_eq!(prod[1], 0.0);
-        assert_eq!(prod[2], 0.0);
-        assert_eq!(prod[3], 0.0);
+        assert!((prod[0] - 1.0).abs() < 1e-7);
+        assert!((prod[1] - 0.0).abs() < 1e-7);
+        assert!((prod[2] - 0.0).abs() < 1e-7);
+        assert!((prod[3] - 0.0).abs() < 1e-7);
     }
 
     #[test]
