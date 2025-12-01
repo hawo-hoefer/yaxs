@@ -382,6 +382,27 @@ impl<T> Vec4<T> {
         ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
     }
 
+    /// interpreting self as a quaternion, rotate v, using the algorithm shown below
+    ///
+    /// is somehow slower than what I had before.
+    ///
+    /// <https://blog.molecular-matters.com/2013/05/24/a-faster-quaternion-vector-multiplication/>
+    ///
+    /// $$v' = q v q^{-1}$$
+    ///
+    /// * `v`: vector to rotate
+    #[deprecated]
+    pub fn unit_quaternion_transform_unchecked_alt(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
+    where
+        T: Float + MulAssign,
+    {
+        let qxyz = Vec3::new(self[0], self[1], self[2]);
+        let t = qxyz.cross(v);
+        let v_ = v + &t.scale(self[0]) + qxyz.cross(&t);
+
+        v_
+    }
+
     pub fn quaternion_unit_quat_tf_unchecked(&self, v: &Self) -> Self
     where
         T: Float + MulAssign,
