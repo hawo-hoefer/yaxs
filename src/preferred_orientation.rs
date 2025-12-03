@@ -56,8 +56,8 @@ pub struct KDEBinghamODF {
 /// first, the rotate around beam z by chi
 /// then, rotate around beam y by phi
 fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Quaternion {
-    let beam_chi = Quaternion::from_angle_axis(0.0, 0.0, 1.0, chi.to_radians());
-    let beam_phi = Quaternion::from_angle_axis(0.0, 1.0, 0.0, phi.to_radians());
+    let beam_chi = Quaternion::from_angle_axis(0.0, 0.0, 1.0, chi.to_radians() as f32);
+    let beam_phi = Quaternion::from_angle_axis(0.0, 1.0, 0.0, phi.to_radians() as f32);
 
     // transform rotation of phi around global y to coordinates after chi rotation
     let chi_phi = beam_chi.recip().hamilton_product(&beam_phi);
@@ -111,6 +111,7 @@ impl KDEBinghamODF {
     }
 
     pub fn weight_aligned(&self, hkl_in_domain_coords: &Vec3<f64>) -> f64 {
+        let hkl_in_domain_coords = hkl_in_domain_coords.map(|x| *x as f32);
         let mut weight = 0.0;
 
         for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
@@ -119,10 +120,10 @@ impl KDEBinghamODF {
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
-            weight += (self.kappa * dot_with_beam_z).exp();
+            weight += (self.kappa as f32 * dot_with_beam_z).exp();
         }
 
-        weight *= self.norm_const;
+        let mut weight = weight as f64 * self.norm_const;
         weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
         weight
     }
@@ -143,7 +144,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        let hkl_in_domain_coords = pos;
+        let hkl_in_domain_coords = pos.map(|x| *x as f32);
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
@@ -163,9 +164,9 @@ impl KDEBinghamODF {
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
-            weight += (self.kappa * dot_with_beam_z).exp();
+            weight += (self.kappa as f32 * dot_with_beam_z).exp();
         }
-        weight *= self.norm_const;
+        let mut weight = weight as f64 * self.norm_const;
         weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
         weight
@@ -186,7 +187,7 @@ mod test {
     #[test]
     fn test_transformed_ori() {
         let v = Vec3::new(1.0, 7.0, 3.0).normalize();
-        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
+        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]
@@ -218,7 +219,7 @@ sampling: {{n: 30, kappa: 20}}
     #[test]
     fn test_transformed_ori_aligned() {
         let v = Vec3::new(1.0, 3.0, 3.0).normalize();
-        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
+        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]
