@@ -40,13 +40,13 @@ pub enum Alignment<'a> {
 }
 
 impl<'a> Alignment<'a> {
-    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice) -> NotNan<f64> {
+    pub fn weight(&self, pos: &Vec3<f64>) -> NotNan<f64> {
         match self {
             Alignment::Raw { po, phi, chi } => {
-                NotNan::new(po.weight(hkl, lat, *chi, *phi)).expect("weight is not nan")
+                NotNan::new(po.weight(&pos, *chi, *phi)).expect("weight is not nan")
             }
             Alignment::Precomputed { po } => {
-                NotNan::new(po.weight_aligned(hkl, lat)).expect("weight is not NaN")
+                NotNan::new(po.weight_aligned(&pos)).expect("weight is not NaN")
             }
         }
     }

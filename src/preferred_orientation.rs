@@ -1,3 +1,5 @@
+use std::mem::MaybeUninit;
+
 use itertools::Itertools;
 
 use crate::math::linalg::Vec3;
@@ -108,14 +110,11 @@ impl KDEBinghamODF {
         )
     }
 
-    pub fn weight_aligned(&self, hkl: &Vec3<f64>, lat: &Lattice) -> f64 {
+    pub fn weight_aligned(&self, hkl_in_domain_coords: &Vec3<f64>) -> f64 {
         let mut weight = 0.0;
-
-        let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
 
         for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
             let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
-
             let dot_with_beam_z = hkl_in_beam_coords[2];
 
             // kernel density estimation using the von Mises-Fisher distribution
@@ -136,7 +135,7 @@ impl KDEBinghamODF {
     /// * `chi`: goniometer chi in degrees
     /// * `phi`: goniometer phi in degrees
     /// * `rng`: random number generator
-    pub fn weight(&self, hkl: &Vec3<f64>, lat: &Lattice, chi: f64, phi: f64) -> f64 {
+    pub fn weight(&self, pos: &Vec3<f64>, chi: f64, phi: f64) -> f64 {
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
@@ -144,7 +143,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
+        let hkl_in_domain_coords = pos;
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
@@ -179,8 +178,7 @@ mod test {
     use rand_xoshiro::Xoshiro256PlusPlus;
 
     use crate::cfg::POCfg;
-    use crate::lattice::Lattice;
-    use crate::math::linalg::{Mat, Vec3};
+    use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
 
     const ATOL: f64 = 1e-5;
@@ -210,12 +208,9 @@ sampling: {{n: 30, kappa: 20}}
         let phi = -20.0f64;
         let rotated = bing.with_orientation(chi, phi);
 
-        let lattice = Lattice {
-            mat: Mat::identity(),
-        };
-        let hkl = Vec3::new(1.0, 3.0, 2.0);
-        let w0 = rotated.weight(&hkl, &lattice, 0.0, 0.0);
-        let w1 = bing.weight(&hkl, &lattice, phi, chi);
+        let pos = Vec3::new(1.0, 3.0, 2.0);
+        let w0 = rotated.weight(&pos, 0.0, 0.0);
+        let w1 = bing.weight(&pos, phi, chi);
 
         assert!((w0 - w1).abs() < ATOL);
     }
@@ -244,12 +239,9 @@ sampling: {{n: 1024, kappa: 20}}
         let phi = -20.0f64;
         let rotated = bing.with_orientation(chi, phi);
 
-        let lattice = Lattice {
-            mat: Mat::identity(),
-        };
-        let hkl = Vec3::new(1.0, 3.0, 2.0);
-        let w0 = rotated.weight_aligned(&hkl, &lattice);
-        let w1 = bing.weight(&hkl, &lattice, chi, phi);
+        let pos = Vec3::new(1.0, 3.0, 2.0);
+        let w0 = rotated.weight_aligned(&pos);
+        let w1 = bing.weight(&pos, chi, phi);
 
         assert!((w0 - w1).abs() < ATOL);
     }

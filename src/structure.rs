@@ -169,8 +169,8 @@ impl Structure {
 
     pub fn structure_factor(
         &self,
-        hkl: Vec3<f64>,
-        pos: Vec3<f64>,
+        hkl: &Vec3<f64>,
+        pos: &Vec3<f64>,
         d_hkl: f64,
         scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Complex<f64> {
@@ -210,18 +210,18 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         scattering_parameters: &HashMap<Atom, Scatter>,
-    ) -> Vec<(Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
+    ) -> Vec<(Vec3<f64>, Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
         let mut agg = Vec::new();
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
 
-            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
+            let f_hkl = self.structure_factor(&hkl, &pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
             let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
 
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
-            agg.push((hkl, i_hkl, d_spacing));
+            agg.push((hkl, pos, i_hkl, d_spacing));
         }
 
         agg
@@ -229,16 +229,16 @@ impl Structure {
 
     pub fn apply_alignment_to_hkls_intensities<'a>(
         &self,
-        input: &[(Vec3<f64>, NotNan<f64>, NotNan<f64>)],
+        input: &[(Vec3<f64>, Vec3<f64>, NotNan<f64>, NotNan<f64>)],
         alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        for (hkl, i_hkl, d_hkl) in input {
+        for (hkl, pos, i_hkl, d_hkl) in input {
             let mut i_hkl = *i_hkl;
 
             if let Some(ref a) = alignment {
-                i_hkl = i_hkl * a.weight(&hkl, &self.lat);
+                i_hkl = i_hkl * a.weight(pos);
             }
 
             let (ref mut i_hkl_map, ref mut hkls_map) = agg
@@ -311,13 +311,13 @@ impl Structure {
 
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;
-            let f_hkl = self.structure_factor(hkl.clone(), pos, d_hkl, scattering_parameters);
+            let f_hkl = self.structure_factor(&hkl, &pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
             let mut i_hkl = (f_hkl * f_hkl.conj()).re;
 
             if let Some(ref a) = alignment {
-                i_hkl *= *a.weight(&hkl, &self.lat);
+                i_hkl *= *a.weight(&pos);
             }
 
             let d_spacing = NotNan::new(d_hkl).expect("not nan");

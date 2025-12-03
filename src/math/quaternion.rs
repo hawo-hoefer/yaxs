@@ -1,5 +1,3 @@
-use std::mem::MaybeUninit;
-
 use super::linalg::{Vec3, Vec4};
 
 #[derive(Clone, PartialEq, Debug)]
@@ -121,65 +119,13 @@ where {
         &mut self.w as *mut f64
     }
 
-    /// perform a quaternion multiplication (hamiltonian product)
-    /// using avx2 instructrions
     pub fn hamilton_product(&self, rhs: &Self) -> Self {
-        cfg_if::cfg_if! {
-            if #[cfg(all(target_arch = "x86_64", target_feature = "avx2", feature="use-avx"))] {
-                use std::arch::x86_64::{
-                    _mm256_add_pd, _mm256_broadcast_sd, _mm256_load_pd, _mm256_mul_pd, _mm256_store_pd,
-                    _mm256_set1_pd, _mm256_xor_pd, _mm256_fmadd_pd, _mm256_permute4x64_pd,
-                    _mm256_blend_pd, _mm256_shuffle_pd,
-                };
-                unsafe {
-                    //       s0     r0     s1     r1     s2     r2     s3      r3
-                    // .w = q0.w * q1.w - q0.x * q1.x - q0.y * q1.y - q0.z * q1.z,
-                    // .x = q0.w * q1.x + q0.x * q1.w + q0.y * q1.z - q0.z * q1.y,
-                    // .y = q0.w * q1.y - q0.x * q1.z + q0.y * q1.w + q0.z * q1.x,
-                    // .z = q0.w * q1.z + q0.x * q1.y - q0.y * q1.x + q0.z * q1.w,
-                    let q1_ = _mm256_load_pd(rhs.get_ptr());
-
-                    let s0 = _mm256_broadcast_sd(&self.w);
-                    let s1 = _mm256_broadcast_sd(&self.x);
-                    let s2 = _mm256_broadcast_sd(&self.y);
-                    let s3 = _mm256_broadcast_sd(&self.z);
-
-                    let neg = _mm256_set1_pd(-0.0);
-                    let q1_neg = _mm256_xor_pd(q1_, neg);
-
-                    let r1 = _mm256_shuffle_pd(q1_neg, q1_, 0b0101);
-                    // [-x, w, -z, y]
-
-                    let mut r2 = _mm256_shuffle_pd(q1_neg, q1_, 0b1001);
-                    // now we have [-x,  w, -y,  z]
-                    r2 = _mm256_permute4x64_pd(r2, 0b00011110);
-                    // now we have [-y,  z,  w, -x]
-
-                    let mut r3 = _mm256_blend_pd(q1_neg, q1_, 0b0011);
-                    // // we now have [ w,  x, -y, -z]
-                    r3 = _mm256_permute4x64_pd(r3, 0b00011011);
-                    // we now have [-z, -y,  x,  w]
-
-                    let mut acc = _mm256_mul_pd(q1_, s0);
-                    let mut acc2 = _mm256_mul_pd(r1, s1);
-                    acc = _mm256_fmadd_pd(r2, s2, acc);
-                    acc2 = _mm256_fmadd_pd(r3, s3, acc2);
-
-                    acc = _mm256_add_pd(acc, acc2);
-
-                    let mut ret = MaybeUninit::<Quaternion>::uninit();
-                    _mm256_store_pd(ret.as_mut_ptr().cast(), acc);
-                    return ret.assume_init();
-                }
-            } else  {
-                Self::new(
-                    self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
-                    self.w * rhs.x + self.x * rhs.w + self.y * rhs.z - self.z * rhs.y,
-                    self.w * rhs.y - self.x * rhs.z + self.y * rhs.w + self.z * rhs.x,
-                    self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
-                )
-            }
-        }
+        Self::new(
+            self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
+            self.w * rhs.x + self.x * rhs.w + self.y * rhs.z - self.z * rhs.y,
+            self.w * rhs.y - self.x * rhs.z + self.y * rhs.w + self.z * rhs.x,
+            self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
+        )
     }
 }
 
