@@ -5,4 +5,4 @@ features = []
 features = []
 
 [build]
-rustflags = ["-Cforce-frame-pointers=yes", "-Ctarget-cpu=native"]
+rustflags = ["-C", "force-frame-pointers=yes", "-C", "target-cpu=native", "-C", "target-feature=+avx2"]

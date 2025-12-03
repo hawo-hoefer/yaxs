@@ -1,8 +1,7 @@
 kind: !EnergyDispersive
     n_steps: 1024
     # energy_range_kev: [10, 160]
-    energy_range_kev: [35, 55]
-    # energy_range_kev: [20, 50]
+    energy_range_kev: [20, 50]
     theta_deg: 3.965
     beamline:
       storage_ring_electron_energy_gev: 6
@@ -11,14 +10,14 @@ kind: !EnergyDispersive
       distance_from_device_m: 100
 
 sample_parameters:
-  structure_permutations: 4
+  structure_permutations: 10
   structures:
     - path: ./cif/Ir_53813.cif
       mean_ds_nm: 50.0
       ds_eta: 0.5
-      preferred_orientation: !DirectBingham
-        k: [1000, 0.5, 0.5, 1.0]
-        orientation: [0, 1, 0, 0]
+      preferred_orientation: !SingleAxis
+        k_max: 10000
+        strength: [10, 1000]
         sampling: {n: 1024, kappa: 20}
 
 simulation_parameters:
@@ -27,10 +26,11 @@ simulation_parameters:
   n_patterns: 1
   abstol: 1e-2
   texture_measurement:
-    phi:
-      range: [-45, 45]
-      steps: 91
     chi:
-      range: [0, 45]
-      steps: 2
+      range: [0, 20]
+      steps: 21
+    phi:
+      range: [-20, 200]
+      steps: 45
+
 

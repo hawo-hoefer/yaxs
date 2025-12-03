@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use num_traits::{Float, One, Zero};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
-#[repr(C)]
+#[repr(C, align(32))]
 pub struct Mat<T, const ROWS: usize, const COLS: usize> {
     v: [[T; COLS]; ROWS],
 }
@@ -308,45 +308,23 @@ impl<T> Vec4<T> {
             v[2] * alpha_half_sin,
         )
     }
+}
 
-    /// treating self as a quaternion, compute the hamiltonian product
-    ///
-    /// * `rhs`: right hand side of hamiltonian product
-    pub fn quaternion_multiplication(&self, rhs: &Self) -> Self
-    where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Sub<T, Output = T> + Copy,
-    {
-        Self::new(
-            self[0] * rhs[0] - self[1] * rhs[1] - self[2] * rhs[2] - self[3] * rhs[3],
-            self[0] * rhs[1] + self[1] * rhs[0] + self[2] * rhs[3] - self[3] * rhs[2],
-            self[0] * rhs[2] - self[1] * rhs[3] + self[2] * rhs[0] + self[3] * rhs[1],
-            self[0] * rhs[3] + self[1] * rhs[2] - self[2] * rhs[1] + self[3] * rhs[0],
-        )
-    }
-
+impl Vec4<f64> {
     /// treating self as quaternion, compute the quaternion conjugate
-    pub fn quaternion_conjugate(&self) -> Self
-    where
-        T: Neg<Output = T> + Copy,
-    {
+    pub fn quaternion_conjugate(&self) -> Self {
         Self::new(self[0], -self[1], -self[2], -self[3])
     }
 
-    pub fn unit_quaternion_recip_unchecked(&self) -> Self
-    where
-        T: Float + MulAssign,
-    {
+    pub fn unit_quaternion_recip_unchecked(&self) -> Self {
         self.quaternion_conjugate()
     }
 
     /// treating self as a quaternion, compute the reciprocal
-    pub fn quaternion_reciprocal(&self) -> Self
-    where
-        T: Float + MulAssign,
-    {
+    pub fn quaternion_reciprocal(&self) -> Self {
         let mut conjug = self.quaternion_conjugate();
         let mag = conjug.magnitude();
-        conjug.scale_inplace(T::one() / (mag * mag));
+        conjug.scale_inplace(f64::one() / (mag * mag));
         conjug
     }
 
@@ -355,15 +333,12 @@ impl<T> Vec4<T> {
     /// $$v' = q v q^{-1}$$
     ///
     /// * `v`: vector to rotate
-    pub fn quaternion_transform(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
-    where
-        T: Float + MulAssign,
-    {
-        let v = ColVec::<_, 4>::new(T::zero(), v[0], v[1], v[2]);
+    pub fn quaternion_transform(&self, v: &ColVec<f64, 3>) -> ColVec<f64, 3> {
+        let v = ColVec::<_, 4>::new(f64::zero(), v[0], v[1], v[2]);
 
         let q_tf = self.quaternion_transform_quaternion(&v);
 
-        ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
+        ColVec::<f64, 3>::new(q_tf[1], q_tf[2], q_tf[3])
     }
 
     /// interpreting self as a quaternion, rotate v
@@ -371,15 +346,12 @@ impl<T> Vec4<T> {
     /// $$v' = q v q^{-1}$$
     ///
     /// * `v`: vector to rotate
-    pub fn unit_quaternion_transform_unchecked(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
-    where
-        T: Float + MulAssign,
-    {
-        let v = ColVec::<_, 4>::new(T::zero(), v[0], v[1], v[2]);
+    pub fn unit_quaternion_transform_unchecked(&self, v: &ColVec<f64, 3>) -> ColVec<f64, 3> {
+        let v = ColVec::<_, 4>::new(f64::zero(), v[0], v[1], v[2]);
 
         let q_tf = self.quaternion_unit_quat_tf_unchecked(&v);
 
-        ColVec::<T, 3>::new(q_tf[1], q_tf[2], q_tf[3])
+        ColVec::<_, 3>::new(q_tf[1], q_tf[2], q_tf[3])
     }
 
     /// interpreting self as a quaternion, rotate v, using the algorithm shown below
@@ -392,10 +364,7 @@ impl<T> Vec4<T> {
     ///
     /// * `v`: vector to rotate
     #[deprecated]
-    pub fn unit_quaternion_transform_unchecked_alt(&self, v: &ColVec<T, 3>) -> ColVec<T, 3>
-    where
-        T: Float + MulAssign,
-    {
+    pub fn unit_quaternion_transform_unchecked_alt(&self, v: &ColVec<f64, 3>) -> ColVec<f64, 3> {
         let qxyz = Vec3::new(self[0], self[1], self[2]);
         let t = qxyz.cross(v);
         let v_ = v + &t.scale(self[0]) + qxyz.cross(&t);
@@ -403,24 +372,87 @@ impl<T> Vec4<T> {
         v_
     }
 
-    pub fn quaternion_unit_quat_tf_unchecked(&self, v: &Self) -> Self
-    where
-        T: Float + MulAssign,
-    {
+    pub fn quaternion_unit_quat_tf_unchecked(&self, v: &Self) -> Self {
         let recip = self.unit_quaternion_recip_unchecked();
 
         self.quaternion_multiplication(&v)
             .quaternion_multiplication(&recip)
     }
 
-    pub fn quaternion_transform_quaternion(&self, v: &Self) -> Self
-    where
-        T: Float + MulAssign,
-    {
+    pub fn quaternion_transform_quaternion(&self, v: &Self) -> Self {
         let recip = self.quaternion_reciprocal();
 
         self.quaternion_multiplication(&v)
             .quaternion_multiplication(&recip)
+    }
+
+    pub fn get_ptr(&self) -> *const f64 {
+        &self.v[0][0] as *const f64
+    }
+
+    pub fn get_mut_ptr(&mut self) -> *mut f64 {
+        &mut self.v[0][0] as *mut f64
+    }
+
+    /// perform a quaternion multiplication (hamiltonian product)
+    /// using avx2 instructrions
+    pub fn quaternion_multiplication(&self, rhs: &Self) -> Self {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_arch = "x86_64", target_feature = "avx2", feature="use-avx"))] {
+                use std::arch::x86_64::{
+                    _mm256_add_pd, _mm256_broadcast_sd, _mm256_load_pd, _mm256_mul_pd, _mm256_store_pd,
+                    _mm256_set1_pd, _mm256_xor_pd, _mm256_fmadd_pd, _mm256_permute4x64_pd,
+                    _mm256_blend_pd, _mm256_shuffle_pd,
+                };
+                unsafe {
+                    //       s0     r0     s1     r1     s2     r2     s3      r3
+                    // .w = q0.w * q1.w - q0.x * q1.x - q0.y * q1.y - q0.z * q1.z,
+                    // .x = q0.w * q1.x + q0.x * q1.w + q0.y * q1.z - q0.z * q1.y,
+                    // .y = q0.w * q1.y - q0.x * q1.z + q0.y * q1.w + q0.z * q1.x,
+                    // .z = q0.w * q1.z + q0.x * q1.y - q0.y * q1.x + q0.z * q1.w,
+                    let q1_ = _mm256_load_pd(rhs.get_ptr());
+
+                    let s0 = _mm256_broadcast_sd(&self[0]);
+                    let s1 = _mm256_broadcast_sd(&self[1]);
+                    let s2 = _mm256_broadcast_sd(&self[2]);
+                    let s3 = _mm256_broadcast_sd(&self[3]);
+
+                    let neg = _mm256_set1_pd(-0.0);
+                    let q1_neg = _mm256_xor_pd(q1_, neg);
+
+                    let r1 = _mm256_shuffle_pd(q1_neg, q1_, 0b0101);
+                    // [-x, w, -z, y]
+
+                    let mut r2 = _mm256_shuffle_pd(q1_neg, q1_, 0b1001);
+                    // now we have [-x,  w, -y,  z]
+                    r2 = _mm256_permute4x64_pd(r2, 0b00011110);
+                    // now we have [-y,  z,  w, -x]
+
+                    let mut r3 = _mm256_blend_pd(q1_neg, q1_, 0b0011);
+                    // // we now have [ w,  x, -y, -z]
+                    r3 = _mm256_permute4x64_pd(r3, 0b00011011);
+                    // we now have [-z, -y,  x,  w]
+
+                    let mut acc = _mm256_mul_pd(q1_, s0);
+                    let mut acc2 = _mm256_mul_pd(r1, s1);
+                    acc = _mm256_fmadd_pd(r2, s2, acc);
+                    acc2 = _mm256_fmadd_pd(r3, s3, acc2);
+
+                    acc = _mm256_add_pd(acc, acc2);
+
+                    let mut ret = MaybeUninit::<Vec4<f64>>::uninit();
+                    _mm256_store_pd(ret.as_mut_ptr().cast(), acc);
+                    return ret.assume_init();
+                }
+            } else  {
+                Self::new(
+                    self[0] * rhs[0] - self[1] * rhs[1] - self[2] * rhs[2] - self[3] * rhs[3],
+                    self[0] * rhs[1] + self[1] * rhs[0] + self[2] * rhs[3] - self[3] * rhs[2],
+                    self[0] * rhs[2] - self[1] * rhs[3] + self[2] * rhs[0] + self[3] * rhs[1],
+                    self[0] * rhs[3] + self[1] * rhs[2] - self[2] * rhs[1] + self[3] * rhs[0],
+                )
+            }
+        }
     }
 }
 

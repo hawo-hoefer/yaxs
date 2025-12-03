@@ -2,7 +2,6 @@ use itertools::Itertools;
 use rand::Rng;
 
 use crate::math::linalg::{ColVec, Mat};
-
 use super::linalg::Vec4;
 
 /// sample uniformly from the surface of the DIMS-sphere
