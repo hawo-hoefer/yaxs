@@ -1,3 +1,9 @@
 /target
 /out
 *cif/
+callgrind.out*
+cachegrind.out*
+stacks.folded
+perf.data
+perf.data.old
+flamegraph.svg
