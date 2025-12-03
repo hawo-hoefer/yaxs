@@ -96,10 +96,16 @@ impl POGenerator {
             .expect("identity matrix is OK");
         let mut bingham_samples = Vec::with_capacity(sampling.n);
         for _ in 0..bingham_samples.capacity() {
-            bingham_samples.push(bingham_dist.sample(rng));
+            let sample = bingham_dist.sample(rng);
+            bingham_samples.push(sample.into());
         }
 
-        KDEBinghamODF::new(orientation, k, bingham_samples, sampling.kappa)
+        KDEBinghamODF::new(
+            orientation.into(),
+            k.into(),
+            bingham_samples,
+            sampling.kappa,
+        )
     }
 }
 

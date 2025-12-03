@@ -1,13 +1,14 @@
 use itertools::Itertools;
 
-use crate::math::linalg::{Vec3, Vec4};
+use crate::math::linalg::Vec3;
+use crate::math::quaternion::Quaternion;
 
 use crate::lattice::Lattice;
 
 #[derive(Clone, Debug)]
 pub struct BinghamParams {
-    pub orientation: Vec4<f64>,
-    pub ks: Vec4<f64>,
+    pub orientation: Quaternion,
+    pub ks: Quaternion,
 }
 
 /// orientation distribution for perferred orientation in sample coordinates
@@ -19,7 +20,7 @@ pub struct BinghamParams {
 #[derive(Clone, Debug)]
 pub struct KDEBinghamODF {
     pub params: BinghamParams,
-    pub axis_aligned_bingham_dist_samples: Vec<Vec4<f64>>,
+    pub axis_aligned_bingham_dist_samples: Vec<Quaternion>,
     pub norm_const: f64,
     pub kappa: f64,
 }
@@ -52,23 +53,21 @@ pub struct KDEBinghamODF {
 /// for the orientation transformation from beam to sample:
 /// first, the rotate around beam z by chi
 /// then, rotate around beam y by phi
-fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Vec4<f64> {
-    let beam_chi = Vec4::quat_from_angle_axis(0.0, 0.0, 1.0, chi.to_radians());
-    let beam_phi = Vec4::quat_from_angle_axis(0.0, 1.0, 0.0, phi.to_radians());
+fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Quaternion {
+    let beam_chi = Quaternion::from_angle_axis(0.0, 0.0, 1.0, chi.to_radians());
+    let beam_phi = Quaternion::from_angle_axis(0.0, 1.0, 0.0, phi.to_radians());
 
     // transform rotation of phi around global y to coordinates after chi rotation
-    let chi_phi = beam_chi
-        .quaternion_reciprocal()
-        .quaternion_multiplication(&beam_phi);
+    let chi_phi = beam_chi.recip().hamilton_product(&beam_phi);
 
-    beam_chi.quaternion_multiplication(&chi_phi)
+    beam_chi.hamilton_product(&chi_phi)
 }
 
 impl KDEBinghamODF {
     pub fn new(
-        orientation: Vec4<f64>,
-        ks: Vec4<f64>,
-        bingham_samples: Vec<Vec4<f64>>,
+        orientation: Quaternion,
+        ks: Quaternion,
+        bingham_samples: Vec<Quaternion>,
         kappa: f64,
     ) -> Self {
         let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
@@ -89,20 +88,20 @@ impl KDEBinghamODF {
         // transform bingham distribution's orientation from sample to beam coords
         let beam_to_sample = get_beam_to_sample_tf(chi, phi);
         let sample_to_bingham = &self.params.orientation;
-        let beam_to_bingham = beam_to_sample.quaternion_multiplication(sample_to_bingham);
+        let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
         let samples = self
             .axis_aligned_bingham_dist_samples
             .iter()
             .map(|bingham_to_domain| {
                 beam_to_bingham
-                    .quaternion_multiplication(bingham_to_domain)
-                    .unit_quaternion_recip_unchecked()
+                    .hamilton_product(bingham_to_domain)
+                    .unit_recip_unchecked()
             })
             .collect_vec();
 
         KDEBinghamODF::new(
-            Vec4::new(1.0, 0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
             self.params.ks.clone(),
             samples,
             self.kappa,
@@ -115,8 +114,7 @@ impl KDEBinghamODF {
         let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
 
         for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
-            let hkl_in_beam_coords =
-                domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
+            let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
 
             let dot_with_beam_z = hkl_in_beam_coords[2];
 
@@ -144,7 +142,7 @@ impl KDEBinghamODF {
         // transform bingham distribution's orientation from sample to beam coords
         let beam_to_sample = get_beam_to_sample_tf(chi, phi);
         let sample_to_bingham = &self.params.orientation;
-        let beam_to_bingham = beam_to_sample.quaternion_multiplication(sample_to_bingham);
+        let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
         let hkl_in_domain_coords = lat.mat.matmul(&hkl).normalize();
         // now, we need to compute how well the distribution over physical hkl
@@ -158,9 +156,9 @@ impl KDEBinghamODF {
         let mut weight = 0.0;
 
         for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
-            let beam_to_domain = beam_to_bingham.quaternion_multiplication(&bingham_to_domain);
-            let domain_to_beam = beam_to_domain.unit_quaternion_recip_unchecked();
-            let hkl_in_beam_coords = domain_to_beam.unit_quaternion_transform_unchecked(&hkl_in_domain_coords);
+            let beam_to_domain = beam_to_bingham.hamilton_product(&bingham_to_domain);
+            let domain_to_beam = beam_to_domain.unit_recip_unchecked();
+            let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
 
             let dot_with_beam_z = hkl_in_beam_coords[2];
 
@@ -182,21 +180,22 @@ mod test {
 
     use crate::cfg::POCfg;
     use crate::lattice::Lattice;
-    use crate::math::linalg::{Mat, Vec3, Vec4};
+    use crate::math::linalg::{Mat, Vec3};
+    use crate::math::quaternion::Quaternion;
 
     const ATOL: f64 = 1e-5;
 
     #[test]
     fn test_transformed_ori() {
         let v = Vec3::new(1.0, 7.0, 3.0).normalize();
-        let ori = Vec4::quat_from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
+        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]
 orientation: [{}, {}, {}, {}]
 sampling: {{n: 30, kappa: 20}}
 ",
-            ori[0], ori[1], ori[2], ori[3]
+            ori.w, ori.x, ori.y, ori.z
         );
 
         let pocfg: POCfg = serde_yaml::from_str(&input).expect("valid PO cfg");
@@ -224,14 +223,14 @@ sampling: {{n: 30, kappa: 20}}
     #[test]
     fn test_transformed_ori_aligned() {
         let v = Vec3::new(1.0, 3.0, 3.0).normalize();
-        let ori = Vec4::quat_from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
+        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f64.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]
 orientation: [{}, {}, {}, {}]
 sampling: {{n: 1024, kappa: 20}}
 ",
-            ori[0], ori[1], ori[2], ori[3]
+            ori.w, ori.x, ori.y, ori.z
         );
         let pocfg: POCfg = serde_yaml::from_str(&input).expect("valid PO cfg");
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(1128123);

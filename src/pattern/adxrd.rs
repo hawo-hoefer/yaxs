@@ -233,17 +233,17 @@ impl Discretizer for DiscretizeAngleDispersive {
                     })
                     .enumerate()
                 {
-                    orientations[(pat_id, i, 0)] = bingham_odf.orientation[0] as f32;
-                    orientations[(pat_id, i, 1)] = bingham_odf.orientation[1] as f32;
-                    orientations[(pat_id, i, 2)] = bingham_odf.orientation[2] as f32;
-                    orientations[(pat_id, i, 3)] = bingham_odf.orientation[3] as f32;
+                    orientations[(pat_id, i, 0)] = bingham_odf.orientation.w as f32;
+                    orientations[(pat_id, i, 1)] = bingham_odf.orientation.x as f32;
+                    orientations[(pat_id, i, 2)] = bingham_odf.orientation.y as f32;
+                    orientations[(pat_id, i, 3)] = bingham_odf.orientation.z as f32;
 
                     let phase_ks = &bingham_odf.ks;
 
-                    ks[(pat_id, i, 0)] = phase_ks[0] as f32;
-                    ks[(pat_id, i, 1)] = phase_ks[1] as f32;
-                    ks[(pat_id, i, 2)] = phase_ks[2] as f32;
-                    ks[(pat_id, i, 3)] = phase_ks[3] as f32;
+                    ks[(pat_id, i, 0)] = phase_ks.w as f32;
+                    ks[(pat_id, i, 1)] = phase_ks.x as f32;
+                    ks[(pat_id, i, 2)] = phase_ks.y as f32;
+                    ks[(pat_id, i, 3)] = phase_ks.z as f32;
                 }
             }
             WeightFractions(dst) => {

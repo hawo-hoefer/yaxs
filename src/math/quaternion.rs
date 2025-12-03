@@ -1,0 +1,250 @@
+use std::mem::MaybeUninit;
+
+use super::linalg::{Vec3, Vec4};
+
+#[derive(Clone, PartialEq, Debug)]
+#[repr(C, align(32))]
+pub struct Quaternion {
+    pub w: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl Quaternion {
+    pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self {
+        Self { w, x, y, z }
+    }
+
+    pub fn from_angle_axis(x: f64, y: f64, z: f64, alpha: f64) -> Self
+where {
+        let v = Vec3::new(x, y, z).normalize();
+
+        let alpha_half_sin = (alpha / 2.0).sin();
+
+        Self::new(
+            (alpha / 2.0).cos(),
+            v[0] * alpha_half_sin,
+            v[1] * alpha_half_sin,
+            v[2] * alpha_half_sin,
+        )
+    }
+    /// treating self as quaternion, compute the quaternion conjugate
+    pub fn conjugate(&self) -> Self {
+        Self::new(self.w, -self.x, -self.y, -self.z)
+    }
+
+    pub fn unit_recip_unchecked(&self) -> Self {
+        self.conjugate()
+    }
+
+    pub fn magnitude(&self) -> f64 {
+        (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    pub fn scale_inplace(&mut self, s: f64) {
+        self.w *= s;
+        self.x *= s;
+        self.y *= s;
+        self.z *= s;
+    }
+
+    /// compute quaternion reciprocal
+    ///
+    pub fn recip(&self) -> Self {
+        let mut conjug = self.conjugate();
+        let mag = conjug.magnitude();
+        // TODO: do something here, maybe sqinv or something
+        conjug.scale_inplace(1.0 / (mag * mag));
+        conjug
+    }
+
+    /// rotate v by self
+    ///
+    /// $$v' = q v q^{-1}$$
+    ///
+    /// * `v`: vector to rotate
+    pub fn quaternion_transform(&self, v: &Vec3<f64>) -> Vec3<f64> {
+        let v = Self::new(0.0, v[0], v[1], v[2]);
+        let q_tf = self.quaternion_transform_quaternion(&v);
+        Vec3::new(q_tf.x, q_tf.y, q_tf.z)
+    }
+
+    /// rotate v by self without normalization
+    ///
+    /// $$v' = q v q^{-1}$$
+    ///
+    /// * `v`: vector to rotate
+    pub fn unit_transform_unchecked(&self, v: &Vec3<f64>) -> Vec3<f64> {
+        let v = Self::new(0.0, v[0], v[1], v[2]);
+
+        let q_tf = self.unit_quat_tf_unchecked(&v);
+
+        Vec3::new(q_tf.x, q_tf.y, q_tf.z)
+    }
+
+    /// interpreting self as a quaternion, rotate v, using the algorithm shown below
+    ///
+    /// is somehow slower than what I had before.
+    ///
+    /// <https://blog.molecular-matters.com/2013/05/24/a-faster-quaternion-vector-multiplication/>
+    ///
+    /// $$v' = q v q^{-1}$$
+    ///
+    /// * `v`: vector to rotate
+    #[deprecated]
+    pub fn unit_quaternion_transform_unchecked_alt(&self, v: &Vec3<f64>) -> Vec3<f64> {
+        let qxyz = Vec3::new(self.x, self.y, self.z);
+        let t = qxyz.cross(v);
+        let v_ = v + &t.scale(self.w) + qxyz.cross(&t);
+
+        v_
+    }
+
+    pub fn unit_quat_tf_unchecked(&self, v: &Self) -> Self {
+        let recip = self.unit_recip_unchecked();
+
+        self.hamilton_product(&v).hamilton_product(&recip)
+    }
+
+    pub fn quaternion_transform_quaternion(&self, v: &Self) -> Self {
+        let recip = self.recip();
+
+        self.hamilton_product(&v).hamilton_product(&recip)
+    }
+
+    pub fn get_ptr(&self) -> *const f64 {
+        &self.w as *const f64
+    }
+
+    pub fn get_mut_ptr(&mut self) -> *mut f64 {
+        &mut self.w as *mut f64
+    }
+
+    /// perform a quaternion multiplication (hamiltonian product)
+    /// using avx2 instructrions
+    pub fn hamilton_product(&self, rhs: &Self) -> Self {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_arch = "x86_64", target_feature = "avx2", feature="use-avx"))] {
+                use std::arch::x86_64::{
+                    _mm256_add_pd, _mm256_broadcast_sd, _mm256_load_pd, _mm256_mul_pd, _mm256_store_pd,
+                    _mm256_set1_pd, _mm256_xor_pd, _mm256_fmadd_pd, _mm256_permute4x64_pd,
+                    _mm256_blend_pd, _mm256_shuffle_pd,
+                };
+                unsafe {
+                    //       s0     r0     s1     r1     s2     r2     s3      r3
+                    // .w = q0.w * q1.w - q0.x * q1.x - q0.y * q1.y - q0.z * q1.z,
+                    // .x = q0.w * q1.x + q0.x * q1.w + q0.y * q1.z - q0.z * q1.y,
+                    // .y = q0.w * q1.y - q0.x * q1.z + q0.y * q1.w + q0.z * q1.x,
+                    // .z = q0.w * q1.z + q0.x * q1.y - q0.y * q1.x + q0.z * q1.w,
+                    let q1_ = _mm256_load_pd(rhs.get_ptr());
+
+                    let s0 = _mm256_broadcast_sd(&self.w);
+                    let s1 = _mm256_broadcast_sd(&self.x);
+                    let s2 = _mm256_broadcast_sd(&self.y);
+                    let s3 = _mm256_broadcast_sd(&self.z);
+
+                    let neg = _mm256_set1_pd(-0.0);
+                    let q1_neg = _mm256_xor_pd(q1_, neg);
+
+                    let r1 = _mm256_shuffle_pd(q1_neg, q1_, 0b0101);
+                    // [-x, w, -z, y]
+
+                    let mut r2 = _mm256_shuffle_pd(q1_neg, q1_, 0b1001);
+                    // now we have [-x,  w, -y,  z]
+                    r2 = _mm256_permute4x64_pd(r2, 0b00011110);
+                    // now we have [-y,  z,  w, -x]
+
+                    let mut r3 = _mm256_blend_pd(q1_neg, q1_, 0b0011);
+                    // // we now have [ w,  x, -y, -z]
+                    r3 = _mm256_permute4x64_pd(r3, 0b00011011);
+                    // we now have [-z, -y,  x,  w]
+
+                    let mut acc = _mm256_mul_pd(q1_, s0);
+                    let mut acc2 = _mm256_mul_pd(r1, s1);
+                    acc = _mm256_fmadd_pd(r2, s2, acc);
+                    acc2 = _mm256_fmadd_pd(r3, s3, acc2);
+
+                    acc = _mm256_add_pd(acc, acc2);
+
+                    let mut ret = MaybeUninit::<Quaternion>::uninit();
+                    _mm256_store_pd(ret.as_mut_ptr().cast(), acc);
+                    return ret.assume_init();
+                }
+            } else  {
+                Self::new(
+                    self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
+                    self.w * rhs.x + self.x * rhs.w + self.y * rhs.z - self.z * rhs.y,
+                    self.w * rhs.y - self.x * rhs.z + self.y * rhs.w + self.z * rhs.x,
+                    self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
+                )
+            }
+        }
+    }
+}
+
+impl From<Vec4<f64>> for Quaternion {
+    fn from(v: Vec4<f64>) -> Self {
+        // TODO: reinterpret?
+        Self::new(v[0], v[1], v[2], v[3])
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::math::linalg::Vec3;
+
+    use super::Quaternion;
+
+    #[test]
+    fn quaternion_conjugate_inverse() {
+        let q = Quaternion::new(1.0, -1.0, 2.4, 3.3);
+        let qconj = q.conjugate();
+        assert_eq!(qconj.conjugate(), q);
+    }
+
+    #[test]
+    fn quaternion_conjugate_norm() {
+        let q = Quaternion::new(1.0, -1.0, 2.4, 3.3);
+        let qconj = q.conjugate();
+        let prod = q.hamilton_product(&qconj);
+        let atol = 1e-7;
+        assert!(prod.x.abs() < atol);
+        assert!(prod.y.abs() < atol);
+        assert!(prod.z.abs() < atol);
+
+        assert!((prod.w - q.magnitude().powi(2)).abs() < 1e-7)
+    }
+
+    #[test]
+    fn quaternion_reciprocal_identity() {
+        let r0 = Quaternion::from_angle_axis(0.3, 2.0, 1.0, 32.0f64.to_radians());
+        let r1 = r0.recip();
+        let prod = r0.hamilton_product(&r1);
+        assert!((prod.w - 1.0).abs() < 1e-7);
+        assert!((prod.x - 0.0).abs() < 1e-7);
+        assert!((prod.y - 0.0).abs() < 1e-7);
+        assert!((prod.z - 0.0).abs() < 1e-7);
+    }
+
+    #[test]
+    fn quaternion_angle_axis() {
+        let atol = 1e-3;
+        let q = Quaternion::from_angle_axis(0.0, 1.0, 0.0, 32.0f64.to_radians());
+        assert!((q.w - 0.961).abs() < atol, "{}, {}", q.w, 0.961);
+        assert!((q.x - 0.0).abs() < atol, "{}, {}", q.x, 0.0);
+        assert!((q.y - 0.276).abs() < atol, "{}, {}", q.y, 0.276);
+        assert!((q.z - 0.0).abs() < atol, "{}, {}", q.w, 0.0);
+    }
+
+    #[test]
+    fn quaternion_rot() {
+        let atol = 1e-6;
+        let q = Quaternion::from_angle_axis(0.0, 1.0, 0.0, 32.0f64.to_radians());
+        let rot = q.quaternion_transform(&Vec3::<f64>::new(5.0, 7.0, 1.0));
+
+        assert!((rot[0] - 4.77016).abs() < atol, "{}, {}", rot[0], 4.77016);
+        assert!((rot[1] - 7.0).abs() < atol, "{}, {}", rot[1], 7.0);
+        assert!((rot[2] - -1.801548).abs() < atol, "{}, {}", rot[2], -1.8015);
+    }
+}
