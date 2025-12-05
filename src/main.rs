@@ -135,15 +135,17 @@ fn main() {
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             info!("Enabled CUDA-Based Simulation.
-Device Name:         {}
-Available Memory:    {:.3} GiB
-Initial Free Memory: {:.3} GiB
-API Version:         {}
-Runtime Version:     {}
+Device name:         {}
+Available memory:    {:.3} GiB
+Initial free memory: {:.3} GiB
+Memory usage limit:  {:.3} GiB
+API version:         {}
+Runtime version:     {}
 Device ID:           {}", 
                 CUDA_DEVICE_INFO.device_name, 
                 CUDA_DEVICE_INFO.available_memory_bytes as f32 / 1e9,
                 CUDA_DEVICE_INFO.init_free_memory_bytes as f32 / 1e9,
+                CUDA_DEVICE_INFO.mem_limit_bytes as f32 / 1e9,
                 CUDA_DEVICE_INFO.api_version,
                 CUDA_DEVICE_INFO.runtime_version,
                 CUDA_DEVICE_INFO.device_id

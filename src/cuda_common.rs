@@ -34,6 +34,7 @@ pub struct DevInfo {
     pub device_name: String,
     pub available_memory_bytes: usize,
     pub init_free_memory_bytes: usize,
+    pub mem_limit_bytes: usize,
     pub api_version: i32,
     pub runtime_version: i32,
     pub device_id: i32,
@@ -91,5 +92,6 @@ fn init_cuda() -> DevInfo {
         runtime_version: di.runtime_version as i32,
         device_id: di.device_id as i32,
         init_free_memory_bytes: di.init_free_memory_bytes,
+        mem_limit_bytes: di.init_free_memory_bytes * 9 / 10,
     }
 }

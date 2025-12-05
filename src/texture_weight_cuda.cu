@@ -10,7 +10,7 @@
 
 extern "C" {
 
-struct __attribute__((aligned(32))) Quaternion {
+struct Quaternion {
   float w;
   float x;
   float y;

@@ -1,10 +1,11 @@
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use itertools::Itertools;
-use log::{debug, info};
+use log::{debug, error, info};
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -147,7 +148,21 @@ impl WriteCtx {
         } = self.inner.into_inner();
 
         // TODO: make this return a result instead so we can error gracefully
-        assert!(ok.iter().all(|x| *x));
+        if !ok.iter().all(|x| *x) {
+            let n_ok: u32 = ok.iter().map(|x| if *x { 1 } else { 0 }).sum();
+            let mut err = format!("Error in peak computation. Not all peak simulations ({n_ok}/{n}) terminated successfully. Outputting below. x=err, o=ok\n", n=ok.len());
+            for (i, v) in ok.iter().enumerate() {
+                let _ = write!(&mut err, "{}", if *v { "o" } else { "x" });
+                if i % 16 == 15 {
+                    let _ = write!(&mut err, " ");
+                }
+                if i % 128 == 127 {
+                    let _ = write!(&mut err, "\n");
+                }
+            }
+            error!("{}", err);
+            std::process::exit(1);
+        }
 
         ToDiscretize {
             structures,
@@ -335,8 +350,12 @@ mod cuda {
     use rand::{Rng, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
 
-    use crate::cfg::{apply_strain_cfg, SampleParameters, TextureMeasurement, ToDiscretize};
+    use crate::cfg::{
+        apply_strain_cfg, KDEApprox, POGenerator, SampleParameters, StrainCfg, TextureMeasurement,
+        ToDiscretize,
+    };
     use crate::cuda_common::CUDA_DEVICE_INFO;
+    use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
     use crate::pattern::Peaks;
     use crate::peak_sim::PeakSimResult;
@@ -350,17 +369,205 @@ mod cuda {
 
     use super::{PeakSim, PossiblyTextureMeasurementPeaks, RunCtx, WriteCtx};
 
-    struct TextureCudaCtx {
-        inner: UnsafeCell<TextureCudaCtxInner>,
+    struct CudaBatch {
+        reflection_parts: Vec<ReflectionPart>,
+        precomputed_alignments: Vec<Quaternion>,
+        permuted_structures: Vec<Structure>,
+        n_hkls: Vec<usize>,
+        strains: Vec<Strain>,
+        bingham_params: Vec<BinghamParams>,
+        weights: Vec<f32>,
+
+        texture_measurement: TextureMeasurement,
+
+        permutation_start: usize,
+        n_hkls_batch: usize,
+        struct_id: usize,
+        n_permutations: usize,
+        sampling_parameters: KDEApprox,
     }
 
-    struct TextureCudaCtxInner {
-        strain: Vec<Strain>,
-        pos: Vec<Option<BinghamParams>>,
-        peaks: Vec<MaybeUninit<Peaks>>,
-        ok: Vec<bool>,
-        n_measurements: usize,
-        n_permutations: usize,
+    impl CudaBatch {
+        fn new(texture_measurement: TextureMeasurement, n_permutations: usize) -> Self {
+            Self {
+                reflection_parts: Vec::new(),
+                precomputed_alignments: Vec::new(),
+                permuted_structures: Vec::new(),
+                n_hkls: Vec::new(),
+                strains: Vec::new(),
+                bingham_params: Vec::new(),
+                weights: Vec::new(),
+                n_permutations,
+                texture_measurement,
+
+                n_hkls_batch: 0,
+                permutation_start: 0,
+                struct_id: 0,
+                sampling_parameters: KDEApprox { n: 0, kappa: 0.0 },
+            }
+        }
+
+        fn init_struct(&mut self, sampling_parameters: KDEApprox, struct_id: usize) {
+            self.reset(0);
+            self.struct_id = struct_id;
+            self.sampling_parameters = sampling_parameters;
+        }
+
+        fn memory_stats(&self) -> (usize, usize) {
+            // TODO: if we switch to f64, change
+            let n_allocated_bytes_host = std::mem::size_of_val(&*self.permuted_structures)
+                + std::mem::size_of_val(&*self.n_hkls)
+                + std::mem::size_of_val(&*self.strains)
+                + std::mem::size_of_val(&*self.bingham_params)
+                + std::mem::size_of_val(&*self.precomputed_alignments)
+                + std::mem::size_of_val(&*self.reflection_parts)
+                + std::mem::size_of_val(&*self.weights);
+
+            let n_required_bytes_cuda = 3 * std::mem::size_of::<f32>() * self.n_hkls_batch
+                + std::mem::size_of::<Quaternion>() * self.precomputed_alignments.len()
+                + std::mem::size_of::<f32>()
+                    * self.n_hkls_batch
+                    * self.texture_measurement.stride()
+                    * self.sampling_parameters.n
+                + std::mem::size_of::<f32>()
+                    * self.n_hkls_batch
+                    * self.texture_measurement.stride();
+            (n_allocated_bytes_host, n_required_bytes_cuda)
+        }
+
+        fn reset(&mut self, permutation_id: usize) {
+            self.permutation_start = permutation_id;
+            self.n_hkls_batch = 0;
+
+            self.reflection_parts.clear();
+            self.precomputed_alignments.clear();
+            self.permuted_structures.clear();
+            self.n_hkls.clear();
+            self.strains.clear();
+            self.bingham_params.clear();
+            self.weights.clear();
+        }
+
+        fn update(
+            &'_ mut self,
+            min_r: f64,
+            max_r: f64,
+            structure: &Structure,
+            struct_file: &str,
+            strain_cfg: &Option<StrainCfg>,
+            scattering_parameters: &HashMap<Atom, Scatter>,
+            po: &mut POGenerator,
+            seed: u64,
+        ) -> Result<(), String> {
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, structure, &mut rng) else {
+                return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=struct_file));
+            };
+
+            let bingham_samples = po.sample(&mut rng);
+
+            let mut v = Vec::new();
+            std::mem::swap(&mut self.reflection_parts, &mut v);
+
+            let n_hkl;
+            (n_hkl, self.reflection_parts) =
+                perm_s.get_hkl_intensities_spacings(min_r, max_r, scattering_parameters, Some(v));
+
+            self.n_hkls_batch += n_hkl;
+            self.n_hkls.push(n_hkl);
+            self.strains.push(strain);
+            self.permuted_structures.push(perm_s);
+            self.bingham_params.push(bingham_samples.params.clone());
+
+            for (_, (chi, phi)) in self
+                .texture_measurement
+                .chi
+                .into_iter()
+                .cartesian_product(self.texture_measurement.phi.into_iter())
+                .enumerate()
+            {
+                bingham_samples.push_transformed_samples_into(
+                    chi,
+                    phi,
+                    &mut self.precomputed_alignments,
+                );
+            }
+
+            Ok(())
+        }
+
+        fn computations_left(&self) -> bool {
+            self.n_hkls.len() > 0
+        }
+
+        fn compute_chunk(&mut self, results: Arc<WriteCtx>, struct_file: &str) {
+            let (n_allocated_bytes_host, n_required_bytes_cuda) = self.memory_stats();
+            debug!(
+            "Computing texture weights for permutations {permutation_start}-{permutation_end} of structure {struct_file}. Requires {mib_cuda:.2} MiB of memory for processing. Current chunk allocates {mib_host:.2} MiB of memory.",
+                permutation_start=self.permutation_start,
+                permutation_end=self.permutation_start+self.n_hkls.len(),
+                mib_cuda = n_required_bytes_cuda as f64 / 1e6,
+                mib_host = n_allocated_bytes_host as f64 / 1e6
+            );
+            single_phase_weight_hkls(
+                &self.reflection_parts,
+                &self.precomputed_alignments,
+                &self.n_hkls,
+                self.sampling_parameters.normalization_constant(),
+                self.sampling_parameters.kappa,
+                self.sampling_parameters.n,
+                self.texture_measurement.stride(),
+                &mut self.weights,
+            );
+
+            let batch_size_permutations = self.n_hkls.len();
+
+            assert!(self.permuted_structures.len() == batch_size_permutations);
+            assert!(self.n_hkls.len() == batch_size_permutations);
+            assert!(self.strains.len() == batch_size_permutations);
+            assert!(self.bingham_params.len() == batch_size_permutations);
+
+            let mut hkl_pos = 0;
+            for (local_perm_id, (perm_s, n_hkl, strain, bingham_params)) in itertools::izip!(
+                self.permuted_structures.drain(..),
+                self.n_hkls.drain(..),
+                self.strains.drain(..),
+                self.bingham_params.drain(..)
+            )
+            .enumerate()
+            {
+                let mut peaks = Vec::new();
+
+                // weights is of size chi.steps * phi.steps * n_hkl
+                // and indexed by
+                // [i_chi, i_phi, n_hkl]
+                for _ in 0..self.texture_measurement.stride() {
+                    let p = perm_s.apply_precomputed_weights_to_hkls_intensities(
+                        &self.reflection_parts[hkl_pos..hkl_pos + n_hkl],
+                        &self.weights[hkl_pos..hkl_pos + n_hkl],
+                    );
+                    peaks.push(p.into_boxed_slice());
+                }
+
+                hkl_pos += n_hkl;
+                println!(
+                    "{}, {}",
+                    self.struct_id,
+                    local_perm_id + self.permutation_start
+                );
+                unsafe {
+                    results.add(PeakSimResult {
+                        strain,
+                        po: Some(bingham_params),
+                        peaks: PossiblyTextureMeasurementPeaks::Texture(peaks),
+                        struct_id: self.struct_id,
+                        permutation_id: local_perm_id + self.permutation_start,
+                    })
+                }
+            }
+
+            self.reset(self.permutation_start + batch_size_permutations);
+        }
     }
 
     pub fn peak_sim_gpu(
@@ -375,13 +582,7 @@ mod cuda {
         n_threads: usize,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
-        let mut reflection_parts = Vec::new();
-        let mut precomputed_alignments = Vec::new();
-        let mut permuted_structures = Vec::new();
-        let mut n_hkls = Vec::new();
-        let mut strains = Vec::new();
-        let mut bingham_params = Vec::new();
-        let mut weights = Vec::new();
+        let mut batch = CudaBatch::new(texture_measurement, n_permutations);
 
         for struct_id in 0..n_structs {
             let Some(ref mut po) = ctx.po_gens[struct_id] else {
@@ -404,194 +605,35 @@ mod cuda {
 
             let sp = po.sampling_parameters();
 
-            let mut permutation_start = 0;
-            let mut n_hkls_batch = 0;
+            batch.init_struct(sp, struct_id);
 
-            for permutation_id in 0..n_permutations {
+            for _ in 0..n_permutations {
                 let seed = rng.random();
-                let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-                let Some((perm_s, strain)) = apply_strain_cfg(
-                    &ctx.strain_cfgs[struct_id],
-                    &ctx.structs[struct_id],
-                    &mut rng,
-                ) else {
-                    return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=ctx.structure_files[struct_id]));
-                };
-
-                let bingham_samples = po.sample(&mut rng);
-
-                let n_hkl;
-                (n_hkl, reflection_parts) = perm_s.get_hkl_intensities_spacings(
+                batch.update(
                     min_r,
                     max_r,
+                    &ctx.structs[struct_id],
+                    &ctx.structure_files[struct_id],
+                    &ctx.strain_cfgs[struct_id],
                     &scattering_parameters,
-                    Some(reflection_parts),
-                );
-
-                n_hkls_batch += n_hkl;
-                n_hkls.push(n_hkl);
-                strains.push(strain);
-                permuted_structures.push(perm_s);
-                bingham_params.push(bingham_samples.params.clone());
-
-                for (_, (chi, phi)) in texture_measurement
-                    .chi
-                    .into_iter()
-                    .cartesian_product(texture_measurement.phi.into_iter())
-                    .enumerate()
-                {
-                    bingham_samples.push_transformed_samples_into(
-                        chi,
-                        phi,
-                        &mut precomputed_alignments,
-                    );
-                }
-
-                // TODO: if we switch to f64, change
-                let n_allocated_bytes_host = std::mem::size_of_val(&*permuted_structures)
-                    + std::mem::size_of_val(&*n_hkls)
-                    + std::mem::size_of_val(&*strains)
-                    + std::mem::size_of_val(&*bingham_params)
-                    + std::mem::size_of_val(&*precomputed_alignments)
-                    + std::mem::size_of_val(&*reflection_parts)
-                    + std::mem::size_of_val(&*weights);
-
-                let n_required_bytes_cuda = 3 * std::mem::size_of::<f32>() * n_hkls_batch
-                    + std::mem::size_of::<Quaternion>() * precomputed_alignments.len()
-                    + std::mem::size_of::<f32>()
-                        * n_hkls_batch
-                        * texture_measurement.stride()
-                        * sp.n
-                    + std::mem::size_of::<f32>() * n_hkls_batch * texture_measurement.stride();
+                    po,
+                    seed,
+                )?;
+                let (_, n_required_bytes_cuda) = batch.memory_stats();
 
                 if n_required_bytes_cuda >= CUDA_DEVICE_INFO.init_free_memory_bytes * 9 / 10 {
-                    debug!(
-                        "Prepared permutation {permutation_start}-{permutation_id} of structure {s}. Currently allocated {mib:.2}
-MiB. Current chunk requires {mib_cuda:.2} MiB of memory for cuda processing.",
-                        s = ctx.structure_files[struct_id],
-                        mib = n_allocated_bytes_host as f64 / 1e6,
-                        mib_cuda = n_required_bytes_cuda as f64 / 1e6
-                    );
-
-                    compute_chunk(
-                        &mut permuted_structures,
-                        &mut n_hkls,
-                        &mut strains,
-                        &mut bingham_params,
-                        &mut precomputed_alignments,
-                        &mut reflection_parts,
-                        &mut weights,
-                        Arc::clone(&results),
-                        sp,
-                        texture_measurement,
-                        permutation_start,
-                        permutation_id - permutation_start,
-                        struct_id,
-                        &ctx.structure_files[struct_id],
-                    );
-
-                    permutation_start = permutation_id;
-                    n_hkls_batch = 0;
+                    batch.compute_chunk(Arc::clone(&results), &ctx.structure_files[struct_id]);
                 }
             }
 
             // dispatch remaining chunk
-            let permutations_last_chunk = n_permutations - permutation_start - 1; // aaah off by one error
-            if permutations_last_chunk > 0 {
-                compute_chunk(
-                    &mut permuted_structures,
-                    &mut n_hkls,
-                    &mut strains,
-                    &mut bingham_params,
-                    &mut precomputed_alignments,
-                    &mut reflection_parts,
-                    &mut weights,
-                    Arc::clone(&results),
-                    sp,
-                    texture_measurement,
-                    permutation_start,
-                    permutations_last_chunk,
-                    struct_id,
-                    &ctx.structure_files[struct_id],
-                );
+            if batch.computations_left() {
+                batch.compute_chunk(Arc::clone(&results), &ctx.structure_files[struct_id]);
             }
         }
 
         let results = Arc::into_inner(results).expect("no more references to write context");
         Ok(results.make_to_discretize(ctx.structs, sample_parameters, Some(texture_measurement)))
-    }
-
-    fn compute_chunk(
-        permuted_structures: &mut Vec<Structure>,
-        n_hkls: &mut Vec<usize>,
-        strains: &mut Vec<Strain>,
-        bingham_params: &mut Vec<BinghamParams>,
-        precomputed_alignments: &mut Vec<Quaternion>,
-        reflection_parts: &mut Vec<ReflectionPart>,
-        weights: &mut Vec<f32>,
-
-        results: Arc<WriteCtx>,
-
-        sampling_parameters: crate::cfg::KDEApprox,
-
-        texture_measurement: TextureMeasurement,
-        permutation_start: usize,
-        n_permutations: usize,
-        struct_id: usize,
-        struct_file: &str,
-    ) {
-        info!(
-        "Computing texture weights for permutations {permutation_start}-{permutation_end} of structure {struct_file}",
-            permutation_end=permutation_start+n_permutations,
-    );
-        single_phase_weight_hkls(
-            &reflection_parts,
-            &precomputed_alignments,
-            &n_hkls,
-            sampling_parameters.normalization_constant(),
-            sampling_parameters.kappa,
-            sampling_parameters.n,
-            texture_measurement.chi.steps * texture_measurement.phi.steps,
-            weights,
-        );
-
-        let mut hkl_pos = 0;
-        for local_perm_id in 0..n_permutations {
-            let mut peaks = Vec::new();
-            let perm_s = permuted_structures[local_perm_id].clone();
-            let n_hkl = n_hkls[local_perm_id];
-            let strain = strains[local_perm_id].clone();
-
-            // weights is of size chi.steps * phi.steps * n_hkl
-            // and indexed by
-            // [i_chi, i_phi, n_hkl]
-            for _ in 0..texture_measurement.stride() {
-                let p = perm_s.apply_precomputed_weights_to_hkls_intensities(
-                    &reflection_parts[hkl_pos..hkl_pos + n_hkl],
-                    &weights[hkl_pos..hkl_pos + n_hkl],
-                );
-                peaks.push(p.into_boxed_slice());
-            }
-
-            hkl_pos += n_hkl;
-            unsafe {
-                results.add(PeakSimResult {
-                    strain,
-                    po: Some(bingham_params[local_perm_id].clone()),
-                    peaks: PossiblyTextureMeasurementPeaks::Texture(peaks),
-                    struct_id,
-                    permutation_id: local_perm_id + permutation_start,
-                })
-            }
-        }
-
-        weights.clear();
-        reflection_parts.clear();
-        precomputed_alignments.clear();
-        permuted_structures.clear();
-        n_hkls.clear();
-        strains.clear();
-        bingham_params.clear();
     }
 }
 
