@@ -20,6 +20,12 @@ pub mod peak_sim;
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;
 
+#[cfg(feature="use-gpu")]
+pub mod peak_sim_cuda;
+
+#[cfg(feature="use-gpu")]
+pub mod cuda_common;
+
 #[allow(clippy::uninit_vec)]
 pub(crate) unsafe fn uninit_vec<T>(len: usize) -> Vec<T> {
     let mut v = Vec::with_capacity(len);

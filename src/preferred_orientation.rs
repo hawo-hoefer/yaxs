@@ -71,20 +71,17 @@ impl KDEBinghamODF {
         ks: Quaternion,
         bingham_samples: Vec<Quaternion>,
         kappa: f64,
+        norm_const: f64,
     ) -> Self {
-        let norm_constant = kappa / (std::f64::consts::TAU * (kappa.exp() - (-kappa).exp()));
         Self {
             params: BinghamParams { orientation, ks },
             axis_aligned_bingham_dist_samples: bingham_samples,
-            norm_const: norm_constant,
+            norm_const,
             kappa,
         }
     }
 
-    /// create a copy of self with rotated coordinates according to goniometer chi and phi
-    ///
-    /// this may be useful if weight needs to be called many times for different phi and chi
-    pub fn with_orientation(&self, chi: f64, phi: f64) -> KDEBinghamODF {
+    pub fn push_transformed_samples_into(&self, chi: f64, phi: f64, dst: &mut Vec<Quaternion>) {
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
@@ -92,7 +89,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        let samples = self
+        for s in self
             .axis_aligned_bingham_dist_samples
             .iter()
             .map(|bingham_to_domain| {
@@ -100,19 +97,31 @@ impl KDEBinghamODF {
                     .hamilton_product(bingham_to_domain)
                     .unit_recip_unchecked()
             })
-            .collect_vec();
+        {
+            dst.push(s)
+        }
+    }
+
+    /// create a copy of self with rotated coordinates according to goniometer chi and phi
+    ///
+    /// this may be useful if weight needs to be called many times for different phi and chi
+    pub fn with_orientation(&self, chi: f64, phi: f64) -> KDEBinghamODF {
+        let mut samples = Vec::with_capacity(self.axis_aligned_bingham_dist_samples.len());
+        self.push_transformed_samples_into(chi, phi, &mut samples);
 
         KDEBinghamODF::new(
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             self.params.ks.clone(),
             samples,
             self.kappa,
+            self.norm_const,
         )
     }
 
     pub fn weight_aligned(&self, hkl_in_domain_coords: &Vec3<f64>) -> f64 {
-        let hkl_in_domain_coords = hkl_in_domain_coords.map(|x| *x as f32);
+        let hkl_in_domain_coords = hkl_in_domain_coords.map(|x| *x as f32).normalize();
         let mut weight = 0.0;
+        let kappa = self.kappa as f32;
 
         for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
             let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
@@ -120,12 +129,10 @@ impl KDEBinghamODF {
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
-            weight += (self.kappa as f32 * dot_with_beam_z).exp();
+            weight += (kappa * dot_with_beam_z).exp();
         }
 
-        let mut weight = weight as f64 * self.norm_const;
-        weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
-        weight
+        weight as f64 * self.norm_const
     }
 
     /// compute the weight scaling of a hkl peak according to the domain orientation
@@ -144,7 +151,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        let hkl_in_domain_coords = pos.map(|x| *x as f32);
+        let hkl_in_domain_coords = pos.map(|x| *x as f32).normalize();
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
@@ -166,10 +173,8 @@ impl KDEBinghamODF {
             // normalization is applied below
             weight += (self.kappa as f32 * dot_with_beam_z).exp();
         }
-        let mut weight = weight as f64 * self.norm_const;
-        weight /= self.axis_aligned_bingham_dist_samples.len() as f64;
 
-        weight
+        weight as f64 * self.norm_const
     }
 }
 

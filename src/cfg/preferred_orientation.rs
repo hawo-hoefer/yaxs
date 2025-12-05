@@ -12,8 +12,14 @@ use crate::preferred_orientation::KDEBinghamODF;
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct KDEApprox {
-    n: usize,
-    kappa: f64,
+    pub n: usize,
+    pub kappa: f64,
+}
+
+impl KDEApprox {
+    pub fn normalization_constant(&self) -> f64 {
+        self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp())) * self.n as f64
+    }
 }
 
 impl Default for KDEApprox {
@@ -63,6 +69,14 @@ pub enum POGenerator {
 }
 
 impl POGenerator {
+    pub fn sampling_parameters(&self) -> KDEApprox {
+        match self {
+            POGenerator::FullEpitaxialGrowth { sampling, .. } => *sampling,
+            POGenerator::SingleAxis { sampling, .. } => *sampling,
+            POGenerator::Exact { sampling, .. } => *sampling,
+        }
+    }
+
     pub fn sample(&mut self, rng: &mut impl Rng) -> KDEBinghamODF {
         let (k, orientation, sampling) = match self {
             POGenerator::FullEpitaxialGrowth { sampler, sampling } => {
@@ -105,6 +119,7 @@ impl POGenerator {
             k.into(),
             bingham_samples,
             sampling.kappa,
+            sampling.normalization_constant(),
         )
     }
 }

@@ -1,12 +1,19 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo::rerun-if-changed=src/discretize_cuda.cu");
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=./src/discretize_cuda.cu");
+    println!("cargo::rerun-if-changed=./src/texture_weight_cuda.cu");
+    println!("cargo::rerun-if-changed=./src/cuda_common.cu");
+    println!("cargo::rerun-if-changed=./src/cuda_init.cu");
+    println!("cargo::rerun-if-changed=./src/cuda_merged.cu");
     if cfg!(feature = "use-gpu") {
         #[rustfmt::skip]
         cc::Build::new()
             .cuda(true)
             .cudart("static")
+            .flag("-g")
+            .flag("-G")
             .flag("--forward-unknown-to-host-compiler")
             .flag("-Wall")
             .flag("-Wextra")
@@ -15,8 +22,8 @@ fn main() {
             .flag("-gencode").flag("arch=compute_80,code=sm_80")
             .flag("-gencode").flag("arch=compute_86,code=sm_86")
             .flag("-t0")
-            .file("./src/discretize_cuda.cu")
-            .compile("discretize_cuda");
+            .file("./src/cuda_merged.cu")
+            .compile("cuda_lib");
     }
 
     let output = Command::new("git")

@@ -10,7 +10,7 @@ kind: !EnergyDispersive
       distance_from_device_m: 100
 
 sample_parameters:
-  structure_permutations: 10
+  structure_permutations: 100
   structures:
     - path: ./cif/Ir_53813.cif
       mean_ds_nm: 50.0
@@ -28,7 +28,7 @@ simulation_parameters:
   texture_measurement:
     chi:
       range: [0, 20]
-      steps: 21
+      steps: 1
     phi:
       range: [-20, 200]
       steps: 45

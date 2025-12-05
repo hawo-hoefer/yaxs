@@ -16,7 +16,7 @@ pub use parameter::Parameter;
 use probability::Probability;
 
 pub use noise::NoiseSpec;
-pub use preferred_orientation::{POCfg, POGenerator};
+pub use preferred_orientation::{POCfg, KDEApprox, POGenerator};
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
 

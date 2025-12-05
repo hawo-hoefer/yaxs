@@ -1,8 +1,8 @@
 use std::cell::UnsafeCell;
-use std::ffi::{c_char, c_int, CStr};
 use std::sync::Arc;
 
-use log::{debug, error, info};
+use log::debug;
+use log::info;
 
 use crate::background::cheb2poly;
 use crate::background::Background;
@@ -13,9 +13,9 @@ use crate::uninit_vec;
 use self::ffi::Uniform;
 
 mod ffi {
-    use std::ffi::{c_char, c_int};
+    use std::ffi::{c_char, c_int, CStr};
 
-    #[link(name = "discretize_cuda")]
+    #[link(name = "cuda_lib")]
     extern "C" {
         pub fn render_peaks_and_background(
             soa: PeakSOA<f32>,
@@ -31,15 +31,6 @@ mod ffi {
             bkg_degree_if_poly: usize,
             bkg_scale_if_not_none: *const f32,
             normalize: bool,
-            error_print_handle: extern "C" fn(
-                file: *const c_char,
-                line: c_int,
-                msg: *const c_char,
-                cuda_err_code: c_int,
-                cuda_err: *const c_char,
-            ),
-            info_print_handle: extern "C" fn(msg: *const c_char),
-            debug_print_handle: extern "C" fn(msg: *const c_char),
         ) -> bool;
     }
 
@@ -158,33 +149,6 @@ impl RenderCtx {
 }
 
 unsafe impl Sync for RenderCtx {}
-
-extern "C" fn c_error_handler(
-    _file: *const c_char,
-    _line: c_int,
-    msg: *const c_char,
-    cuda_err_code: c_int,
-    cuda_err: *const c_char,
-) {
-    let msg = unsafe { CStr::from_ptr(msg) };
-    let cuda_err = unsafe { CStr::from_ptr(cuda_err) };
-    error!(
-        "CUDA Error {} while {}: {}",
-        cuda_err_code,
-        msg.to_str().expect("valid utf-8"),
-        cuda_err.to_str().expect("valid utf-8")
-    );
-}
-
-extern "C" fn c_info_handler(msg: *const c_char) {
-    let msg = unsafe { CStr::from_ptr(msg) };
-    info!("CUDA: {}", msg.to_str().expect("valid utf-8"));
-}
-
-extern "C" fn c_debug_handler(msg: *const c_char) {
-    let msg = unsafe { CStr::from_ptr(msg) };
-    debug!("CUDA: {}", msg.to_str().expect("valid utf-8"));
-}
 
 pub fn discretize_peaks_cuda<T>(
     mut jobs: Vec<DiscretizeSample<T>>,
@@ -464,9 +428,6 @@ where
                 BkgSOA::Polynomial { .. } | BkgSOA::Exponential(_) => bkg_scales.as_ptr(),
             },
             normalize,
-            c_error_handler,
-            c_info_handler,
-            c_debug_handler,
         );
         if !ret {
             return Err(

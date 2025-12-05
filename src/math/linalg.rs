@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use num_traits::{Float, One, Zero};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
-#[repr(C, align(32))]
+#[repr(C)]
 pub struct Mat<T, const ROWS: usize, const COLS: usize> {
     v: [[T; COLS]; ROWS],
 }

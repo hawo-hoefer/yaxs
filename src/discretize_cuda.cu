@@ -1,3 +1,4 @@
+#include "cuda_common.cu"
 #include <cstddef>
 #include <cstdint>
 #include <cuda_device_runtime_api.h>
@@ -5,6 +6,7 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <math.h>
+
 extern "C" {
 #include <cassert>
 #include <stdio.h>
@@ -54,22 +56,6 @@ typedef struct {
   } v;
   NoiseKind kind;
 } Noise;
-
-typedef void (*error_fn)(const char *, int, const char *, int, const char *);
-typedef void (*info_fn)(const char *);
-typedef void (*debug_fn)(const char *);
-error_fn errf;
-info_fn infof;
-debug_fn debugf;
-
-#define TAU 3.1415926535897932384626433832795028841972f * 2.0f
-#define PI 3.1415926535897932384626433832795028841972f
-#define cu_lerr(ret, msg)                                                                                              \
-  if (ret != cudaSuccess) {                                                                                            \
-    errf(__FILE__, __LINE__, (msg), (int)(ret), cudaGetErrorString((ret)));                                            \
-    fflush(stderr);                                                                                                    \
-    return false;                                                                                                      \
-  }
 
 typedef struct {
   uint64_t s[4];
@@ -163,7 +149,7 @@ __global__ void render_poly_bkg(float *intensities, float *two_thetas, float *co
   if (tid >= pat_len * n_patterns)
     return;
   size_t pattern_idx = tid / pat_len;
-  // polynomial backgrounds are assumed to be for x in [-1, 1] 
+  // polynomial backgrounds are assumed to be for x in [-1, 1]
   float pat_pos = (float)(tid - pattern_idx * pat_len) / (float)(pat_len - 1) * 2.0f - 1.0;
   float *local_coef = &coef[pattern_idx * degree];
 
@@ -500,48 +486,15 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind backg
   return true;
 }
 
-static char tmp_str_buf[512] = {0};
-
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len, Noise noise, uint64_t *rng_state,
                                  BkgKind background_kind, float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none, bool normalize, error_fn errfn, info_fn infofn,
-                                 debug_fn debugfn) {
-  errf = errfn;
-  infof = infofn;
-  debugf = debugfn;
+                                 float *bkg_scales_if_not_none, bool normalize) {
   infof("Beginning CUDA rendering");
 
   float *intensities_d, *two_thetas_d;
   float *peaks_d;
   CUDAPattern *patterns_d;
-  bool return_value = true;
-
-  int device = 0;
-  cu_lerr(cudaGetDevice(&device), "getting cuda device");
-
-  cudaDeviceProp prop;
-  cu_lerr(cudaGetDeviceProperties(&prop, device), "getting cuda device properties");
-
-  int rt_version;
-  cu_lerr(cudaRuntimeGetVersion(&rt_version), "getting cuda runtime version");
-
-  int api_version;
-  cu_lerr(cudaDriverGetVersion(&api_version), "getting cuda api version");
-
-  // clang-format off
-  snprintf(tmp_str_buf, sizeof(tmp_str_buf),
-           "General Info\n"
-           "Device:            %s.\n"
-           "Avalilable Memory: %.2f GiB\n"
-           "API Version:       %d\n"
-           "Runtime Version:   %d",
-           prop.name, (float)prop.totalGlobalMem / 1e9,
-           api_version, rt_version);
-  // clang-format on
-
-  debugf(tmp_str_buf);
-  memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
 
   snprintf(tmp_str_buf, sizeof(tmp_str_buf),
            "Allocating device memory for rendering of %ld peaks in %ld patterns: "
@@ -630,7 +583,7 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float
   cudaFree(patterns_d);
   cudaFree(two_thetas_d);
   cudaFree(intensities_d);
-  return return_value;
+  return true;
 }
 
 } // extern "C"

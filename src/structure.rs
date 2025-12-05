@@ -79,6 +79,13 @@ impl TryFrom<u8> for SGClass {
     }
 }
 
+pub struct ReflectionPart {
+    pub hkl: Vec3<f64>,
+    pub pos: Vec3<f64>,
+    pub i_hkl: NotNan<f64>,
+    pub d_hkl: NotNan<f64>,
+}
+
 impl Structure {
     pub fn permute(&self, max_strain: f64, rng: &mut impl Rng) -> (Structure, Strain) {
         if max_strain == 0.0 {
@@ -210,9 +217,12 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         scattering_parameters: &HashMap<Atom, Scatter>,
-    ) -> Vec<(Vec3<f64>, Vec3<f64>, NotNan<f64>, NotNan<f64>)> {
-        let mut agg = Vec::new();
+        agg: Option<Vec<ReflectionPart>>,
+    ) -> (usize, Vec<ReflectionPart>) {
+        let mut agg = agg.unwrap_or(Vec::new());
+        let mut n = 0;
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
+            n += 1;
             let d_hkl = 1.0 / g_hkl;
 
             let f_hkl = self.structure_factor(&hkl, &pos, d_hkl, scattering_parameters);
@@ -221,20 +231,31 @@ impl Structure {
             let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
 
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
-            agg.push((hkl, pos, i_hkl, d_spacing));
+            agg.push(ReflectionPart {
+                hkl,
+                pos,
+                i_hkl,
+                d_hkl: d_spacing,
+            });
         }
 
-        agg
+        (n, agg)
     }
 
     pub fn apply_alignment_to_hkls_intensities<'a>(
         &self,
-        input: &[(Vec3<f64>, Vec3<f64>, NotNan<f64>, NotNan<f64>)],
+        input: &[ReflectionPart],
         alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
         let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
-        for (hkl, pos, i_hkl, d_hkl) in input {
+        for ReflectionPart {
+            hkl,
+            pos,
+            i_hkl,
+            d_hkl,
+        } in input
+        {
             let mut i_hkl = *i_hkl;
 
             if let Some(ref a) = alignment {
@@ -245,6 +266,29 @@ impl Structure {
                 .entry(*d_hkl)
                 .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
             *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
+            hkls_map.push(hkl.map(|x| *x as i16))
+        }
+
+        self.compress_aggregated_hkls(agg)
+    }
+
+    #[cfg(feature = "use-gpu")]
+    pub fn apply_precomputed_weights_to_hkls_intensities(
+        &self,
+        input: &[ReflectionPart],
+        i_hkls: &[f32],
+    ) -> Vec<Peak> {
+        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+
+        for (i, ReflectionPart { hkl, d_hkl, .. }) in input.iter().enumerate() {
+            // TODO: maybe make this an f64 again
+            let i_hkl =
+                NotNan::new(i_hkls[i]).expect("Error in CUDA processing. Should not be NaN");
+
+            let (ref mut i_hkl_map, ref mut hkls_map) = agg
+                .entry(*d_hkl)
+                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
+            *i_hkl_map += NotNan::<f64>::from(i_hkl);
             hkls_map.push(hkl.map(|x| *x as i16))
         }
 

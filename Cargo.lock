@@ -1290,6 +1290,7 @@ dependencies = [
  "env_logger",
  "highs",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "ndarray",
  "ndarray-npy",
