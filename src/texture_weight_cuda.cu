@@ -311,6 +311,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
 
   cudaFree(res);
   cudaFree(q_d);
+  cudaFree(pm_gpu.hkl_sizes);
   cudaFree(h_d);
   cudaFree(w_d);
   return true;
