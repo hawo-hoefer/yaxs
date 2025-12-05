@@ -28,7 +28,7 @@ simulation_parameters:
   texture_measurement:
     chi:
       range: [0, 20]
-      steps: 1
+      steps: 45
     phi:
       range: [-20, 200]
       steps: 45
