@@ -183,6 +183,46 @@ __global__ void compute_single_hkl_ori_weight(Quaternion *q, Vec3 *h, float *w, 
   w[partial_weight_index] = expf(kappa * dot_with_beam_z);
 }
 
+__global__ void compute_hkl_weight(Quaternion *q, Vec3 *h, float *w, Permutations permutations, float kappa,
+                                   float norm_const, size_t total_ori_samples, size_t stride_in_alignments,
+                                   size_t n_ori_per_alignment, size_t n_hkls_tot) {
+
+  size_t weight_index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (weight_index >= n_hkls_tot * stride_in_alignments)
+    return;
+
+  // indexing in w:
+  // [n_permutations, chi, phi, hkl]
+  //
+  // indexing in q:
+  // [n_permutations, chi, phi, n_ori_per_alignment]
+
+  // for every hkl, iterate all corresponding orientations per alignment and sum over the kde thing
+
+  size_t alignment_idx = weight_index / (stride_in_alignments * n_hkls_tot);
+  size_t r = weight_index % (n_ori_per_alignment * n_hkls_tot);
+
+  size_t orientation_index = r % n_ori_per_alignment;
+  size_t hkl_index = r / n_ori_per_alignment;
+  size_t permutation_idx = permutation_index(hkl_index, permutations);
+
+  Vec3 hkl_in_domain_coords = h[hkl_index];
+  float w_sum = 0.0;
+  for (size_t orientation_index = 0; orientation_index < n_ori_per_alignment; ++orientation_index) {
+    size_t global_orientation_idx = permutation_idx * stride_in_alignments * n_ori_per_alignment +
+                                    alignment_idx * n_ori_per_alignment + orientation_index;
+    Quaternion domain_to_beam = q[global_orientation_idx];
+    Vec3 hkl_in_beam_coords = unit_quat_tf_unchecked(domain_to_beam, hkl_in_domain_coords);
+    float dot_with_beam_z = hkl_in_beam_coords.z;
+    // kernel density estimation using the von Mises-Fisher distribution
+    // normalization is applied below
+    w_sum += expf(kappa * dot_with_beam_z);
+  }
+
+  // w[weight_index] contains i_hkl, so need to multiply kde density
+  w[weight_index] *= w_sum * norm_const;
+}
+
 __global__ void normalize_hkls(Vec3 *h, size_t n_hkls_tot) {
   size_t hkl_idx = blockDim.x * blockIdx.x + threadIdx.x;
   if (hkl_idx >= n_hkls_tot)
@@ -304,10 +344,11 @@ __global__ void transform_quaternions(Quaternion *beam_to_bingham, Quaternion *b
   size_t ori_sample_idx = tid % ori_samples_per_alignment;
 
   size_t beam_to_bingham_idx = perm_idx * stride + alignment_idx;
-  size_t base_orientation_idx = perm_idx * stride + ori_sample_idx;
+  size_t base_orientation_idx = perm_idx;
 
-  Quaternion sample_to_bingham =
-      q_hamilton(beam_to_bingham[beam_to_bingham_idx], base_orientation_samples[base_orientation_idx]);
+  Quaternion beam_to_bingham_instance = beam_to_bingham[beam_to_bingham_idx];
+  Quaternion base_ori = base_orientation_samples[base_orientation_idx];
+  Quaternion sample_to_bingham = q_hamilton(beam_to_bingham_instance, base_ori);
   dst[tid] = sample_to_bingham;
 }
 
@@ -334,7 +375,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   size_t stride = ffidata.n_chis * ffidata.n_phis;
 
   // clang-format off
-  size_t base_quatenion_space  = ffidata.n_ori_per_alignment * permutations.n_permutations * sizeof(Quaternion);
+  size_t base_orientations_space  = ffidata.n_ori_per_alignment * permutations.n_permutations * sizeof(Quaternion);
   size_t alignment_tf_space    = stride * sizeof(Quaternion);
   size_t bingham_ori_space     = permutations.n_permutations * sizeof(Quaternion);
   size_t beam_to_bingham_space = stride * permutations.n_permutations * sizeof(Quaternion);
@@ -346,7 +387,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
 
   size_t hkl_space             = ffidata.n_hkls_tot                                                * sizeof(Vec3);
   size_t res_space             = ffidata.n_hkls_tot * stride                               * sizeof(float);
-  size_t partial_weights_space = ffidata.n_hkls_tot * stride * ffidata.n_ori_per_alignment * sizeof(float);
+  // size_t partial_weights_space = ffidata.n_hkls_tot * stride * ffidata.n_ori_per_alignment * sizeof(float);
   // clang-format on
 
   // TODO: update memory requirements
@@ -359,30 +400,32 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
            "Beam to Bingham Quaternions: %10.3f MiB\n"
            "Transformed Quaternions:     %10.3f MiB\n"
            "HKL vectors:                 %10.3f MiB\n"
-           "Partial Weights:             %10.3f MiB\n"
+           // "Partial Weights:             %10.3f MiB\n"
            "Weights:                     %10.3f MiB\n"
            "HKL sizes:                   %10.3f B\n"
            "Total:                       %10.3f MiB",
            ffidata.n_hkls_tot, ffidata.n_ori_per_alignment, permutations.n_permutations,
-           (float)base_quatenion_space / 1e6, 
+           (float)base_orientations_space / 1e6, 
            (float)alignment_tf_space / 1e6,
            (float)bingham_ori_space / 1e6,
            (float)beam_to_bingham_space / 1e6,
            (float)beam_to_domain_space / 1e6,
            (float)hkl_space / 1e6,
-           (float)partial_weights_space / 1e6,
+           // (float)partial_weights_space / 1e6,
            (float)res_space / 1e6,
            (float)permutations_space,
 
-           (float)(base_quatenion_space + bingham_ori_space + alignment_tf_space + beam_to_domain_space +
-                   beam_to_bingham_space + partial_weights_space + hkl_space + res_space) /
+           (float)(base_orientations_space + bingham_ori_space + alignment_tf_space + beam_to_domain_space +
+                   beam_to_bingham_space + 
+                   // partial_weights_space 
+                   + hkl_space + res_space) /
                1e6);
   // clang-format on
   debugf(tmp_str_buf);
 
   Quaternion *base_orientation_samples; // device version of bingham samples
-  Quaternion *alignment_transformations;
-  Quaternion *bingham_orientations; // n_permutations long array of bingham orientations for each permutation
+  Quaternion *alignment_tf;
+  Quaternion *bingham_ori; // n_permutations long array of bingham orientations for each permutation
   Quaternion *beam_to_bingham;
   Quaternion *beam_to_domain;
 
@@ -396,20 +439,19 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   Permutations pm_gpu{.hkl_sizes = NULL, .n_permutations = permutations.n_permutations};
 
   // clang-format off
-  cu_lerr(cudaMalloc(&base_orientation_samples,  base_quatenion_space),  "allocating base quaternions");
-  cu_lerr(cudaMalloc(&alignment_transformations, alignment_tf_space),    "allocating alignment transformations");
-  cu_lerr(cudaMalloc(&beam_to_bingham,           beam_to_bingham_space), "allocating beam_to_bingham orientations");
-  cu_lerr(cudaMalloc(&bingham_orientations,      bingham_ori_space),     "allocating bingham distribution orientations");
-  cu_lerr(cudaMalloc(&beam_to_domain,            beam_to_domain_space),  "allocating bingham distribution orientations");
+  cu_lerr(cudaMalloc(&base_orientation_samples, base_orientations_space), "allocating base quaternions");
+  cu_lerr(cudaMalloc(&alignment_tf,             alignment_tf_space),      "allocating alignment transformations");
+  cu_lerr(cudaMalloc(&beam_to_bingham,          beam_to_bingham_space),   "allocating beam_to_bingham orientations");
+  cu_lerr(cudaMalloc(&bingham_ori,              bingham_ori_space),       "allocating bingham distribution orientations");
+  cu_lerr(cudaMalloc(&beam_to_domain,           beam_to_domain_space),    "allocating bingham distribution orientations");
 
-  cu_lerr(cudaMalloc(&h_d,                       hkl_space),             "allocating hkls");
-  cu_lerr(cudaMalloc(&chis,                      chis_space),            "allocating chis");
-  cu_lerr(cudaMalloc(&phis,                      phis_space),            "allocating phis");
-  cu_lerr(cudaMalloc(&w_d,                       partial_weights_space), "allocating weights");
-  cu_lerr(cudaMalloc(&res,                       res_space),             "allocating summed weights");
-  cu_lerr(cudaMalloc(&pm_gpu.hkl_sizes,          permutations_space),    "allocating n_hkls");
+  cu_lerr(cudaMalloc(&h_d,                      hkl_space),               "allocating hkls");
+  cu_lerr(cudaMalloc(&chis,                     chis_space),              "allocating chis");
+  cu_lerr(cudaMalloc(&phis,                     phis_space),              "allocating phis");
+  cu_lerr(cudaMalloc(&res,                      res_space),               "allocating summed weights");
+  cu_lerr(cudaMalloc(&pm_gpu.hkl_sizes,         permutations_space),      "allocating n_hkls");
 
-  cu_lerr(cudaMemcpy(base_orientation_samples, ffidata.ori_samples,    base_quatenion_space, cudaMemcpyHostToDevice), "copying orientation samples to device");
+  cu_lerr(cudaMemcpy(base_orientation_samples, ffidata.ori_samples,    base_orientations_space, cudaMemcpyHostToDevice), "copying orientation samples to device");
   cu_lerr(cudaMemcpy(chis,                     ffidata.chis,           chis_space,           cudaMemcpyHostToDevice), "copying chis to device");
   cu_lerr(cudaMemcpy(phis,                     ffidata.phis,           phis_space,           cudaMemcpyHostToDevice), "copying phis to device");
   cu_lerr(cudaMemcpy(h_d,                      ffidata.hkls,           hkl_space,            cudaMemcpyHostToDevice), "copying hkls to device");
@@ -422,34 +464,47 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   // precompute_alignment_transformations(float *chis, float *phis, Quaternion *alignment_transformations, size_t
   // n_chis, size_t n_phis)
   launch_kernel_sensibly_no_shmem(precompute_alignment_transformations, "precomputing alignment transformations",
-                                  stride, chis, phis, alignment_transformations, ffidata.n_chis, ffidata.n_phis);
+                                  stride, chis, phis, alignment_tf, ffidata.n_chis, ffidata.n_phis);
 
   // precompute_beam_to_bingham(Quaternion *alignment_transformations, Quaternion *bingham_orientations, Quaternion
   // *beam_to_bingham, size_t stride, size_t n_permutations)
   launch_kernel_sensibly_no_shmem(precompute_beam_to_bingham, "precomputing beam to bingham transformations",
-                                  permutations.n_permutations * stride, alignment_transformations, bingham_orientations,
-                                  beam_to_bingham, stride, permutations.n_permutations);
+                                  permutations.n_permutations * stride, alignment_tf, bingham_ori, beam_to_bingham,
+                                  stride, permutations.n_permutations);
 
   // transform_quaternions(Quaternion *beam_to_bingham, Quaternion *base_orientation_samples, Quaternion *dst, size_t
   // stride, size_t ori_samples_per_alignment, size_t n_permutations)
   launch_kernel_sensibly_no_shmem(transform_quaternions, "computing tranformed orientations",
-                                  beam_to_domain_space / sizeof(Quaternion), beam_to_bingham, base_orientation_samples,
-                                  beam_to_domain, stride, ffidata.n_ori_per_alignment, permutations.n_permutations);
+                                  beam_to_domain_space / sizeof(Quaternion), // array size
+                                  beam_to_bingham,                           // beam to bingham
+                                  base_orientation_samples,                  // base orientation
+                                  beam_to_domain,                            // target beam to domain
+                                  stride, ffidata.n_ori_per_alignment, permutations.n_permutations);
 
   // normalize_hkls(Vec3 *h, size_t n_hkls_tot)
   launch_kernel_sensibly_no_shmem(normalize_hkls, "normalizing hkl vectors", ffidata.n_hkls_tot, h_d,
                                   ffidata.n_hkls_tot);
 
-  // compute_single_hkl_ori_weight(Quaternion *q, Vec3 *h, float *w, Permutations permutations, float kappa, size_t
-  // total_ori_samples, size_t stride_in_alignments, size_t n_ori_per_alignment, size_t n_hkls_tot)
-  launch_kernel_sensibly_no_shmem(compute_single_hkl_ori_weight, "computing weight elements",
-                                  partial_weights_space / sizeof(float), q_d, h_d, w_d, pm_gpu, kappa,
+  // // compute_single_hkl_ori_weight(Quaternion *q, Vec3 *h, float *w, Permutations permutations, float kappa, size_t
+  // // total_ori_samples, size_t stride_in_alignments, size_t n_ori_per_alignment, size_t n_hkls_tot)
+  // launch_kernel_sensibly_no_shmem(compute_single_hkl_ori_weight, "computing weight elements",
+  //                                 partial_weights_space / sizeof(float), q_d, h_d, w_d, pm_gpu, kappa,
+  //                                 stride * ffidata.n_ori_per_alignment * permutations.n_permutations, stride,
+  //                                 ffidata.n_ori_per_alignment, ffidata.n_hkls_tot);
+
+  // // reduce_weights_per_hkl_kde(float *w, float *results, float norm_const, size_t n_hkls, size_t n_ori_samples
+  // launch_kernel_sensibly_no_shmem(reduce_weights_per_hkl_kde, "reducing weights using kde", res_space /
+  // sizeof(float),
+  //                                 w_d, res, norm_const, ffidata.n_hkls_tot, ffidata.n_ori_per_alignment);
+
+  launch_kernel_sensibly_no_shmem(compute_hkl_weight, "computing hkl weights",
+                                  res_space / sizeof(float), // array size
+                                  beam_to_domain,            // beam to domain
+                                  h_d,                       // hkls device
+                                  res,                       // weight results
+                                  pm_gpu, kappa, norm_const,
                                   stride * ffidata.n_ori_per_alignment * permutations.n_permutations, stride,
                                   ffidata.n_ori_per_alignment, ffidata.n_hkls_tot);
-
-  // reduce_weights_per_hkl_kde(float *w, float *results, float norm_const, size_t n_hkls, size_t n_ori_samples
-  launch_kernel_sensibly_no_shmem(reduce_weights_per_hkl_kde, "reducing weights using kde", res_space / sizeof(float),
-                                  w_d, res, norm_const, ffidata.n_hkls_tot, ffidata.n_ori_per_alignment);
 
   snprintf(tmp_str_buf, sizeof(tmp_str_buf), "copying %ld hkl weights (%.2f MiB) to cpu", res_space / sizeof(float),
            (float)res_space / 1e6);
@@ -457,13 +512,13 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   cu_lerr(cudaMemcpy(i_hkls, res, res_space, cudaMemcpyDeviceToHost), "copying resuts to host");
 
   cudaFree(base_orientation_samples);
-  cudaFree(alignment_transformations);
-  cudaFree(bingham_orientations);
+  cudaFree(alignment_tf);
+  cudaFree(bingham_ori);
   cudaFree(beam_to_bingham);
   cudaFree(beam_to_domain);
   cudaFree(q_d);
   cudaFree(h_d);
-  cudaFree(w_d);
+  // cudaFree(w_d);
   cudaFree(res);
   cudaFree(chis);
   cudaFree(phis);

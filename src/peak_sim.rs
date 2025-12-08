@@ -452,7 +452,7 @@ mod cuda {
                 + std::mem::size_of::<Quaternion>() * n_transformed_quaternions
                 + std::mem::size_of_val(&*self.chis)
                 + std::mem::size_of_val(&*self.phis)
-                + std::mem::size_of::<f32>() * n_partial_weights
+                // + std::mem::size_of::<f32>() * n_partial_weights
                 + std::mem::size_of::<f32>() * n_weights;
 
             (n_allocated_bytes_host, n_required_bytes_cuda)
