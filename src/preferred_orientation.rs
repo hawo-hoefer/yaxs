@@ -81,6 +81,7 @@ impl KDEBinghamODF {
         }
     }
 
+    // Multithread
     pub fn push_transformed_samples_into(&self, chi: f64, phi: f64, dst: &mut Vec<Quaternion>) {
         // bingham distribution describes orientations of domains relative to sample
         //

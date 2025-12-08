@@ -371,7 +371,12 @@ mod cuda {
 
     struct CudaBatch {
         reflection_parts: Vec<ReflectionPart>,
-        precomputed_alignments: Vec<Quaternion>,
+
+        orientation_samples: Vec<Quaternion>,
+        bingham_alignments: Vec<Quaternion>,
+        chis: Vec<f32>,
+        phis: Vec<f32>,
+
         permuted_structures: Vec<Structure>,
         n_hkls: Vec<usize>,
         strains: Vec<Strain>,
@@ -388,17 +393,29 @@ mod cuda {
     }
 
     impl CudaBatch {
-        fn new(texture_measurement: TextureMeasurement, n_permutations: usize) -> Self {
+        fn new(
+            texture_measurement: TextureMeasurement,
+            n_permutations: usize,
+            chis: Vec<f32>,
+            phis: Vec<f32>,
+        ) -> Self {
             Self {
                 reflection_parts: Vec::new(),
-                precomputed_alignments: Vec::new(),
-                permuted_structures: Vec::new(),
+                orientation_samples: Vec::with_capacity(
+                    texture_measurement.stride() * n_permutations / 10,
+                ),
+                permuted_structures: Vec::with_capacity(n_permutations),
+                bingham_alignments: Vec::new(),
+
                 n_hkls: Vec::new(),
                 strains: Vec::new(),
                 bingham_params: Vec::new(),
                 weights: Vec::new(),
                 n_permutations,
                 texture_measurement,
+
+                chis,
+                phis,
 
                 n_hkls_batch: 0,
                 permutation_start: 0,
@@ -419,19 +436,25 @@ mod cuda {
                 + std::mem::size_of_val(&*self.n_hkls)
                 + std::mem::size_of_val(&*self.strains)
                 + std::mem::size_of_val(&*self.bingham_params)
-                + std::mem::size_of_val(&*self.precomputed_alignments)
+                + std::mem::size_of_val(&*self.chis)
+                + std::mem::size_of_val(&*self.phis)
+                + std::mem::size_of_val(&*self.orientation_samples)
                 + std::mem::size_of_val(&*self.reflection_parts)
                 + std::mem::size_of_val(&*self.weights);
 
-            let n_required_bytes_cuda = 3 * std::mem::size_of::<f32>() * self.n_hkls_batch
-                + std::mem::size_of::<Quaternion>() * self.precomputed_alignments.len()
-                + std::mem::size_of::<f32>()
-                    * self.n_hkls_batch
-                    * self.texture_measurement.stride()
-                    * self.sampling_parameters.n
-                + std::mem::size_of::<f32>()
-                    * self.n_hkls_batch
-                    * self.texture_measurement.stride();
+            let n_partial_weights =
+                self.n_hkls_batch * self.texture_measurement.stride() * self.sampling_parameters.n;
+            let n_transformed_quaternions =
+                self.chis.len() * self.phis.len() * self.orientation_samples.len();
+            let n_weights = self.n_hkls_batch * self.texture_measurement.stride();
+
+            let n_required_bytes_cuda = std::mem::size_of::<Vec3<f32>>() * self.n_hkls_batch
+                + std::mem::size_of::<Quaternion>() * n_transformed_quaternions
+                + std::mem::size_of_val(&*self.chis)
+                + std::mem::size_of_val(&*self.phis)
+                + std::mem::size_of::<f32>() * n_partial_weights
+                + std::mem::size_of::<f32>() * n_weights;
+
             (n_allocated_bytes_host, n_required_bytes_cuda)
         }
 
@@ -440,7 +463,8 @@ mod cuda {
             self.n_hkls_batch = 0;
 
             self.reflection_parts.clear();
-            self.precomputed_alignments.clear();
+            self.bingham_alignments.clear();
+            self.orientation_samples.clear();
             self.permuted_structures.clear();
             self.n_hkls.clear();
             self.strains.clear();
@@ -464,7 +488,7 @@ mod cuda {
                 return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=struct_file));
             };
 
-            let bingham_samples = po.sample(&mut rng);
+            let bingham_params = po.sample_into(&mut rng, &mut self.orientation_samples);
 
             let mut v = Vec::new();
             std::mem::swap(&mut self.reflection_parts, &mut v);
@@ -477,21 +501,10 @@ mod cuda {
             self.n_hkls.push(n_hkl);
             self.strains.push(strain);
             self.permuted_structures.push(perm_s);
-            self.bingham_params.push(bingham_samples.params.clone());
-
-            for (_, (chi, phi)) in self
-                .texture_measurement
-                .chi
-                .into_iter()
-                .cartesian_product(self.texture_measurement.phi.into_iter())
-                .enumerate()
-            {
-                bingham_samples.push_transformed_samples_into(
-                    chi,
-                    phi,
-                    &mut self.precomputed_alignments,
-                );
-            }
+            // TODO: is there a better way?
+            self.bingham_alignments
+                .push(bingham_params.orientation.clone());
+            self.bingham_params.push(bingham_params);
 
             Ok(())
         }
@@ -511,7 +524,10 @@ mod cuda {
             );
             single_phase_weight_hkls(
                 &self.reflection_parts,
-                &self.precomputed_alignments,
+                &self.orientation_samples,
+                &self.bingham_alignments,
+                &self.phis,
+                &self.chis,
                 &self.n_hkls,
                 self.sampling_parameters.normalization_constant(),
                 self.sampling_parameters.kappa,
@@ -550,11 +566,6 @@ mod cuda {
                 }
 
                 hkl_pos += n_hkl;
-                println!(
-                    "{}, {}",
-                    self.struct_id,
-                    local_perm_id + self.permutation_start
-                );
                 unsafe {
                     results.add(PeakSimResult {
                         strain,
@@ -582,7 +593,17 @@ mod cuda {
         n_threads: usize,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
-        let mut batch = CudaBatch::new(texture_measurement, n_permutations);
+        let chis = texture_measurement
+            .chi
+            .into_iter()
+            .map(|x| x as f32)
+            .collect_vec();
+        let phis = texture_measurement
+            .phi
+            .into_iter()
+            .map(|x| x as f32)
+            .collect_vec();
+        let mut batch = CudaBatch::new(texture_measurement, n_permutations, chis, phis);
 
         for struct_id in 0..n_structs {
             let Some(ref mut po) = ctx.po_gens[struct_id] else {

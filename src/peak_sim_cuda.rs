@@ -25,28 +25,37 @@ mod ffi {
 
     #[repr(C)]
     pub struct FFIData {
-        ori_samples: *const Quaternion,
-        hkls: *const Vec3<f32>,
-        total_ori_samples: usize,
+        ori_samples: *const Quaternion, // [n_permutations * n_ori_per_alignment]
+        bingham_alignments: *const Quaternion, // [n_permutations]
+        hkls: *const Vec3<f32>,         // [n_hkls_tot]
+        phis: *const c_float,           // [n_phis]
+        chis: *const c_float,           // [n_chis]
+
+        n_phis: usize,
+        n_chis: usize,
         n_ori_per_alignment: usize,
-        n_alignments_per_permutation: usize,
         n_hkls_tot: usize,
     }
 
     impl FFIData {
         pub fn new(
             ori_samples: &[Quaternion],
+            bingham_alignments: &[Quaternion],
+            phis: &[f32],
+            chis: &[f32],
             hkls: &[Vec3<c_float>],
             n_ori_per_alignment: usize,
-            stride: usize,
         ) -> Self {
             Self {
                 ori_samples: ori_samples.as_ptr(),
-                total_ori_samples: ori_samples.len(),
+                bingham_alignments: bingham_alignments.as_ptr(),
                 hkls: hkls.as_ptr(),
                 n_hkls_tot: hkls.len(),
                 n_ori_per_alignment,
-                n_alignments_per_permutation: stride,
+                phis: phis.as_ptr(),
+                chis: chis.as_ptr(),
+                n_phis: phis.len(),
+                n_chis: chis.len(),
             }
         }
     }
@@ -68,6 +77,9 @@ mod ffi {
 pub fn single_phase_weight_hkls(
     reflection_parts: &[ReflectionPart],
     ori_samples: &[Quaternion],
+    bingham_alignments: &[Quaternion],
+    phis: &[f32],
+    chis: &[f32],
     n_hkls: &[usize],
     norm_const: f64,
     kappa: f64,
@@ -92,9 +104,11 @@ pub fn single_phase_weight_hkls(
 
     let ffidata = ffi::FFIData::new(
         ori_samples,
+        bingham_alignments,
+        phis,
+        chis,
         &hkls,
         samples_per_alignment,
-        alignments_per_measurement,
     );
     let permutations = ffi::Permutations::new(n_hkls);
 

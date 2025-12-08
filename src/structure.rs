@@ -1,3 +1,4 @@
+use ahash::HashMapExt;
 use itertools::Itertools;
 use num_complex::Complex;
 use std::collections::HashMap;
@@ -247,7 +248,7 @@ impl Structure {
         input: &[ReflectionPart],
         alignment: Option<Alignment<'a>>,
     ) -> Vec<Peak> {
-        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for ReflectionPart {
             hkl,
@@ -278,7 +279,9 @@ impl Structure {
         input: &[ReflectionPart],
         i_hkls: &[f32],
     ) -> Vec<Peak> {
-        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+        use ahash::HashMapExt;
+
+        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for (i, ReflectionPart { hkl, d_hkl, .. }) in input.iter().enumerate() {
             // TODO: maybe make this an f64 again
@@ -297,7 +300,7 @@ impl Structure {
 
     pub fn compress_aggregated_hkls(
         &self,
-        agg: HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
+        agg: ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
     ) -> Vec<Peak> {
         let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
             return Vec::new();
@@ -351,7 +354,7 @@ impl Structure {
         alignment: Option<Alignment<'a>>,
         scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Vec<Peak> {
-        let mut agg = HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
 
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
             let d_hkl = 1.0 / g_hkl;

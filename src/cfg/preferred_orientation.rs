@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::Parameter;
 use crate::math::linalg::{ColVec, Mat, Mat4, Vec4};
+use crate::math::quaternion::Quaternion;
 use crate::math::stats::{
     sample_unit_quaternion_subgroup_algorithm, BinghamDistribution, HitAndRunPolytopeSampler,
 };
-use crate::preferred_orientation::KDEBinghamODF;
+use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 
 #[derive(Deserialize, Serialize, Copy, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +19,8 @@ pub struct KDEApprox {
 
 impl KDEApprox {
     pub fn normalization_constant(&self) -> f64 {
-        self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp())) * self.n as f64
+        self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()))
+            * self.n as f64
     }
 }
 
@@ -77,7 +79,10 @@ impl POGenerator {
         }
     }
 
-    pub fn sample(&mut self, rng: &mut impl Rng) -> KDEBinghamODF {
+    fn sample_hyper(
+        &mut self,
+        rng: &mut impl Rng,
+    ) -> (BinghamDistribution<4>, Vec4<f64>, &mut KDEApprox) {
         let (k, orientation, sampling) = match self {
             POGenerator::FullEpitaxialGrowth { sampler, sampling } => {
                 let orientation = sample_unit_quaternion_subgroup_algorithm(rng);
@@ -106,8 +111,29 @@ impl POGenerator {
 
         let k = Vec4::new(k[i1], k[i2], k[i3], k[i4]);
 
-        let bingham_dist = BinghamDistribution::try_new(k.clone(), Mat4::identity())
-            .expect("identity matrix is OK");
+        let bingham_dist =
+            BinghamDistribution::try_new(k, Mat4::identity()).expect("identity matrix is OK");
+
+        (bingham_dist, orientation, sampling)
+    }
+
+    pub fn sample_into(&mut self, rng: &mut impl Rng, dst: &mut Vec<Quaternion>) -> BinghamParams {
+        let (bingham_dist, orientation, params) = self.sample_hyper(rng);
+
+        for _ in 0..params.n {
+            let sample = bingham_dist.sample(rng);
+            dst.push(sample.into());
+        }
+
+        BinghamParams {
+            orientation: orientation.into(),
+            ks: bingham_dist.ks().clone().into(),
+        }
+    }
+
+    pub fn sample(&mut self, rng: &mut impl Rng) -> KDEBinghamODF {
+        let (bingham_dist, orientation, sampling) = self.sample_hyper(rng);
+
         let mut bingham_samples = Vec::with_capacity(sampling.n);
         for _ in 0..bingham_samples.capacity() {
             let sample = bingham_dist.sample(rng);
@@ -116,7 +142,7 @@ impl POGenerator {
 
         KDEBinghamODF::new(
             orientation.into(),
-            k.into(),
+            bingham_dist.ks().clone().into(),
             bingham_samples,
             sampling.kappa,
             sampling.normalization_constant(),
