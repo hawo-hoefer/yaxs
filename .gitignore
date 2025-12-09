@@ -1,9 +1,19 @@
+# build artifacts
 /target
-/out
+
+# don't accidentally violate copyright
 *cif/
+*.cif
+
+# performance
 callgrind.out*
 cachegrind.out*
 stacks.folded
 perf.data
 perf.data.old
 flamegraph.svg
+
+# commonly used output names for testing
+/out
+/cpu
+/cuda_enhanced
