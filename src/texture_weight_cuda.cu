@@ -62,7 +62,7 @@ __device__ Vec3 unit_quat_tf_unchecked(Quaternion q, Vec3 v) {
   Vec3 qxyz = (Vec3){q.x, q.y, q.z};
   Vec3 t = vec3_cross(qxyz, v);
   Vec3 v_ = vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qxyz, t));
-  return v;
+  return v_;
 }
 
 __global__ void reduce_weights_per_hkl_kde(float *w, float *results, float norm_const, size_t n_hkls,
