@@ -15,9 +15,9 @@ sample_parameters:
     - path: ./cif/Ir_53813.cif
       mean_ds_nm: 50.0
       ds_eta: 0.5
-      preferred_orientation: !SingleAxis
-        k_max: 1000000
-        strength: [100, 100000]
+      preferred_orientation: !DirectBingham
+        k: [100, 0.5, 0.5, 1.0]
+        orientation: [0, 1, 0, 0]
         sampling: {n: 1024, kappa: 20}
 
 simulation_parameters:
