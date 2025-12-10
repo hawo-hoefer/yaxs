@@ -316,7 +316,7 @@ pub fn simulate_peaks(
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             if let Some(texture_measurement) = texture_measurement {
-                cuda::peak_sim_gpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, ctx, results, n_threads, rng)
+                cuda::peak_sim_gpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, ctx, results, rng)
             } else {
                 peak_sim_cpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, ctx, results, n_threads, rng)
             }
@@ -406,7 +406,6 @@ mod cuda {
                 strains: Vec::new(),
                 bingham_params: Vec::new(),
                 weights: Vec::new(),
-                n_permutations,
                 texture_measurement,
 
                 chis,
@@ -437,8 +436,6 @@ mod cuda {
                 + std::mem::size_of_val(&*self.reflection_parts)
                 + std::mem::size_of_val(&*self.weights);
 
-            let n_partial_weights =
-                self.n_hkls_batch * self.texture_measurement.stride() * self.sampling_parameters.n;
             let n_transformed_quaternions =
                 self.chis.len() * self.phis.len() * self.orientation_samples.len();
             let n_weights = self.n_hkls_batch * self.texture_measurement.stride();
@@ -585,7 +582,6 @@ mod cuda {
         sample_parameters: SampleParameters,
         mut ctx: RunCtx,
         results: Arc<WriteCtx>,
-        n_threads: usize,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
         let chis = texture_measurement

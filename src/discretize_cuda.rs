@@ -13,8 +13,6 @@ use crate::uninit_vec;
 use self::ffi::Uniform;
 
 mod ffi {
-    use std::ffi::{c_char, c_int, CStr};
-
     #[link(name = "cuda_lib")]
     extern "C" {
         pub fn render_peaks_and_background(
