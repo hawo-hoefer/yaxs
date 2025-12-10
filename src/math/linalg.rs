@@ -403,8 +403,10 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     {
         let mut ret: Mat<V, ROWS, COLS> = unsafe { MaybeUninit::uninit().assume_init() };
 
-        for (rv, sv) in ret.iter_values_mut().zip(self.iter_values()) {
-            *rv = p(sv);
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                ret[(r, c)] = p(&self[(r, c)]);
+            }
         }
 
         ret

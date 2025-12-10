@@ -342,6 +342,7 @@ mod cuda {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use ahash::HashMapExt;
     use itertools::Itertools;
     use log::debug;
     use rand::{Rng, SeedableRng};
@@ -535,6 +536,9 @@ mod cuda {
             assert!(self.strains.len() == batch_size_permutations);
             assert!(self.bingham_params.len() == batch_size_permutations);
 
+            // TODO: multithread this maybe
+            let mut map = ahash::HashMap::new();
+
             let mut hkl_pos = 0;
             for (local_perm_id, (perm_s, n_hkl, strain, bingham_params)) in itertools::izip!(
                 self.permuted_structures.drain(..),
@@ -553,6 +557,7 @@ mod cuda {
                     let p = perm_s.apply_precomputed_weights_to_hkls_intensities(
                         &self.reflection_parts[hkl_pos..hkl_pos + n_hkl],
                         &self.weights[hkl_pos..hkl_pos + n_hkl],
+                        &mut map,
                     );
                     peaks.push(p.into_boxed_slice());
                 }

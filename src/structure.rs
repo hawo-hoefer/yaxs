@@ -271,7 +271,7 @@ impl Structure {
             hkls_map.push(hkl.map(|x| *x as i16))
         }
 
-        self.compress_aggregated_hkls(agg)
+        self.compress_aggregated_hkls(&mut agg)
     }
 
     #[cfg(feature = "use-gpu")]
@@ -279,10 +279,9 @@ impl Structure {
         &self,
         input: &[ReflectionPart],
         i_hkls: &[f32],
+        agg: &mut ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
     ) -> Vec<Peak> {
-        use ahash::HashMapExt;
-
-        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+        agg.clear();
 
         for (i, ReflectionPart { hkl, d_hkl, .. }) in input.iter().enumerate() {
             // TODO: maybe make this an f64 again
@@ -301,21 +300,20 @@ impl Structure {
 
     pub fn compress_aggregated_hkls(
         &self,
-        agg: ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
+        agg: &mut ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
     ) -> Vec<Peak> {
         let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
             return Vec::new();
         };
 
-        let mut agg = agg
+        let agg = agg
             .iter()
             .sorted_unstable_by_key(|&(a, _)| -a)
             .map(|(d_hkl, (i_hkl, hkls))| (f64::from(*d_hkl), f64::from(*i_hkl), hkls))
-            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL)
-            .collect_vec();
+            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL);
 
-        let mut compressed: Vec<Peak> = Vec::with_capacity(agg.len() / 2 * 3);
-        for (d_hkl, i_hkl, hkls) in agg.drain(..) {
+        let mut compressed: Vec<Peak> = Vec::with_capacity(100);
+        for (d_hkl, i_hkl, hkls) in agg {
             match compressed.last_mut() {
                 Some(Peak {
                     d_hkl: last_d_hkl,
@@ -337,6 +335,7 @@ impl Structure {
         for peak in compressed.iter_mut() {
             peak.i_hkl /= volume.powi(2);
         }
+
         compressed
     }
 
@@ -376,7 +375,7 @@ impl Structure {
             hkls_map.push(hkl.map(|x| *x as i16))
         }
 
-        self.compress_aggregated_hkls(agg)
+        self.compress_aggregated_hkls(&mut agg)
     }
 
     /// compute peak positions and intensities for angle dispersive XRD
