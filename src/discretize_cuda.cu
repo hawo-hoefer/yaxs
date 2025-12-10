@@ -388,6 +388,7 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind backg
   switch (background_kind) {
   case BkgNone:
     debugf("No background specified");
+    cudaMemset(intensities_d, 0, pat_len * n_patterns * sizeof(float));
     // all good, do nothing
     break;
 
