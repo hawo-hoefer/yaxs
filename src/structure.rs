@@ -260,7 +260,8 @@ impl Structure {
             let mut i_hkl = *i_hkl;
 
             if let Some(ref a) = alignment {
-                i_hkl = i_hkl * a.weight(pos);
+                let w = a.weight(pos);
+                i_hkl = i_hkl * w;
             }
 
             let (ref mut i_hkl_map, ref mut hkls_map) = agg

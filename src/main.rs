@@ -1,4 +1,3 @@
-use cfg_if::cfg_if;
 use chrono::{Datelike, Timelike, Utc};
 use clap::Parser;
 use colog::format::CologStyle;
@@ -9,13 +8,12 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
-use yaxs::cuda_common::CUDA_DEVICE_INFO;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::InstrumentParameters;
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
 use yaxs::structure::Structure;
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 
 use yaxs::cfg::{Config, SimulationKind, StructureDef};
 use yaxs::io::{
@@ -134,6 +132,7 @@ fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
+            use yaxs::cuda_common::CUDA_DEVICE_INFO;
             info!("Enabled CUDA-Based Simulation.
 Device name:         {}
 Available memory:    {:.3} GiB

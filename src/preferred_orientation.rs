@@ -1,11 +1,5 @@
-use std::mem::MaybeUninit;
-
-use itertools::Itertools;
-
 use crate::math::linalg::Vec3;
 use crate::math::quaternion::Quaternion;
-
-use crate::lattice::Lattice;
 
 #[derive(Clone, Debug)]
 pub struct BinghamParams {
@@ -56,8 +50,8 @@ pub struct KDEBinghamODF {
 /// first, the rotate around beam z by chi
 /// then, rotate around beam y by phi
 fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Quaternion {
-    let beam_chi = Quaternion::from_angle_axis(0.0, 0.0, 1.0, chi.to_radians() as f32);
-    let beam_phi = Quaternion::from_angle_axis(0.0, 1.0, 0.0, phi.to_radians() as f32);
+    let beam_chi = Quaternion::from_axis_angle(0.0, 0.0, 1.0, chi.to_radians() as f32);
+    let beam_phi = Quaternion::from_axis_angle(0.0, 1.0, 0.0, phi.to_radians() as f32);
 
     // transform rotation of phi around global y to coordinates after chi rotation
     let chi_phi = beam_chi.recip().hamilton_product(&beam_phi);
@@ -81,25 +75,25 @@ impl KDEBinghamODF {
         }
     }
 
-    // Multithread
+    // TODO: Multithread
     pub fn push_transformed_samples_into(&self, chi: f64, phi: f64, dst: &mut Vec<Quaternion>) {
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
         let beam_to_sample = get_beam_to_sample_tf(chi, phi);
         let sample_to_bingham = &self.params.orientation;
-        let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
+        let beam_to_bingham = beam_to_sample.hamilton_product(&sample_to_bingham);
 
-        for s in self
-            .axis_aligned_bingham_dist_samples
-            .iter()
-            .map(|bingham_to_domain| {
-                beam_to_bingham
-                    .hamilton_product(bingham_to_domain)
-                    .unit_recip_unchecked()
-            })
+        for beam_to_domain in
+            self.axis_aligned_bingham_dist_samples
+                .iter()
+                .map(|bingham_to_domain| {
+                    beam_to_bingham
+                        .hamilton_product(bingham_to_domain)
+                        .unit_recip_unchecked()
+                })
         {
-            dst.push(s)
+            dst.push(beam_to_domain)
         }
     }
 
@@ -164,9 +158,10 @@ impl KDEBinghamODF {
         let mut weight = 0.0;
 
         for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
-            let beam_to_domain = beam_to_bingham.hamilton_product(&bingham_to_domain);
-            let domain_to_beam = beam_to_domain.unit_recip_unchecked();
-            let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
+            let beam_to_domain = beam_to_bingham
+                .hamilton_product(&bingham_to_domain)
+                .unit_recip_unchecked();
+            let hkl_in_beam_coords = beam_to_domain.unit_transform_unchecked(&hkl_in_domain_coords);
 
             let dot_with_beam_z = hkl_in_beam_coords[2];
 
@@ -193,7 +188,7 @@ mod test {
     #[test]
     fn test_transformed_ori() {
         let v = Vec3::new(1.0, 7.0, 3.0).normalize();
-        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f32.to_radians());
+        let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]
@@ -225,7 +220,7 @@ sampling: {{n: 30, kappa: 20}}
     #[test]
     fn test_transformed_ori_aligned() {
         let v = Vec3::new(1.0, 3.0, 3.0).normalize();
-        let ori = Quaternion::from_angle_axis(v[0], v[1], v[2], 32.0f32.to_radians());
+        let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5, 1.0]

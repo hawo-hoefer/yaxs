@@ -19,8 +19,9 @@ pub struct KDEApprox {
 
 impl KDEApprox {
     pub fn normalization_constant(&self) -> f64 {
-        self.kappa / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()))
-            * self.n as f64
+        self.kappa
+            / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()))
+            / self.n as f64
     }
 }
 

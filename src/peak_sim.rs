@@ -16,13 +16,12 @@ use crate::cfg::{
 };
 
 use crate::math::linalg::Vec3;
-use crate::math::quaternion::Quaternion;
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 use crate::scatter::Scatter;
 use crate::species::Atom;
 use crate::strain::Strain;
-use crate::structure::{ReflectionPart, Structure};
+use crate::structure::Structure;
 use crate::uninit_vec;
 
 enum PossiblyTextureMeasurementPeaks {
@@ -340,13 +339,11 @@ pub fn simulate_peaks(
 
 #[cfg(feature = "use-gpu")]
 mod cuda {
-    use std::cell::UnsafeCell;
     use std::collections::HashMap;
-    use std::mem::MaybeUninit;
     use std::sync::Arc;
 
     use itertools::Itertools;
-    use log::{debug, info};
+    use log::debug;
     use rand::{Rng, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -357,7 +354,6 @@ mod cuda {
     use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
-    use crate::pattern::Peaks;
     use crate::peak_sim::PeakSimResult;
     use crate::preferred_orientation::BinghamParams;
     use crate::scatter::Scatter;
@@ -388,7 +384,6 @@ mod cuda {
         permutation_start: usize,
         n_hkls_batch: usize,
         struct_id: usize,
-        n_permutations: usize,
         sampling_parameters: KDEApprox,
     }
 

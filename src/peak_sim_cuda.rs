@@ -27,7 +27,7 @@ mod ffi {
     pub struct FFIData {
         ori_samples: *const Quaternion, // [n_permutations * n_ori_per_alignment]
         bingham_alignments: *const Quaternion, // [n_permutations]
-        hkls: *const Vec3<f32>,         // [n_hkls_tot]
+        hkls: *const Vec3<c_float>,         // [n_hkls_tot]
         phis: *const c_float,           // [n_phis]
         chis: *const c_float,           // [n_chis]
 

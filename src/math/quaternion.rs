@@ -1,7 +1,7 @@
 use super::linalg::{Vec3, Vec4};
 
 #[derive(Clone, PartialEq, Debug)]
-#[repr(C, align(32))]
+#[repr(C)]
 pub struct Quaternion {
     pub w: f32,
     pub x: f32,
@@ -14,11 +14,11 @@ impl Quaternion {
         Self { w, x, y, z }
     }
 
-    pub fn from_angle_axis(x: f32, y: f32, z: f32, alpha: f32) -> Self
+    pub fn from_axis_angle(x: f32, y: f32, z: f32, alpha: f32) -> Self
 where {
         let v = Vec3::new(x, y, z).normalize();
 
-        let alpha_half_sin = (alpha / 2.0).sin();
+        let alpha_half_sin = (0.5 * alpha).sin();
 
         Self::new(
             (alpha / 2.0).cos(),
@@ -143,6 +143,23 @@ impl From<Vec4<f64>> for Quaternion {
     }
 }
 
+impl std::fmt::Display for Quaternion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let width = f.width().unwrap_or(6);
+        let precision = f.precision().unwrap_or(3);
+        write!(
+            f,
+            "Quaternion({:w$.p$}, {:w$.p$}, {:w$.p$}, {:w$.p$})",
+            self.w,
+            self.x,
+            self.y,
+            self.z,
+            w = width,
+            p = precision
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::math::linalg::Vec3;
@@ -171,7 +188,7 @@ mod test {
 
     #[test]
     fn quaternion_reciprocal_identity() {
-        let r0 = Quaternion::from_angle_axis(0.3, 2.0, 1.0, 32.0f32.to_radians());
+        let r0 = Quaternion::from_axis_angle(0.3, 2.0, 1.0, 32.0f32.to_radians());
         let r1 = r0.recip();
         let prod = r0.hamilton_product(&r1);
         assert!((prod.w - 1.0).abs() < 1e-7);
@@ -183,7 +200,7 @@ mod test {
     #[test]
     fn quaternion_angle_axis() {
         let atol = 1e-3;
-        let q = Quaternion::from_angle_axis(0.0, 1.0, 0.0, 32.0f32.to_radians());
+        let q = Quaternion::from_axis_angle(0.0, 1.0, 0.0, 32.0f32.to_radians());
         assert!((q.w - 0.961).abs() < atol, "{}, {}", q.w, 0.961);
         assert!((q.x - 0.0).abs() < atol, "{}, {}", q.x, 0.0);
         assert!((q.y - 0.276).abs() < atol, "{}, {}", q.y, 0.276);
@@ -193,7 +210,7 @@ mod test {
     #[test]
     fn quaternion_rot() {
         let atol = 1e-6;
-        let q = Quaternion::from_angle_axis(0.0, 1.0, 0.0, 32.0f32.to_radians());
+        let q = Quaternion::from_axis_angle(0.0, 1.0, 0.0, 32.0f32.to_radians());
         let rot = q.quaternion_transform(&Vec3::<f32>::new(5.0, 7.0, 1.0));
 
         assert!((rot[0] - 4.77016).abs() < atol, "{}, {}", rot[0], 4.77016);
