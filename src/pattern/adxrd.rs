@@ -302,14 +302,20 @@ impl Discretizer for DiscretizeAngleDispersive {
         if p.has_weight_fracs {
             v.push(WeightFractions(Array2::<f32>::zeros((
                 n_samples, p.n_phases,
-            ))))
+            ))));
+        }
+
+        if let Some(bkg_params) = p.bkg_params {
+            v.push(BackgroundParameters(Array2::<f32>::zeros((
+                n_samples, bkg_params,
+            ))));
         }
 
         if let Some(n) = p.textured_phases {
             v.push(BinghamODFParams {
                 orientations: Array3::zeros((n_samples, n, 4)),
                 ks: Array3::zeros((n_samples, n, 4)),
-            })
+            });
         }
         v
     }
