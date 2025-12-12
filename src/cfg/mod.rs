@@ -16,7 +16,7 @@ pub use parameter::Parameter;
 use probability::Probability;
 
 pub use noise::NoiseSpec;
-pub use preferred_orientation::{POCfg, KDEApprox, POGenerator};
+pub use preferred_orientation::{KDEApprox, POCfg, POGenerator};
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
 pub use volume_fraction::VolumeFraction;
 
@@ -176,7 +176,7 @@ pub struct AngleDispersive {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CagliotiKind {
+pub enum InstprmKind {
     Raw,
     GSAS,
 }
@@ -184,7 +184,7 @@ pub enum CagliotiKind {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct InstrumentParameterCfg {
-    pub kind: Option<CagliotiKind>,
+    pub kind: Option<InstprmKind>,
     pub u: Parameter<f64>,
     pub v: Parameter<f64>,
     pub w: Parameter<f64>,
@@ -209,16 +209,24 @@ impl InstrumentParameterCfg {
         let mut u = self.u.generate(rng);
         let mut v = self.v.generate(rng);
         let mut w = self.w.generate(rng);
-        let x = self.x.generate(rng);
-        let y = self.y.generate(rng);
-        let z = self.z.generate(rng);
+        let mut x = self.x.generate(rng);
+        let mut y = self.y.generate(rng);
+        let mut z = self.z.generate(rng);
 
-        match self.kind.unwrap_or(CagliotiKind::Raw) {
-            CagliotiKind::Raw => (),
-            CagliotiKind::GSAS => {
+        match self.kind.unwrap_or(InstprmKind::Raw) {
+            InstprmKind::Raw => (),
+            InstprmKind::GSAS => {
+                // GSAS computes FWHM in centidegrees
+                // Gaussian instrument parameters therefore are FWHM^2 coefficients in
+                // centidegrees squared. therefore scale them by 10000
                 u /= 10000.0;
                 v /= 10000.0;
                 w /= 10000.0;
+                // Lorentzian parameters are coefficients for FWHM in centidegrees,
+                // therefore they should be scaled by 100 for our purposes
+                x /= 100.0;
+                y /= 100.0;
+                z /= 100.0;
             }
         }
 
