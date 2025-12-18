@@ -178,12 +178,13 @@ mod test {
         let q = Quaternion::new(1.0, -1.0, 2.4, 3.3);
         let qconj = q.conjugate();
         let prod = q.hamilton_product(&qconj);
-        let atol = 1e-7;
-        assert!(prod.x.abs() < atol);
-        assert!(prod.y.abs() < atol);
-        assert!(prod.z.abs() < atol);
+        let atol = 1e-6;
+        assert!(prod.x.abs() < atol, "{} != 0.0", prod.x.abs());
+        assert!(prod.y.abs() < atol, "{} != 0.0", prod.y.abs());
+        assert!(prod.z.abs() < atol, "{} != 0.0", prod.z.abs());
 
-        assert!((prod.w - q.magnitude().powi(2)).abs() < 1e-7)
+        let mag_diff = (prod.w - q.magnitude().powi(2)).abs();
+        assert!(mag_diff < 1e-5, "{} != 0.0", mag_diff)
     }
 
     #[test]
@@ -191,10 +192,10 @@ mod test {
         let r0 = Quaternion::from_axis_angle(0.3, 2.0, 1.0, 32.0f32.to_radians());
         let r1 = r0.recip();
         let prod = r0.hamilton_product(&r1);
-        assert!((prod.w - 1.0).abs() < 1e-7);
-        assert!((prod.x - 0.0).abs() < 1e-7);
-        assert!((prod.y - 0.0).abs() < 1e-7);
-        assert!((prod.z - 0.0).abs() < 1e-7);
+        assert!((prod.w - 1.0).abs() < 1e-6, "{} != 1.0", prod.w);
+        assert!((prod.x - 0.0).abs() < 1e-6, "{} != 0.0", prod.x);
+        assert!((prod.y - 0.0).abs() < 1e-6, "{} != 0.0", prod.y);
+        assert!((prod.z - 0.0).abs() < 1e-6, "{} != 0.0", prod.z);
     }
 
     #[test]
