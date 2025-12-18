@@ -2,6 +2,9 @@
 
 A cuda-accelerated XRD simulation tool.
 
+## Art Credit
+The yak ASCII art was created by Joan Stark (Spunk).
+
 ## Quickstart
 To use this simulation tool, just clone this repository and build the project.
 ```bash

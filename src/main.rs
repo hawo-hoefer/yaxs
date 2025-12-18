@@ -42,7 +42,7 @@ const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulato
                jgs )--\""`             )--\"`
                    `""`                `""`
 
-#### Yak Art by Johnathan Stark (Spunk) ####"#;
+#### Yak Art by Joan Stark (Spunk) ####"#;
 
 #[derive(Parser)]
 #[command(
