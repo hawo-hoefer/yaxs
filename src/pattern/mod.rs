@@ -5,7 +5,7 @@ use itertools::Itertools;
 use log::{info, warn};
 use ndarray::{Array2, Array4};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::background::Background;
 use crate::io::PatternMeta;
@@ -135,8 +135,7 @@ pub fn get_weight_fractions(
     Some(mass_fractions.into())
 }
 
-#[derive(PartialEq, Clone, Debug, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ConcentrationSubset {
     MaxDim(usize),
     Probabilities(Vec<f64>),

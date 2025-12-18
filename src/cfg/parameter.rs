@@ -104,6 +104,15 @@ where
     }
 }
 
+impl<T> Default for Parameter<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Parameter::Fixed(T::default())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

@@ -1,6 +1,7 @@
 pub mod background;
 pub mod cfg;
 pub mod cif;
+pub mod util;
 
 pub mod element;
 pub mod io;

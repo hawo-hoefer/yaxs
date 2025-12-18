@@ -1,12 +1,18 @@
 use log::{error, warn};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::pattern::{ImpurityPeak, Peak};
+use crate::util::deserialize_positive_parameter;
 
 use super::{Parameter, Probability};
 
-#[derive(Serialize, Debug, Clone)]
+
+fn default_imp_peaks() -> usize {
+    1
+}
+
+#[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 /// Specification for a phenomenological impurity peak
 ///
@@ -18,12 +24,17 @@ use super::{Parameter, Probability};
 /// evaluated separately
 /// * `n_peaks`: number of peaks to generate
 pub struct ImpuritySpec {
+    #[serde(deserialize_with = "deserialize_positive_parameter")]
     d_hkl_ams: Parameter<f64>,
+    #[serde(deserialize_with = "deserialize_positive_parameter")]
     intensity: Parameter<f64>,
+    #[serde(deserialize_with = "deserialize_positive_parameter")]
     eta: Parameter<f64>,
+    #[serde(deserialize_with = "deserialize_positive_parameter")]
     mean_ds_nm: Parameter<f64>,
-    probability: Option<f64>,
-    n_peaks: Option<usize>,
+    probability: Option<Probability>,
+    #[serde(default = "default_imp_peaks")]
+    n_peaks: usize,
 }
 
 impl ImpuritySpec {
@@ -33,14 +44,14 @@ impl ImpuritySpec {
         eta: Parameter<f64>,
         mean_ds_nm: Parameter<f64>,
         probability: Option<Probability>,
-        n_peaks: Option<usize>,
+        n_peaks: usize,
     ) -> Self {
         Self {
             d_hkl_ams,
             intensity,
             eta,
             mean_ds_nm,
-            probability: probability.map(|p| p.into()),
+            probability,
             n_peaks,
         }
     }
@@ -74,50 +85,18 @@ impl ImpuritySpec {
     }
 }
 
-impl<'de> Deserialize<'de> for ImpuritySpec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct _ImpuritySpec {
-            d_hkl_ams: Parameter<f64>,
-            intensity: Parameter<f64>,
-            eta: Parameter<f64>,
-            mean_ds_nm: Parameter<f64>,
-            probability: Option<Probability>,
-            n_peaks: Option<usize>,
-        }
-
-        let _ImpuritySpec {
-            d_hkl_ams,
-            intensity,
-            eta,
-            mean_ds_nm,
-            probability,
-            n_peaks,
-        } = _ImpuritySpec::deserialize(deserializer)?;
-
-        Ok(ImpuritySpec::new(
-            d_hkl_ams,
-            intensity,
-            eta,
-            mean_ds_nm,
-            probability,
-            n_peaks,
-        ))
-    }
-}
-
 pub fn generate_impurities(
     impurity_specs: &[ImpuritySpec],
     rng: &mut impl Rng,
 ) -> Box<[ImpurityPeak]> {
     let mut impurity_peaks = Vec::new();
     for spec in impurity_specs.iter() {
-        for _ in 0..spec.n_peaks.unwrap_or(1) {
-            if !spec.probability.map(|p| rng.random_bool(p)).unwrap_or(true) {
+        for _ in 0..spec.n_peaks {
+            if !spec
+                .probability
+                .map(|p| rng.random_bool(p.into()))
+                .unwrap_or(true)
+            {
                 continue;
             }
             let d_hkl = spec.d_hkl_ams.generate(rng);

@@ -9,6 +9,7 @@ mod volume_fraction;
 
 use std::sync::Arc;
 
+use crate::util::{deserialize_nonzero_float, deserialize_nonzero_usize, deserialize_range};
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::{debug, info};
@@ -161,13 +162,16 @@ impl SimulationKind {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AngleDispersive {
     pub emission_lines: Box<[EmissionLine]>,
 
+    #[serde(deserialize_with = "deserialize_nonzero_usize")]
     pub n_steps: usize,
+    #[serde(deserialize_with = "deserialize_range")]
     pub two_theta_range: (f64, f64),
+    #[serde(deserialize_with = "deserialize_nonzero_float")]
     pub goniometer_radius_mm: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
@@ -175,21 +179,34 @@ pub struct AngleDispersive {
     pub background: Option<BackgroundSpec>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstprmKind {
     Raw,
     GSAS,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+impl Default for InstprmKind {
+    fn default() -> Self {
+        InstprmKind::Raw
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct InstrumentParameterCfg {
-    pub kind: Option<InstprmKind>,
+    #[serde(default)]
+    pub kind: InstprmKind,
+    #[serde(default)]
     pub u: Parameter<f64>,
+    #[serde(default)]
     pub v: Parameter<f64>,
+    #[serde(default)]
     pub w: Parameter<f64>,
+    #[serde(default)]
     pub x: Parameter<f64>,
+    #[serde(default)]
     pub y: Parameter<f64>,
+    #[serde(default)]
     pub z: Parameter<f64>,
 }
 
@@ -213,8 +230,10 @@ impl InstrumentParameterCfg {
         let mut y = self.y.generate(rng);
         let mut z = self.z.generate(rng);
 
-        match self.kind.unwrap_or(InstprmKind::Raw) {
-            InstprmKind::Raw => (),
+        match self.kind {
+            InstprmKind::Raw => {
+                // leave parameters as-is
+            }
             InstprmKind::GSAS => {
                 // GSAS computes FWHM in centidegrees
                 // Gaussian instrument parameters therefore are FWHM^2 coefficients in
@@ -234,10 +253,12 @@ impl InstrumentParameterCfg {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnergyDispersive {
+    #[serde(deserialize_with = "deserialize_nonzero_usize")]
     pub n_steps: usize,
+    #[serde(deserialize_with = "deserialize_range")]
     pub energy_range_kev: (f64, f64),
     pub theta_deg: f64,
     pub beamline: Beamline,
@@ -247,6 +268,7 @@ pub struct EnergyDispersive {
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
+    #[serde(deserialize_with = "deserialize_nonzero_usize")]
     pub n_patterns: usize,
     pub noise: Option<NoiseSpec>,
     pub texture_measurement: Option<TextureMeasurement>,
@@ -278,6 +300,7 @@ pub struct SampleParameters {
     pub concentration_subset: Option<ConcentrationSubset>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
+    #[serde(deserialize_with = "deserialize_nonzero_usize")]
     pub structure_permutations: usize,
 }
 

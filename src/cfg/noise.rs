@@ -2,10 +2,9 @@ use super::Parameter;
 use crate::noise::Noise;
 use rand::Rng;
 use serde::de::Visitor;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Serialize, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub enum NoiseSpec {
     Gaussian {
         sigma: Parameter<f64>,
