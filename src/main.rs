@@ -22,6 +22,28 @@ use yaxs::io::{
 };
 use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, VFGenerator};
 
+const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulator)
+          
+                                        _,,,_
+                   ----------       .-'`  (  '.
+               -----------       .-'    ,_  ;  \___      _,
+       --------              __.'    )   \'.__.'(:;'.__.'/
+                     __..--""       (     '.__{':');}__.'
+ ----------        .'         (    ;    (   .-|` '  |-.
+     --------     /    (       )     )      '-p     q-'
+                 (    ;     ;          ;    ; |.---.|
+      ------     ) (              (      ;    \ o  o)
+                 |  )     ;       |    )    ) /'.__/
+       ----      )    ;  )    ;   | ;       //
+        ------   ( )             _,\    ;  //
+                 ; ( ,_,,-~""~`""   \ (   //
+    -------       \_.'\\_            '.  /<_
+                   \\_)--\             \ \--\
+               jgs )--\""`             )--\"`
+                   `""`                `""`
+
+#### Yak Art by Johnathan Stark (Spunk) ####"#;
+
 #[derive(Parser)]
 #[command(
     version = env!("YAXS_VERSION"),
@@ -101,6 +123,11 @@ fn main() {
         .init();
 
     let args = Cli::parse();
+
+    if !args.io.quiet {
+        info!("{}", ARTWORK)
+    }
+
     let f = match std::fs::File::open(&args.cfg) {
         Ok(f) => f,
         Err(e) => {
@@ -141,7 +168,7 @@ Memory usage limit:  {:.3} GiB
 API version:         {}
 Runtime version:     {}
 Device ID:           {}", 
-                CUDA_DEVICE_INFO.device_name, 
+                CUDA_DEVICE_INFO.device_name,
                 CUDA_DEVICE_INFO.available_memory_bytes as f32 / 1e9,
                 CUDA_DEVICE_INFO.init_free_memory_bytes as f32 / 1e9,
                 CUDA_DEVICE_INFO.mem_limit_bytes as f32 / 1e9,

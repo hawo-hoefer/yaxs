@@ -72,6 +72,14 @@ pub struct Opts {
         help = "show simulated intensities and hkls for each phase and exit. Either 'standard' or 'structure'. If 'standard-n' or 'structure-n' is specified, intensities will be normalized."
     )]
     pub display_hkls: Option<HKLDisplayMode>,
+
+    #[arg(
+        short,
+        long,
+        help = "don't output ascii art :(",
+        default_value_t = false
+    )]
+    pub quiet: bool,
 }
 
 #[derive(PartialEq, Clone)]
