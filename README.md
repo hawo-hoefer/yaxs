@@ -97,3 +97,4 @@ Further information on the input file structure can be found [here](./inputfile.
     - [x] complete all related TODOs
     - [x] writing data to files needs to be implemented properly (mustrain etc is missing)
     - [x] improve speed some more, i think there are easy gains to be had
+- [ ] BUGFIX: not setting chunk size for large amounts of XRD patterns causes crash with unhelpful error message
