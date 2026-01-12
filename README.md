@@ -52,9 +52,10 @@ Further information on the input file structure can be found [here](./inputfile.
 - [ ] XRD pattern bonuses
     - [ ] Air Scattering
     - [x] Preferred Orientation
-        - preferred orientation with direction towards sample surface is implemented
-        - [ ] implement other directions
-        - [ ] also, how do we handle viewing angles orthogonal to the direction of the preferred orientation??
+        - [x] preferred orientation with direction relative to sample surface
+        - [x] implement other directions
+        - [x] also, how do we handle viewing angles orthogonal to the direction of the preferred orientation??
+        - implemented via Bingham orientation distribution
 - [x] rendering using cuda backend
     - [x] peak positions
     - [x] backgrounds
@@ -82,13 +83,14 @@ Further information on the input file structure can be found [here](./inputfile.
 - [x] parallel gpu job generation
 - [x] CI
     - [ ] use caching in CI to improve speed
-- [ ] add mode for only outputting peak positions
+- [x] add mode for only outputting peak positions
 - [ ] mode for adapting existing config to given data, simulation based inference mode
 - [ ] EDXRD: add fluorescence peaks?
 - [ ] EDXRD: deal with filters
-- [ ] peak intensities
+- [x] peak intensities
     - what about the computation of structure factors?
     - keep using pymatgen's version for now -> i really should understand what is going on there
+    - move to GSAS-implementation 
 - [ ] CPU backend multithreading
     - right now, the cpu backend is single threaded, which is really slow
     - `yaxs`'s use case is the generation of ML training data, so we don't really expect it to be used on devices without a GPU
