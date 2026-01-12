@@ -23,6 +23,9 @@ $ cargo install --git https://github.com/hawo-hoefer/yaxs.git --tag=<version>
 ```
 where `<version>` is the version you want to install.
 
+If you don't have a CUDA-enabled GPU on your system, use the feature flag `no-gpu`. 
+Note that compilation and installation requires a working C and NVCC compiler.
+
 Then, use
 ```bash
 $ /path/to/yaxs <path/to/configuration.yml> [options]
