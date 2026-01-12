@@ -17,6 +17,11 @@ If you want to install the program, use
 ```bash
 $ cargo install --path /path/to/yaxs/directory
 ```
+or alternatively
+```bash
+$ cargo install --git https://github.com/hawo-hoefer/yaxs.git --tag=<version>
+```
+where `<version>` is the version you want to install.
 
 Then, use
 ```bash
