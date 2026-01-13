@@ -396,12 +396,15 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
     (theta_rad * 2.0).cos().powi(2)
 }
 
+#[derive(Debug)]
 pub struct JobParams {
     pub abstol: f32,
     pub n_phases: usize,
     pub has_weight_fracs: bool,
     pub textured_phases: Option<usize>,
     pub texture_measurement: Option<TextureMeasurement>,
+    // TODO: make this a usize (but this makes indexing in peak_sim annoying)
+    pub has_biso: bool,
     pub bkg_params: Option<usize>,
 }
 
@@ -680,8 +683,8 @@ where {
             * weight;
 
         let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
-        // Gerward, Leif, S. Mo/rup, and H. Topso/e. 
-        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns." 
+        // Gerward, Leif, S. Mo/rup, and H. Topso/e.
+        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns."
         // Journal of Applied Physics 47.3 (1976): 822-825.
         //
         // DOI: <https://doi.org/10.1063/1.322714>

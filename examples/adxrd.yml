@@ -38,6 +38,7 @@ sample_parameters:
       mean_ds_nm: 15.0
       ds_eta: [0.0, 1.0]
       mustrain: {amplitude: [0, 1000], eta: [0.0, 1.0]}
+      b_iso: [0.05, 2.0]
       # volume_fraction: 0.4
     - path: ./cif/Na2CO3.cif
       strain: !Maximum 0.005

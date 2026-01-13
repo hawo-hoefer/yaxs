@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use ordered_float::NotNan;
 use rand::Rng;
 
+use crate::cfg::Parameter;
 use crate::cif::CIFContents;
 use crate::lattice::Lattice;
 use crate::math::e_kev_to_lambda_ams;
@@ -432,6 +433,22 @@ impl Structure {
                     scattering_parameters.insert(atom.clone(), scatter);
                 }
             }
+        }
+    }
+
+    pub fn randomize_b_iso(
+        &mut self,
+        randomize_b_iso: &Option<Parameter<f64>>,
+        rng: &mut impl Rng,
+    ) -> Option<f64> {
+        if let Some(range) = randomize_b_iso {
+            let b_iso = range.generate(rng);
+            for s in self.sites.iter_mut() {
+                s.displacement = Some(crate::site::AtomicDisplacement::Biso(b_iso));
+            }
+            Some(b_iso)
+        } else {
+            None
         }
     }
 }

@@ -1,8 +1,8 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::structure::Structure;
 use crate::strain::Strain;
+use crate::structure::Structure;
 
 use super::{POCfg, Parameter, VolumeFraction};
 
@@ -60,4 +60,5 @@ pub struct StructureDef {
     pub mustrain: Option<Mustrain>,
     pub mean_ds_nm: Parameter<f64>,
     pub ds_eta: Parameter<f64>,
+    pub b_iso: Option<Parameter<f64>>,
 }

@@ -195,6 +195,7 @@ pub struct EDXRDMeta {
     pub ds_eta: Box<[f64]>,
     pub mustrain: Box<[f64]>,
     pub mustrain_eta: Box<[f64]>,
+    pub random_b_iso: Option<Box<[f64]>>,
     pub theta_rad: f64,
 }
 
@@ -218,6 +219,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             weight_fractions: _,
             mustrain,
             mustrain_eta,
+            random_b_iso: _,
         } = &self.meta;
 
         itertools::izip!(
@@ -371,6 +373,16 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     ks[(pat_id, i, 3)] = phase_ks.z as f32;
                 }
             }
+            RandomBIsos(dst) => {
+                for i in 0..n_phases {
+                    let bisos = self
+                        .meta
+                        .random_b_iso
+                        .as_ref()
+                        .expect("RandomBIsos is only initialized phases have biso");
+                    dst[(pat_id, i)] = bisos[i] as f32;
+                }
+            }
         }
     }
 
@@ -402,6 +414,11 @@ impl Discretizer for DiscretizeEnergyDispersive {
         if let Some(_) = p.bkg_params {
             unreachable!("Backgrounds are currently not supported in EDXRD");
         }
+
+        if p.has_biso {
+            v.push(RandomBIsos(Array2::zeros((n_samples, p.n_phases))));
+        }
+
         v
     }
 
@@ -515,6 +532,12 @@ where
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
             bkg_params: None,
+            has_biso: self
+                .discretize_info
+                .sample_parameters
+                .structures
+                .iter()
+                .any(|x| x.b_iso.is_some()),
         }
     }
 }

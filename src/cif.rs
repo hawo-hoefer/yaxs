@@ -4,10 +4,10 @@ use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
 use log::{debug, warn};
 
+use crate::lattice::Lattice;
 use crate::site::{AtomicDisplacement, Site};
 use crate::species::Species;
 use crate::structure::SGClass;
-use crate::lattice::Lattice;
 use crate::symop::SymOp;
 
 // TODO: make this case-insensitive

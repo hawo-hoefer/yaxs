@@ -2,6 +2,7 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::mem::MaybeUninit;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use itertools::Itertools;
@@ -11,7 +12,7 @@ use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use crate::cfg::{
-    apply_strain_cfg, CompactSimResults, POGenerator, SampleParameters, StrainCfg,
+    apply_strain_cfg, CompactSimResults, POGenerator, Parameter, SampleParameters, StrainCfg,
     TextureMeasurement, ToDiscretize,
 };
 
@@ -56,6 +57,7 @@ impl<'a> Alignment<'a> {
 struct PeakSimResult {
     strain: Strain,
     po: Option<BinghamParams>,
+    random_b_iso: Option<f64>,
     peaks: PossiblyTextureMeasurementPeaks,
     struct_id: usize,
     permutation_id: usize,
@@ -65,8 +67,11 @@ struct WriteCtx {
     inner: UnsafeCell<WriteInner>,
 }
 
+const UNSET_BISO_SENTINEL_VALUE: f64 = -1.0;
+
 struct WriteInner {
     strain: Vec<Strain>,
+    b_iso: Option<Vec<f64>>,
     pos: Vec<Option<BinghamParams>>,
     peaks: Vec<MaybeUninit<Peaks>>,
     ok: Vec<bool>,
@@ -77,7 +82,12 @@ struct WriteInner {
 unsafe impl Sync for WriteCtx {}
 
 impl WriteCtx {
-    pub fn new(n_structs: usize, n_measurements: usize, n_permutations: usize) -> Self {
+    pub fn new(
+        n_structs: usize,
+        n_measurements: usize,
+        n_permutations: usize,
+        random_b_iso: bool,
+    ) -> Self {
         let n_peak_sets = n_structs * n_permutations * n_measurements;
         let n_simulations = n_structs * n_permutations;
 
@@ -87,6 +97,11 @@ impl WriteCtx {
                 strain: unsafe { uninit_vec(n_simulations) },
                 pos: unsafe { uninit_vec(n_simulations) },
                 ok: unsafe { uninit_vec(n_simulations) },
+                b_iso: if random_b_iso {
+                    Some(unsafe { uninit_vec(n_simulations) })
+                } else {
+                    None
+                },
                 n_permutations,
                 n_measurements,
             }),
@@ -101,16 +116,13 @@ impl WriteCtx {
             ok,
             n_permutations,
             n_measurements,
+            b_iso,
         } = unsafe { &mut *(self.inner.get()) };
 
         let sample_idx = p.struct_id * *n_permutations + p.permutation_id;
         match p.peaks {
             PossiblyTextureMeasurementPeaks::NoTexture(res) => {
                 assert_eq!(*n_measurements, 1, "n_measurements needs to be 1 if no texture measurement is done. this is likely a bug in yaxs.");
-
-                pos[sample_idx] = p.po;
-                strain[sample_idx] = p.strain;
-                ok[sample_idx] = true;
 
                 peaks[sample_idx] = MaybeUninit::new(res);
             }
@@ -123,11 +135,15 @@ impl WriteCtx {
 
                     peaks[idx] = MaybeUninit::new(res);
                 }
-
-                pos[sample_idx] = p.po;
-                strain[sample_idx] = p.strain.clone();
-                ok[sample_idx] = true;
             }
+        }
+
+        pos[sample_idx] = p.po;
+        strain[sample_idx] = p.strain;
+        ok[sample_idx] = true;
+
+        if let Some(b_iso) = b_iso {
+            b_iso[sample_idx] = p.random_b_iso.unwrap_or(UNSET_BISO_SENTINEL_VALUE);
         }
     }
 
@@ -144,6 +160,7 @@ impl WriteCtx {
             ok,
             n_permutations,
             n_measurements: _,
+            b_iso,
         } = self.inner.into_inner();
 
         // TODO: make this return a result instead so we can error gracefully
@@ -175,6 +192,7 @@ impl WriteCtx {
                 all_preferred_orientations: pos.into(),
                 n_permutations,
                 texture_measurement,
+                random_b_isos: b_iso.map(|x| x.into_boxed_slice()),
             }),
         }
     }
@@ -187,6 +205,7 @@ struct PeakSim {
     min_r: f64,
     max_r: f64,
     t: Option<TextureMeasurement>,
+    randomize_b_iso: Option<Parameter<f64>>,
 }
 
 #[derive(Clone)]
@@ -204,7 +223,7 @@ impl RunCtx {
         scattering_parameters: &HashMap<Atom, Scatter>,
     ) -> Result<PeakSimResult, String> {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(job.seed);
-        let Some((perm_s, strain)) = apply_strain_cfg(
+        let Some((mut perm_s, strain)) = apply_strain_cfg(
             &self.strain_cfgs[job.structure],
             &self.structs[job.structure],
             &mut rng,
@@ -214,6 +233,8 @@ impl RunCtx {
         let po = self.po_gens[job.structure]
             .as_mut()
             .map(|x| x.sample(&mut rng));
+
+        let b_iso = perm_s.randomize_b_iso(&job.randomize_b_iso, &mut rng);
 
         let peaks = if let Some(t) = job.t {
             let hkls_intensities_spacings = perm_s
@@ -251,13 +272,9 @@ impl RunCtx {
             peaks,
             struct_id: job.structure,
             permutation_id: job.permutation,
+            random_b_iso: b_iso,
         })
     }
-}
-
-enum Task {
-    Job(PeakSim),
-    Stop,
 }
 
 /// Generate Peaks for the input structures and their physical parameters.
@@ -279,6 +296,7 @@ pub fn simulate_peaks(
     structure_po_configs: Box<[Option<POGenerator>]>,
     structure_strain_configs: Box<[Option<StrainCfg>]>,
     structure_files: Box<[String]>,
+    b_iso_ranges: Box<[Option<Parameter<f64>>]>,
     texture_measurement: Option<TextureMeasurement>,
     rng: &mut impl Rng,
 ) -> Result<ToDiscretize, String> {
@@ -307,18 +325,19 @@ pub fn simulate_peaks(
         structure_files,
     };
 
-    let results = Arc::new(WriteCtx::new(
+    let results = WriteCtx::new(
         n_structs,
         n_texture_measurements,
         n_permutations,
-    ));
+        b_iso_ranges.iter().any(|x| x.is_some()),
+    );
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             if let Some(texture_measurement) = texture_measurement {
-                cuda::peak_sim_gpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, ctx, results, rng)
+                cuda::peak_sim_gpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, b_iso_ranges, ctx, results, rng)
             } else {
-                peak_sim_cpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, ctx, results, n_threads, rng)
+                peak_sim_cpu((min_r, max_r), texture_measurement, scattering_parameters, b_iso_ranges, n_structs, n_permutations, sample_parameters, ctx, results, n_threads, rng)
             }
         } else {
             peak_sim_cpu(
@@ -349,8 +368,8 @@ mod cuda {
     use rand_xoshiro::Xoshiro256PlusPlus;
 
     use crate::cfg::{
-        apply_strain_cfg, KDEApprox, POGenerator, SampleParameters, StrainCfg, TextureMeasurement,
-        ToDiscretize,
+        apply_strain_cfg, KDEApprox, POGenerator, Parameter, SampleParameters, StrainCfg,
+        TextureMeasurement, ToDiscretize,
     };
     use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::math::linalg::Vec3;
@@ -364,7 +383,9 @@ mod cuda {
     use crate::peak_sim_cuda::single_phase_weight_hkls;
     use crate::structure::{ReflectionPart, Structure};
 
-    use super::{PeakSim, PossiblyTextureMeasurementPeaks, RunCtx, WriteCtx};
+    use super::{
+        PeakSim, PossiblyTextureMeasurementPeaks, RunCtx, WriteCtx, UNSET_BISO_SENTINEL_VALUE,
+    };
 
     struct CudaBatch {
         reflection_parts: Vec<ReflectionPart>,
@@ -377,6 +398,7 @@ mod cuda {
         permuted_structures: Vec<Structure>,
         n_hkls: Vec<usize>,
         strains: Vec<Strain>,
+        random_b_isos: Option<Vec<f64>>,
         bingham_params: Vec<BinghamParams>,
         weights: Vec<f32>,
 
@@ -390,6 +412,7 @@ mod cuda {
 
     impl CudaBatch {
         fn new(
+            random_b_isos: bool,
             texture_measurement: TextureMeasurement,
             n_permutations: usize,
             chis: Vec<f32>,
@@ -408,6 +431,11 @@ mod cuda {
                 bingham_params: Vec::new(),
                 weights: Vec::new(),
                 texture_measurement,
+                random_b_isos: if random_b_isos {
+                    Some(Vec::new())
+                } else {
+                    None
+                },
 
                 chis,
                 phis,
@@ -472,14 +500,18 @@ mod cuda {
             structure: &Structure,
             struct_file: &str,
             strain_cfg: &Option<StrainCfg>,
+            b_iso_range: &Option<Parameter<f64>>,
             scattering_parameters: &HashMap<Atom, Scatter>,
             po: &mut POGenerator,
             seed: u64,
         ) -> Result<(), String> {
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-            let Some((perm_s, strain)) = apply_strain_cfg(strain_cfg, structure, &mut rng) else {
+            let Some((mut perm_s, strain)) = apply_strain_cfg(strain_cfg, structure, &mut rng)
+            else {
                 return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=struct_file));
             };
+
+            let b_iso = perm_s.randomize_b_iso(b_iso_range, &mut rng);
 
             let bingham_params = po.sample_into(&mut rng, &mut self.orientation_samples);
 
@@ -493,6 +525,9 @@ mod cuda {
             self.n_hkls_batch += n_hkl;
             self.n_hkls.push(n_hkl);
             self.strains.push(strain);
+            if let Some(b_isos) = self.random_b_isos.as_mut() {
+                b_isos.push(b_iso.unwrap_or(UNSET_BISO_SENTINEL_VALUE));
+            }
             self.permuted_structures.push(perm_s);
             // TODO: is there a better way?
             self.bingham_alignments
@@ -544,7 +579,7 @@ mod cuda {
                 self.permuted_structures.drain(..),
                 self.n_hkls.drain(..),
                 self.strains.drain(..),
-                self.bingham_params.drain(..)
+                self.bingham_params.drain(..),
             )
             .enumerate()
             {
@@ -562,6 +597,11 @@ mod cuda {
                     peaks.push(p.into_boxed_slice());
                 }
 
+                let b_iso = self
+                    .random_b_isos
+                    .as_ref()
+                    .map(|b_isos| b_isos[local_perm_id]);
+
                 hkl_pos += n_hkl;
                 unsafe {
                     results.add(PeakSimResult {
@@ -570,6 +610,7 @@ mod cuda {
                         peaks: PossiblyTextureMeasurementPeaks::Texture(peaks),
                         struct_id: self.struct_id,
                         permutation_id: local_perm_id + self.permutation_start,
+                        random_b_iso: b_iso,
                     })
                 }
             }
@@ -585,8 +626,9 @@ mod cuda {
         n_structs: usize,
         n_permutations: usize,
         sample_parameters: SampleParameters,
+        random_b_iso_ranges: Box<[Option<Parameter<f64>>]>,
         mut ctx: RunCtx,
-        results: Arc<WriteCtx>,
+        results: WriteCtx,
         rng: &mut impl Rng,
     ) -> Result<ToDiscretize, String> {
         let chis = texture_measurement
@@ -599,7 +641,15 @@ mod cuda {
             .into_iter()
             .map(|x| x as f32)
             .collect_vec();
-        let mut batch = CudaBatch::new(texture_measurement, n_permutations, chis, phis);
+        let mut batch = CudaBatch::new(
+            random_b_iso_ranges.iter().any(|x| x.is_some()),
+            texture_measurement,
+            n_permutations,
+            chis,
+            phis,
+        );
+
+        let results = Arc::new(results);
 
         for struct_id in 0..n_structs {
             let Some(ref mut po) = ctx.po_gens[struct_id] else {
@@ -611,6 +661,7 @@ mod cuda {
                             seed: rng.random(),
                             min_r,
                             max_r,
+                            randomize_b_iso: random_b_iso_ranges[struct_id].clone(),
                             t: None,
                         },
                         &scattering_parameters,
@@ -632,6 +683,7 @@ mod cuda {
                     &ctx.structs[struct_id],
                     &ctx.structure_files[struct_id],
                     &ctx.strain_cfgs[struct_id],
+                    &random_b_iso_ranges[struct_id],
                     &scattering_parameters,
                     po,
                     seed,
@@ -654,19 +706,37 @@ mod cuda {
     }
 }
 
-fn peak_sim_cpu(
-    (min_r, max_r): (f64, f64),
-    texture_measurement: Option<TextureMeasurement>,
-    scattering_parameters: HashMap<Atom, Scatter>,
-    n_structs: usize,
-    n_permutations: usize,
-    sample_parameters: SampleParameters,
-    mut ctx: RunCtx,
-    results: Arc<WriteCtx>,
-    n_threads: usize,
-    rng: &mut impl Rng,
-) -> Result<ToDiscretize, String> {
-    if n_threads == 1 {
+mod cpu {
+    use itertools::Itertools;
+    use log::{debug, info};
+    use rand::{Rng, SeedableRng};
+    use rand_xoshiro::Xoshiro256PlusPlus;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use crate::cfg::{Parameter, SampleParameters, TextureMeasurement};
+    use crate::peak_sim::PeakSim;
+    use crate::scatter::Scatter;
+    use crate::species::Atom;
+
+    use super::{RunCtx, WriteCtx};
+
+    enum Task {
+        Job(PeakSim),
+        Stop,
+    }
+
+    pub fn simulate_single_threaded(
+        n_structs: usize,
+        n_permutations: usize,
+        rng: &mut impl Rng,
+        (min_r, max_r): (f64, f64),
+        texture_measurement: Option<TextureMeasurement>,
+        b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+        scattering_parameters: HashMap<Atom, Scatter>,
+        ctx: &mut RunCtx,
+        results: WriteCtx,
+    ) -> Result<WriteCtx, String> {
         info!("Running single-threaded peak simulation");
 
         for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
@@ -677,14 +747,31 @@ fn peak_sim_cpu(
                 min_r,
                 max_r,
                 t: texture_measurement,
+                randomize_b_iso: b_iso_ranges[struct_id],
             };
             let p = ctx.run(job, &scattering_parameters)?;
             unsafe { results.add(p) };
         }
-    } else {
+
+        Ok(results)
+    }
+
+    pub fn simulate_multi_threaded(
+        n_structs: usize,
+        n_permutations: usize,
+        rng: &mut impl Rng,
+        (min_r, max_r): (f64, f64),
+        texture_measurement: Option<TextureMeasurement>,
+        b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+        scattering_parameters: HashMap<Atom, Scatter>,
+        n_threads: usize,
+        ctx: &mut RunCtx,
+        results: WriteCtx,
+    ) -> Result<WriteCtx, String> {
         let (job_sender, job_receiver) = crossbeam_channel::unbounded();
         info!("Launching {n_threads} threads for peak simulation");
 
+        let results = Arc::new(results);
         let handles = (0..n_threads)
             .map(|i| {
                 let results = Arc::clone(&results);
@@ -721,9 +808,7 @@ fn peak_sim_cpu(
             })
             .collect_vec();
 
-        for (struct_id, permutation_id) in
-            (0..n_structs).cartesian_product(0..sample_parameters.structure_permutations)
-        {
+        for (struct_id, permutation_id) in (0..n_structs).cartesian_product(0..n_permutations) {
             let job = PeakSim {
                 structure: struct_id,
                 permutation: permutation_id,
@@ -731,6 +816,7 @@ fn peak_sim_cpu(
                 min_r,
                 max_r,
                 t: texture_measurement,
+                randomize_b_iso: b_iso_ranges[struct_id],
             };
             let _ = job_sender.send(Task::Job(job));
         }
@@ -748,9 +834,52 @@ fn peak_sim_cpu(
             })??;
         }
 
-        debug!("All simulation threads joined")
-    }
+        debug!("All simulation threads joined");
 
-    let results = Arc::into_inner(results).expect("no more references to write context");
+        Ok(Arc::into_inner(results)
+            .expect("all threads are joined, therefore no more shared references alive"))
+    }
+}
+
+fn peak_sim_cpu(
+    (min_r, max_r): (f64, f64),
+    texture_measurement: Option<TextureMeasurement>,
+    scattering_parameters: HashMap<Atom, Scatter>,
+    b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+    n_structs: usize,
+    n_permutations: usize,
+    sample_parameters: SampleParameters,
+    mut ctx: RunCtx,
+    results: WriteCtx,
+    n_threads: usize,
+    rng: &mut impl Rng,
+) -> Result<ToDiscretize, String> {
+    let results = if n_threads == 1 {
+        cpu::simulate_single_threaded(
+            n_structs,
+            n_permutations,
+            rng,
+            (min_r, max_r),
+            texture_measurement,
+            b_iso_ranges,
+            scattering_parameters,
+            &mut ctx,
+            results,
+        )?
+    } else {
+        cpu::simulate_multi_threaded(
+            n_structs,
+            n_permutations,
+            rng,
+            (min_r, max_r),
+            texture_measurement,
+            b_iso_ranges,
+            scattering_parameters,
+            n_threads,
+            &mut ctx,
+            results,
+        )?
+    };
+
     Ok(results.make_to_discretize(ctx.structs, sample_parameters, texture_measurement))
 }

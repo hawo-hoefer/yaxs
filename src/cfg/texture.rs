@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
 #[serde(deny_unknown_fields)]
@@ -49,8 +49,6 @@ impl IntoIterator for Linspace {
     }
 }
 
-
-
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
 #[serde(deny_unknown_fields)]
 pub struct TextureMeasurement {
@@ -63,5 +61,3 @@ impl TextureMeasurement {
         self.chi.steps * self.phi.steps
     }
 }
-
-

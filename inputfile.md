@@ -131,7 +131,9 @@ sample_parameters:
         sampling: {n: 128, kappa: 20}
       strain: !Maximum 0.01                             # optional strain specification
       volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
-    - path: phase-3.cif
+    - path: phase-3-with-random-b-iso.cif
+      b_iso: [0.5, 2.0]                                 # random b-iso range
+      # b_iso: 1.0                                      # alternatively: fixed b-iso
 ```
 ### Subsets
 If `concentration_subset` is set to a single value, a random number of composition components will be set
@@ -230,6 +232,20 @@ it's Bingham distribution is sampled. The distribution of HKL directions are app
 using a kernel density estimation over directions (using a Von Mises-Fisher-Distribution).
 The KDE-Parameters n (number of samples) and kappa (kernel width) can be specified using
 the `sampling` key.
+
+### Randomizing Atomic Displacement Parameters
+It is possible to randomize atomic displacement parameters, as implemented in [Simonnet 2024](https://doi.org/10.1107/S2052252524006766). 
+To to this, you may specify `b_iso` per structure (as a parameter, either a range or fixed value).
+```yaml
+- path: phase-with-random-b-iso.cif
+  b_iso: [0.5, 2.0]                    # random b-iso range
+  # b_iso: 1.0                         # alternatively: fixed b-iso
+```
+This is not physically accurate, but the authors of the above paper were able to get improved results with it.
+Ideally, we would implement symmetry-aware per-site randomization, but that requires new data structures for 
+saving the generated values, so the low-complexity version is done for now.
+In the output data (field `random_b_iso`), structures where b-iso values are unchanged from the cif are indicated by the sentinel value -1.
+
 
 ## 3. Simulation Parameters
 Here, simulation specific parameters are set.

@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use rand::Rng;
 
-use crate::math::linalg::{ColVec, Mat};
 use super::linalg::Vec4;
+use crate::math::linalg::{ColVec, Mat};
 
 /// sample uniformly from the surface of the DIMS-sphere
 ///
@@ -455,4 +455,3 @@ pub fn uniform_sample_no_replacement_knuth(
     }
     samples
 }
-

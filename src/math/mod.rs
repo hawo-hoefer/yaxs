@@ -1,7 +1,7 @@
 pub mod funcs;
 
 pub mod linalg;
-pub mod stats;
 pub mod quaternion;
+pub mod stats;
 
 pub use funcs::*;

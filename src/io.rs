@@ -87,6 +87,7 @@ pub enum PatternMeta {
     Strains(Array3<f32>),
     VolumeFractions(Array2<f32>),
     WeightFractions(Array2<f32>),
+    RandomBIsos(Array2<f32>),
     DsEtas(Array2<f32>),
     Mustrains(Array2<f32>),
     MustrainEtas(Array2<f32>),
@@ -146,6 +147,7 @@ impl PatternMeta {
                 Self::push_arr(w, orientations, "bingham_odf_orientations", meta_names)?;
                 Self::push_arr(w, ks, "bingham_odf_ks", meta_names)
             }
+            RandomBIsos(x) => Self::push_arr(w, x, "random_b_isos", meta_names),
         }
     }
 }

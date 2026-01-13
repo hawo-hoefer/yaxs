@@ -17,6 +17,7 @@ pub struct ADXRDMeta {
     pub ds_eta: Box<[f64]>,
     pub mustrain: Box<[f64]>,
     pub mustrain_eta: Box<[f64]>,
+    pub random_b_iso: Option<Box<[f64]>>,
     pub instrument_parameters: InstrumentParameters,
     pub sample_displacement_mu_m: f64,
     pub background: Background,
@@ -98,6 +99,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             ds_eta,
             mustrain,
             mustrain_eta,
+            random_b_iso: _,
         } = &self.meta;
 
         itertools::izip!(
@@ -280,6 +282,12 @@ impl Discretizer for DiscretizeAngleDispersive {
                     dst[(pat_id, i)] = self.meta.mustrain_eta[i] as f32;
                 }
             },
+            RandomBIsos(dst) => {
+                for i in 0..n_phases {
+                    let bisos = self.meta.random_b_iso.as_ref().expect("RandomBIsos is only initialized phases have biso");
+                    dst[(pat_id, i)] = bisos[i] as f32;
+                }
+            },
         }
     }
 
@@ -317,6 +325,11 @@ impl Discretizer for DiscretizeAngleDispersive {
                 ks: Array3::zeros((n_samples, n, 4)),
             });
         }
+
+        if p.has_biso {
+            v.push(RandomBIsos(Array2::zeros((n_samples, p.n_phases))));
+        }
+
         v
     }
 
@@ -432,6 +445,12 @@ where
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
             bkg_params: self.cfg.background.as_ref().map(|x| x.n_coefs()),
+            has_biso: self
+                .discretize_info
+                .sample_parameters
+                .structures
+                .iter()
+                .any(|x| x.b_iso.is_some()),
         }
     }
 }

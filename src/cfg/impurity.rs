@@ -7,7 +7,6 @@ use crate::util::deserialize_positive_parameter;
 
 use super::{Parameter, Probability};
 
-
 fn default_imp_peaks() -> usize {
     1
 }

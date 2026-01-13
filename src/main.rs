@@ -200,6 +200,7 @@ Device ID:           {}",
     let mut strain_cfgs = Vec::new();
     let mut structure_paths = Vec::new();
     let mut vf_constraints = Vec::new();
+    let mut b_iso_params = Vec::new();
 
     for StructureDef {
         path,
@@ -209,6 +210,7 @@ Device ID:           {}",
         mean_ds_nm,
         ds_eta: _,
         mustrain: _,
+        b_iso,
     } in cfg.sample_parameters.structures.iter()
     {
         let mut struct_path = args
@@ -250,8 +252,9 @@ Device ID:           {}",
             std::process::exit(1);
         }
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
-        vf_constraints.push(*volume_fraction);
+        vf_constraints.push(volume_fraction.clone());
         strain_cfgs.push(strain.clone());
+        b_iso_params.push(b_iso.clone());
         let po_gen = po.as_ref().map(|x| {
             x.try_into_generator(&mut rng).unwrap_or_else(|x| {
                 error!(
@@ -284,6 +287,7 @@ Device ID:           {}",
             pref_o.into(),
             strain_cfgs.into(),
             structure_paths.clone().into(),
+            b_iso_params.clone().into(),
             cfg.sample_parameters.clone(),
             cfg.simulation_parameters.texture_measurement,
             &mut rng,
@@ -418,8 +422,6 @@ Device ID:           {}",
             }
         }
     }
-
-    // IOption<RandomlyScalePeaks>,
 
     prepare_output_directory(&args.io)
         .map_err(|err| {

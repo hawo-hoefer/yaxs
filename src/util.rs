@@ -48,7 +48,6 @@ where
     Ok(val)
 }
 
-
 pub fn deserialize_nonzero_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
 where
     D: Deserializer<'de>,

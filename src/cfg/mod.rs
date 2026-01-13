@@ -110,6 +110,7 @@ impl SimulationKind {
         pref_o: Box<[Option<POGenerator>]>,
         strain_cfgs: Box<[Option<StrainCfg>]>,
         structure_paths: Box<[String]>,
+        b_iso_ranges: Box<[Option<Parameter<f64>>]>,
         sample_parameters: SampleParameters,
         texture_measurement: Option<TextureMeasurement>,
         rng: &mut impl Rng,
@@ -156,6 +157,7 @@ impl SimulationKind {
             pref_o,
             strain_cfgs,
             structure_paths,
+            b_iso_ranges,
             texture_measurement,
             rng,
         )
@@ -310,7 +312,7 @@ pub struct Sample {
     mustrain: Box<[f64]>,
     mustrain_eta: Box<[f64]>,
     impurity_peaks: Box<[ImpurityPeak]>,
-    struct_ids: Box<[usize]>,
+    permutation_ids: Box<[usize]>,
 }
 
 impl SampleParameters {
@@ -368,7 +370,7 @@ impl SampleParameters {
             ds_eta,
             mean_ds_nm,
             impurity_peaks,
-            struct_ids,
+            permutation_ids: struct_ids,
             mustrain,
             mustrain_eta,
         }
@@ -385,6 +387,7 @@ impl SampleParameters {
 pub struct CompactSimResults {
     pub all_simulated_peaks: Box<[Peaks]>,
     pub all_strains: Box<[Strain]>,
+    pub random_b_isos: Option<Box<[f64]>>,
     pub all_preferred_orientations: Box<[Option<BinghamParams>]>,
     pub n_permutations: usize,
     pub texture_measurement: Option<TextureMeasurement>,
@@ -400,7 +403,6 @@ pub struct ToDiscretize {
     pub structures: Arc<[Structure]>,
     pub sample_parameters: SampleParameters,
     pub sim_res: Arc<CompactSimResults>,
-    // pub simulation_parameters: SimulationParameters,
 }
 
 impl ToDiscretize {
@@ -424,7 +426,7 @@ impl ToDiscretize {
         let Sample {
             mean_ds_nm,
             impurity_peaks,
-            struct_ids,
+            permutation_ids,
             ds_eta,
             mustrain,
             mustrain_eta,
@@ -440,11 +442,13 @@ impl ToDiscretize {
         let vol_fractions = vf_generator.generate(rng);
         let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
 
+        let random_b_iso = self.get_random_b_iso(&permutation_ids);
+
         DiscretizeAngleDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
                 impurity_peaks,
-                indices: struct_ids,
+                indices: permutation_ids,
                 random_seed: rng.random(),
                 noise: simulation_parameters
                     .noise
@@ -470,6 +474,7 @@ impl ToDiscretize {
                     .map(|x| x.generate(rng))
                     .unwrap_or(InstrumentParameters::zero()),
                 background,
+                random_b_iso,
             },
         }
     }
@@ -484,7 +489,7 @@ impl ToDiscretize {
         let Sample {
             mean_ds_nm,
             impurity_peaks,
-            struct_ids,
+            permutation_ids,
             ds_eta,
             mustrain,
             mustrain_eta,
@@ -492,11 +497,12 @@ impl ToDiscretize {
 
         let vol_fractions = vf_generator.generate(rng);
         let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
+        let random_b_iso = self.get_random_b_iso(&permutation_ids);
 
         DiscretizeEnergyDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
-                indices: struct_ids,
+                indices: permutation_ids,
                 impurity_peaks,
                 noise: simulation_parameters
                     .noise
@@ -514,8 +520,21 @@ impl ToDiscretize {
                 ds_eta,
                 mustrain,
                 mustrain_eta,
+                random_b_iso,
             },
         }
+    }
+
+    fn get_random_b_iso(&self, permutation_ids: &[usize]) -> Option<Box<[f64]>> {
+        let n_permutations = self.sample_parameters.structure_permutations;
+        self.sim_res.random_b_isos.as_ref().map(|bisos| {
+            permutation_ids
+                .iter()
+                .enumerate()
+                .map(|(struct_id, pid)| bisos[struct_id * n_permutations + *pid])
+                .collect_vec()
+                .into_boxed_slice()
+        })
     }
 }
 

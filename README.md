@@ -51,7 +51,15 @@ Further information on the input file structure can be found [here](./inputfile.
     - [ ] fix 'invalid resource handle' bug in CUDA when compiling with rustc 1.89
     - [ ] not setting chunk size for large amounts of XRD patterns causes crash with unhelpful error message
 - [ ] DOCS: find some way to add example cifs into repo that does not infringe on someones copyright
+- [x] DOCS: document randomized atomic displacement factors 
 - [ ] CI: improve CI speed using caching
+- [x] optionally randomize atomic displacement factors
+    - current randomization generates one B-Iso factor per structure
+    - one factor per site in cif seems like the correct thing to do to respect symmetries of the structure
+    - however, [Simonnet et al. (2023)](https://doi.org/10.1107/S2052252524006766) were able to get
+        good results with per-phase randomization
+    - dealing with per-site displacement factors requires a specialized data saving scheme, because each structure can have different amounts of sites
+    - furthermore, if no symetry relations are input in the cif, and each site is just entered manually, this does not respect symmetries of the structure at all, and a mechanism should be implemented to do that
 - [x] Parse Structure from CIF
     - [x] implement parsing of CIF to HashMap and Vector of Tables
     - [x] Map HashMap / Vector of Tables to Structure
