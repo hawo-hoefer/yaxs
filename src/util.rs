@@ -85,3 +85,11 @@ where
 
     Ok((lo, hi))
 }
+
+pub fn deserialize_angle_rad_to_deg<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let angle = f64::deserialize(deserializer)?;
+    Ok(angle.to_radians())
+}

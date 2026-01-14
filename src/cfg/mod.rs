@@ -9,7 +9,10 @@ mod volume_fraction;
 
 use std::sync::Arc;
 
-use crate::util::{deserialize_nonzero_float, deserialize_nonzero_usize, deserialize_range};
+use crate::util::{
+    deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
+    deserialize_range,
+};
 use background::BackgroundSpec;
 use impurity::{generate_impurities, ImpuritySpec};
 use log::{debug, info};
@@ -164,6 +167,10 @@ impl SimulationKind {
     }
 }
 
+fn default_monochromator_angle() -> f64 {
+    0.0
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AngleDispersive {
@@ -175,6 +182,13 @@ pub struct AngleDispersive {
     pub two_theta_range: (f64, f64),
     #[serde(deserialize_with = "deserialize_nonzero_float")]
     pub goniometer_radius_mm: f64,
+
+    #[serde(
+        rename = "monochromator_angle_deg",
+        default = "default_monochromator_angle",
+        deserialize_with = "deserialize_angle_rad_to_deg"
+    )]
+    pub monochromator_angle: f64,
 
     pub sample_displacement_mu_m: Option<Parameter<f64>>,
     pub instrument_parameters: Option<InstrumentParameterCfg>,
@@ -421,6 +435,7 @@ impl ToDiscretize {
             two_theta_range: _,
             goniometer_radius_mm,
             sample_displacement_mu_m,
+            monochromator_angle,
         } = angle_dispersive;
 
         let Sample {
@@ -476,6 +491,7 @@ impl ToDiscretize {
                 background,
                 random_b_iso,
             },
+            monochromator_angle_rad: *monochromator_angle,
         }
     }
 

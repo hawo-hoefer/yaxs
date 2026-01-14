@@ -76,7 +76,7 @@ pub fn scherrer_broadening_edxrd(theta_rad: f64, mean_ds: f64) -> f64 {
 ///
 /// * `theta_rad`: position to compute correction for
 pub fn lorentz_factor(theta_rad: f64) -> f64 {
-    (1.0 + theta_rad.cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
+    (1.0 + (theta_rad * 2.0).cos().powi(2)) / ((theta_rad / 2.0).sin() * theta_rad.sin())
 }
 
 pub fn gauss(dx: f32, sigma: f32) -> f32 {

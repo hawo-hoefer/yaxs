@@ -8,7 +8,7 @@ use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
-use crate::pattern::lorentz_polarization_factor;
+use crate::pattern::lorentz_polarization_factor_edxrd;
 
 use super::{
     DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak, PeakRenderParams,
@@ -209,7 +209,7 @@ pub struct DiscretizeEnergyDispersive {
 
 impl Discretizer for DiscretizeEnergyDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
-        let f_lorentz = lorentz_polarization_factor(self.meta.theta_rad);
+        let f_lorentz = lorentz_polarization_factor_edxrd(self.meta.theta_rad);
 
         let EDXRDMeta {
             vol_fractions,

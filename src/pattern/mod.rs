@@ -383,13 +383,35 @@ impl VFGenerator {
     }
 }
 
-pub fn lorentz_polarization_factor(theta_rad: f64) -> f64 {
-    // TODO: revisit lorentz polarization. currently, we assume no polarization due to
-    // monochromator. is that correct?
-    // let lorentz_factor = 1.0 / (4.0 * theta_rad.sin().powi(2) * theta_rad.cos());
-    // let polarization_factor = 0.5 * (1.0 + (2.0 * theta_rad).cos().powi(2));
+/// compute the lorentz polarization factor for a reflection
+/// without a monochromator
+///
+/// see Cullity 1978, Elements of X-Ray Diffraction (ISBN 0201011743)
+/// Page 128
+///
+/// * `theta_rad`: bragg angle in radians
+pub fn lorentz_polarization_factor_edxrd(theta_rad: f64) -> f64 {
+    let polarization_fac = 1.0 + (2.0 * theta_rad).cos().powi(2);
+    let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
 
-    (1.0 + (2.0 * theta_rad).cos().powi(2)) / (theta_rad.sin().powi(2) * theta_rad.cos())
+    lorentz_fac * polarization_fac
+}
+
+/// compute the lorentz polarization factor for a reflection
+///
+/// see Cullity 1978, Elements of X-Ray Diffraction (ISBN 0201011743)
+///
+/// * `theta_rad`: bragg angle in radians
+/// * `alpha_rad`: monochromator angle in radians
+pub fn lorentz_polarization_factor(theta_rad: f64, alpha_rad: f64) -> f64 {
+    // Cullity 1978 P. 172
+    let polarization_fac = (1.0 + (2.0 * alpha_rad).cos() * (2.0 * theta_rad).cos().powi(2))
+        / (1.0 + (2.0 * alpha_rad).cos().powi(2));
+
+    // Cullity 1978 P. 128
+    let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
+
+    lorentz_fac * polarization_fac
 }
 
 fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
@@ -586,6 +608,7 @@ impl Peak {
         weight: f64,
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
+        monochromator_angle_rad: f64,
     ) -> PeakRenderParams {
         // bragg condition
         // lambda = 2 d sin(theta)
@@ -603,7 +626,7 @@ impl Peak {
             theta_hkl_rad + sd_delta_theta_rad
         };
 
-        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad);
+        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad, monochromator_angle_rad);
 
         // use names from GSAS for now
         // size and microstrain broadening fwhms
@@ -630,7 +653,7 @@ impl Peak {
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
-        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(2) * weight) as f32;
+        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
 
         PeakRenderParams {
             pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,

@@ -85,6 +85,7 @@ pub struct DiscretizeAngleDispersive {
     pub normalize: bool,
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
+    pub monochromator_angle_rad: f64,
 }
 
 impl Discretizer for DiscretizeAngleDispersive {
@@ -131,6 +132,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                             vf * emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
+                            self.monochromator_angle_rad,
                         )
                     })
             },
@@ -152,6 +154,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                         emission_line.weight,
                         *sample_displacement_mu_m,
                         self.goniometer_radius_mm,
+                            self.monochromator_angle_rad
                     )
                 }),
         )

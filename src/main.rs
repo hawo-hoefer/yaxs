@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::InstrumentParameters;
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor, lorentz_polarization_factor_edxrd};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
@@ -338,6 +338,7 @@ Device ID:           {}",
                                 1.0,
                                 sd,
                                 ad.goniometer_radius_mm,
+                                ad.monochromator_angle,
                             );
 
                             let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
@@ -345,7 +346,7 @@ Device ID:           {}",
                         }
                         SimulationKind::EnergyDispersive(energy_dispersive) => {
                             let theta_rad = energy_dispersive.theta_deg.to_radians();
-                            let f_lorentz = lorentz_polarization_factor(theta_rad);
+                            let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
                             let rp = p.get_edxrd_render_params(
                                 theta_rad,
                                 f_lorentz,

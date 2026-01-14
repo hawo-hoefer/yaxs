@@ -570,7 +570,7 @@ loop_
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
                 (pos, intensity)
             })
             .collect_vec();
@@ -602,6 +602,7 @@ loop_
                     1.0,
                     0.0,
                     180.0,
+                    0.0,
                 );
                 (pos, intensity)
             })
