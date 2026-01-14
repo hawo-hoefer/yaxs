@@ -335,22 +335,46 @@ pub fn simulate_peaks(
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             if let Some(texture_measurement) = texture_measurement {
-                cuda::peak_sim_gpu((min_r, max_r), texture_measurement, scattering_parameters, n_structs, n_permutations, sample_parameters, b_iso_ranges, ctx, results, rng)
+                cuda::peak_sim_gpu(
+                    (min_r, max_r),
+                    texture_measurement,
+                    scattering_parameters,
+                    n_structs,
+                    n_permutations,
+                    sample_parameters,
+                    b_iso_ranges,
+                    ctx,
+                    results,
+                    rng
+                )
             } else {
-                peak_sim_cpu((min_r, max_r), texture_measurement, scattering_parameters, b_iso_ranges, n_structs, n_permutations, sample_parameters, ctx, results, n_threads, rng)
+                peak_sim_cpu(
+                    (min_r, max_r),
+                    texture_measurement,
+                    scattering_parameters,
+                    b_iso_ranges,
+                    n_structs,
+                    n_permutations,
+                    sample_parameters,
+                    ctx,
+                    results,
+                    n_threads,
+                    rng
+                )
             }
         } else {
             peak_sim_cpu(
                 (min_r, max_r),
                 texture_measurement,
                 scattering_parameters,
+                b_iso_ranges,
                 n_structs,
                 n_permutations,
                 sample_parameters,
                 ctx,
                 results,
                 n_threads,
-                rng,
+                rng
             )
         }
     }
