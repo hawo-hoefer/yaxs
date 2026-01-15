@@ -2,11 +2,10 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::mem::MaybeUninit;
-use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use itertools::Itertools;
-use log::{debug, error, info};
+use log::{error, info};
 use ordered_float::NotNan;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -738,7 +737,7 @@ mod cpu {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::cfg::{Parameter, SampleParameters, TextureMeasurement};
+    use crate::cfg::{Parameter, TextureMeasurement};
     use crate::peak_sim::PeakSim;
     use crate::scatter::Scatter;
     use crate::species::Atom;

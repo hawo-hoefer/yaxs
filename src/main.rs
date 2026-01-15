@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::InstrumentParameters;
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor, lorentz_polarization_factor_edxrd};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
