@@ -17,6 +17,7 @@ pub mod species;
 pub mod strain;
 pub mod structure;
 pub mod symop;
+pub mod absorption;
 
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;
