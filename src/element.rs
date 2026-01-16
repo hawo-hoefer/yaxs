@@ -31,6 +31,14 @@ impl Element {
         *self as u8 + 1
     }
 
+    /// get the mass attenuation coefficient at a given energy
+    ///
+    /// * `energy_kev`:
+    pub fn mac_at_energy(&self, energy_kev: f64) -> Option<f64> {
+        let mac = crate::absorption::get_mac(*self)?;
+        mac.interpolate(energy_kev)
+    }
+
     /// return the atomic weight  
     ///
     /// this implements data from table 2 provided at
