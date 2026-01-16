@@ -154,7 +154,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                         emission_line.weight,
                         *sample_displacement_mu_m,
                         self.goniometer_radius_mm,
-                            self.monochromator_angle_rad
+                        self.monochromator_angle_rad,
                     )
                 }),
         )
