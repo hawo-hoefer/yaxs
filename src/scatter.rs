@@ -73,7 +73,7 @@
 use log::warn;
 
 use crate::element::Element;
-use crate::species::Atom;
+use crate::site::Atom;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scatter {

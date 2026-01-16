@@ -3,6 +3,7 @@ pub mod cfg;
 pub mod cif;
 pub mod util;
 
+pub mod absorption;
 pub mod element;
 pub mod io;
 pub mod lattice;
@@ -13,11 +14,9 @@ pub mod peak_sim;
 pub mod preferred_orientation;
 pub mod scatter;
 pub mod site;
-pub mod species;
 pub mod strain;
 pub mod structure;
 pub mod symop;
-pub mod absorption;
 
 #[cfg(feature = "use-gpu")]
 pub mod discretize_cuda;

@@ -5,8 +5,7 @@ use itertools::Itertools;
 use log::{debug, warn};
 
 use crate::lattice::Lattice;
-use crate::site::{AtomicDisplacement, Site};
-use crate::species::Species;
+use crate::site::{AtomicDisplacement, Site, SiteLabel};
 use crate::structure::SGClass;
 use crate::symop::SymOp;
 
@@ -368,7 +367,7 @@ impl<'a> CIFContents<'a> {
             .find(|t: &&Table| t.contains_key("_atom_site_aniso_label"));
 
         let site_at_index = |i: usize| -> Result<Site, String> {
-            let sp: Species = match &site_table["_atom_site_type_symbol"][i] {
+            let sl: SiteLabel = match &site_table["_atom_site_type_symbol"][i] {
                 Value::Text(label) => label.parse().unwrap(),
                 v => return Err(format!("Invalid _atom_site_type_symbol: {v}")),
             };
@@ -425,7 +424,7 @@ impl<'a> CIFContents<'a> {
             });
 
             Ok(Site {
-                species: sp,
+                site_label: sl,
                 coords,
                 occu,
                 displacement: adp,
@@ -444,7 +443,7 @@ impl<'a> CIFContents<'a> {
                         .sum::<f64>()
                         < SITE_DIST_TOL.powi(2);
 
-                    inside_dist_tol && (ps.species == site.species) && (ps.occu == site.occu)
+                    inside_dist_tol && (ps.site_label == site.site_label) && (ps.occu == site.occu)
                 })
                 .any(|x| x)
         }
@@ -462,7 +461,7 @@ impl<'a> CIFContents<'a> {
             for op in symops.iter() {
                 let s = Site {
                     coords: op.apply(&base_site.coords),
-                    species: base_site.species.clone(),
+                    site_label: base_site.site_label.clone(),
                     occu: base_site.occu,
                     displacement: match base_site.displacement {
                         Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
@@ -1153,7 +1152,7 @@ loop_
         assert_eq!(
             &Site {
                 coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Na+".parse().unwrap(),
+                site_label: "Na+".parse().unwrap(),
                 occu: 0.25,
                 displacement: None,
             },
@@ -1163,7 +1162,7 @@ loop_
         assert_eq!(
             &Site {
                 coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Fe-".parse().unwrap(),
+                site_label: "Fe-".parse().unwrap(),
                 occu: 0.75,
                 displacement: None,
             },

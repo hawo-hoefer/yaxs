@@ -14,8 +14,7 @@ use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
-use crate::site::Site;
-use crate::species::Atom;
+use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -199,7 +198,7 @@ impl Structure {
                 .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
                 .unwrap_or(1.0);
 
-            for atom in &site.species {
+            for atom in &site.site_label {
                 let scatter = &scattering_parameters[atom];
                 let fs = scatter.eval(sin_theta_over_lambda);
 
@@ -425,7 +424,7 @@ impl Structure {
 
     pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
         for site in self.sites.iter() {
-            for atom in &site.species {
+            for atom in &site.site_label {
                 if !scattering_parameters.contains_key(atom) {
                     let scatter = atom.scattering_params().expect(
                         format!("Could not find atomic scattering parameter for {atom}").as_str(),

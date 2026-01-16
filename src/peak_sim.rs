@@ -19,7 +19,7 @@ use crate::math::linalg::Vec3;
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 use crate::scatter::Scatter;
-use crate::species::Atom;
+use crate::site::Atom;
 use crate::strain::Strain;
 use crate::structure::Structure;
 use crate::uninit_vec;
@@ -400,7 +400,7 @@ mod cuda {
     use crate::peak_sim::PeakSimResult;
     use crate::preferred_orientation::BinghamParams;
     use crate::scatter::Scatter;
-    use crate::species::Atom;
+    use crate::site::Atom;
     use crate::strain::Strain;
 
     use crate::peak_sim_cuda::single_phase_weight_hkls;
@@ -740,7 +740,7 @@ mod cpu {
     use crate::cfg::{Parameter, TextureMeasurement};
     use crate::peak_sim::PeakSim;
     use crate::scatter::Scatter;
-    use crate::species::Atom;
+    use crate::site::Atom;
 
     use super::{RunCtx, WriteCtx};
 
