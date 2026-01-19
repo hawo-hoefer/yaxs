@@ -15,10 +15,10 @@ use yaxs::structure::Structure;
 
 use log::{error, info, warn};
 
-use yaxs::cfg::{Config, SimulationKind, StructureDef};
+use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
 use yaxs::io::{
-    self, prepare_output_directory, render_write_chunked, write_to_npz, OutputNames,
-    SimulationMetadata,
+    self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
+    OutputNames, SimulationMetadata,
 };
 use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, VFGenerator};
 
@@ -111,6 +111,123 @@ impl CologStyle for CustomPrefix {
             log::Level::Info => msg.green().to_string(),
             log::Level::Debug => msg.bright_purple().to_string(),
             log::Level::Trace => msg.white().to_string(),
+        }
+    }
+}
+
+fn display_hkls(
+    to_discretize: ToDiscretize,
+    cfg: Config,
+    structure_paths: &[String],
+    mode: HKLDisplayMode,
+) {
+    info!("Displaying HKLs");
+
+    for i in 0..to_discretize.structures.len() {
+        let idx = to_discretize.sim_res.idx(i, 0);
+        let s = &to_discretize.sample_parameters.structures[i];
+        let mean_ds_nm = s.mean_ds_nm.mean();
+        let ds_eta = s.ds_eta.mean();
+        let mustrain = s
+            .mustrain
+            .as_ref()
+            .map(|x| x.amplitude.mean())
+            .unwrap_or(0.0);
+        let mustrain_eta = s.mustrain.as_ref().map(|x| x.eta.mean()).unwrap_or(0.0);
+
+        info!("======= Structure {} =======", structure_paths[i]);
+        let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
+            .iter_peaks()
+            .map(|p| {
+                let (pos, intens) = match &cfg.kind {
+                    SimulationKind::AngleDispersive(ad) => {
+                        let wavelength_ams = ad.emission_lines[0].wavelength_ams;
+                        let caglioti = ad
+                            .instrument_parameters
+                            .as_ref()
+                            .map(|c| c.mean())
+                            .unwrap_or(InstrumentParameters::zero());
+
+                        let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
+                        let rp = p.get_adxrd_render_params(
+                            wavelength_ams / 10.0,
+                            &caglioti,
+                            mean_ds_nm,
+                            ds_eta,
+                            mustrain,
+                            mustrain_eta,
+                            1.0,
+                            sd,
+                            ad.goniometer_radius_mm,
+                            ad.monochromator_angle,
+                        );
+
+                        let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
+                        (rp.pos, intens)
+                    }
+                    SimulationKind::EnergyDispersive(energy_dispersive) => {
+                        let theta_rad = energy_dispersive.theta_deg.to_radians();
+                        let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
+                        let rp = p.get_edxrd_render_params(
+                            theta_rad,
+                            f_lorentz,
+                            mean_ds_nm,
+                            ds_eta,
+                            0.0,
+                            0.0,
+                            1.0,
+                            &energy_dispersive.beamline,
+                        );
+
+                        let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
+
+                        (rp.pos, intens)
+                    }
+                };
+
+                if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
+                    return (pos, p.i_hkl as f32);
+                }
+
+                (pos, intens)
+            })
+            .collect_vec();
+
+        let scale = match mode {
+            io::HKLDisplayMode::Standard { normalized: true }
+            | io::HKLDisplayMode::Structure { normalized: true } => {
+                intensities_positions
+                    .iter()
+                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                    .expect("at least one peak")
+                    .1
+            }
+            _ => 1.0,
+        };
+
+        for (p, (pos, i)) in to_discretize.sim_res.all_simulated_peaks[idx]
+            .iter_peaks()
+            .zip(intensities_positions)
+        {
+            use std::fmt::Write;
+            let mut hkls = String::new();
+            for hkl in p.hkls.iter() {
+                write!(
+                    &mut hkls,
+                    "({h:2} {k:2} {l:2}) ",
+                    h = hkl[0],
+                    k = hkl[1],
+                    l = hkl[2]
+                )
+                .expect("enough memory");
+            }
+            let intensity = i / scale;
+            info!(
+                "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} pos: {pos:.4} | {hkls}",
+                intensity = intensity,
+                d_hkl = p.d_hkl,
+                pos = pos
+            );
         }
     }
 }
@@ -298,127 +415,18 @@ Device ID:           {}",
         });
 
     let elapsed = begin.elapsed().as_secs_f64();
+    info!("Simulating Peak Positions took {elapsed:.2}s");
 
     if let Some(mode) = args.io.display_hkls {
-        info!("Displaying HKLs");
-
-        for i in 0..to_discretize.structures.len() {
-            let idx = to_discretize.sim_res.idx(i, 0);
-            let s = &to_discretize.sample_parameters.structures[i];
-            let mean_ds_nm = s.mean_ds_nm.mean();
-            let ds_eta = s.ds_eta.mean();
-            let mustrain = s
-                .mustrain
-                .as_ref()
-                .map(|x| x.amplitude.mean())
-                .unwrap_or(0.0);
-            let mustrain_eta = s.mustrain.as_ref().map(|x| x.eta.mean()).unwrap_or(0.0);
-
-            info!("======= Structure {} =======", structure_paths[i]);
-            let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
-                .iter()
-                .map(|p| {
-                    let (pos, intens) = match &cfg.kind {
-                        SimulationKind::AngleDispersive(ad) => {
-                            let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                            let caglioti = ad
-                                .instrument_parameters
-                                .as_ref()
-                                .map(|c| c.mean())
-                                .unwrap_or(InstrumentParameters::zero());
-
-                            let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
-                            let rp = p.get_adxrd_render_params(
-                                wavelength_ams / 10.0,
-                                &caglioti,
-                                mean_ds_nm,
-                                ds_eta,
-                                mustrain,
-                                mustrain_eta,
-                                1.0,
-                                sd,
-                                ad.goniometer_radius_mm,
-                                ad.monochromator_angle,
-                            );
-
-                            let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
-                            (rp.pos, intens)
-                        }
-                        SimulationKind::EnergyDispersive(energy_dispersive) => {
-                            let theta_rad = energy_dispersive.theta_deg.to_radians();
-                            let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
-                            let rp = p.get_edxrd_render_params(
-                                theta_rad,
-                                f_lorentz,
-                                mean_ds_nm,
-                                ds_eta,
-                                0.0,
-                                0.0,
-                                1.0,
-                                &energy_dispersive.beamline,
-                            );
-
-                            let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
-
-                            (rp.pos, intens)
-                        }
-                    };
-
-                    if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
-                        return (pos, p.i_hkl as f32);
-                    }
-
-                    (pos, intens)
-                })
-                .collect_vec();
-
-            let scale = match mode {
-                io::HKLDisplayMode::Standard { normalized: true }
-                | io::HKLDisplayMode::Structure { normalized: true } => {
-                    intensities_positions
-                        .iter()
-                        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                        .expect("at least one peak")
-                        .1
-                }
-                _ => 1.0,
-            };
-
-            for (p, (pos, i)) in to_discretize.sim_res.all_simulated_peaks[idx]
-                .iter()
-                .zip(intensities_positions)
-            {
-                use std::fmt::Write;
-                let mut hkls = String::new();
-                for hkl in p.hkls.iter() {
-                    write!(
-                        &mut hkls,
-                        "({h:2} {k:2} {l:2}) ",
-                        h = hkl[0],
-                        k = hkl[1],
-                        l = hkl[2]
-                    )
-                    .expect("enough memory");
-                }
-                let intensity = i / scale;
-                info!(
-                    "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} pos: {pos:.4} | {hkls}",
-                    intensity = intensity,
-                    d_hkl = p.d_hkl,
-                    pos = pos
-                );
-            }
-        }
+        display_hkls(to_discretize, cfg, &structure_paths, mode);
         std::process::exit(0);
     }
-
-    info!("Simulating Peak Positions took {elapsed:.2}s");
 
     if let Some(ref rand_scale) = cfg.simulation_parameters.randomly_scale_peaks {
         let v = std::sync::Arc::get_mut(&mut to_discretize.sim_res)
             .expect("no other references to sim_res should exist at this point");
         for phase_peaks in v.all_simulated_peaks.iter_mut() {
-            for peak in phase_peaks.iter_mut() {
+            for peak in phase_peaks.iter_peaks_mut() {
                 peak.i_hkl = rand_scale.scale_peak(peak.i_hkl, &mut rng);
             }
         }
