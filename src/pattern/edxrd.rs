@@ -233,7 +233,9 @@ impl Discretizer for DiscretizeEnergyDispersive {
         .map(
             move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
+                todo!();
                 self.common.sim_res.all_simulated_peaks[flat_idx]
+                    .peaks
                     .iter()
                     .map(move |peak: &Peak| {
                         peak.get_edxrd_render_params(

@@ -34,8 +34,11 @@ impl Element {
     /// get the mass attenuation coefficient at a given energy
     ///
     /// * `energy_kev`:
-    pub fn mac_at_energy(&self, energy_kev: f64) -> Option<f64> {
-        let mac = crate::absorption::get_mac(*self)?;
+    pub fn mac_at_energy(&self, energy_kev: f64) -> Result<f64, String> {
+        let mac = crate::absorption::get_mac_data(*self).ok_or(format!(
+            "Could not eg mass attenuation data for element {self}. Not present in database."
+        ))?;
+
         mac.interpolate(energy_kev)
     }
 

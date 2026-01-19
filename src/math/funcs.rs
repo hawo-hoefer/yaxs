@@ -27,6 +27,13 @@ pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
     H_EV_S * C_M_S / e_kev * 1e7
 }
 
+pub fn wavelength_ams_to_e_kev(wavelength_ams: f64) -> f64 {
+    // e = h * c / lambda
+    // lambda = h * c / e
+    // m      = ev * s * m / ev
+    H_EV_S * C_M_S / wavelength_ams * 1e-7
+}
+
 /// Scherrer broadening constant
 //
 /// like GSAS-II, we use the volume-weighted domain size, and therefore

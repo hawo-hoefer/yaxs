@@ -7,15 +7,18 @@ use rand::SeedableRng;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
+use yaxs::absorption;
 use yaxs::cif::CifParser;
-use yaxs::math::pseudo_voigt;
-use yaxs::pattern::adxrd::InstrumentParameters;
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd};
+use yaxs::math::{funcs, pseudo_voigt};
+use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedABS};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak, PeakRenderParams};
 use yaxs::structure::Structure;
 
 use log::{error, info, warn};
 
-use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
+use yaxs::cfg::{
+    precompute_absorption_factors, Config, SimulationKind, StructureDef, ToDiscretize,
+};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
     OutputNames, SimulationMetadata,
@@ -120,7 +123,7 @@ fn display_hkls(
     cfg: Config,
     structure_paths: &[String],
     mode: HKLDisplayMode,
-) {
+) -> Result<(), String> {
     info!("Displaying HKLs");
 
     for i in 0..to_discretize.structures.len() {
@@ -136,22 +139,31 @@ fn display_hkls(
         let mustrain_eta = s.mustrain.as_ref().map(|x| x.eta.mean()).unwrap_or(0.0);
 
         info!("======= Structure {} =======", structure_paths[i]);
-        let intensities_positions = to_discretize.sim_res.all_simulated_peaks[idx]
-            .iter_peaks()
-            .map(|p| {
-                let (pos, intens) = match &cfg.kind {
-                    SimulationKind::AngleDispersive(ad) => {
-                        let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                        let caglioti = ad
-                            .instrument_parameters
-                            .as_ref()
-                            .map(|c| c.mean())
-                            .unwrap_or(InstrumentParameters::zero());
+        let intensities_positions = match &cfg.kind {
+            SimulationKind::AngleDispersive(ad) => {
+                let structures = std::sync::Arc::as_ref(&to_discretize.structures);
+                let wavelength_ams = ad.emission_lines[0].wavelength_ams;
+                let abs = PrecomputedABS::try_new(
+                    std::iter::once(wavelength_ams),
+                    structures,
+                    structure_paths,
+                )?;
 
-                        let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
+                let instrument_parameters = ad
+                    .instrument_parameters
+                    .as_ref()
+                    .map(|c| c.mean())
+                    .unwrap_or(InstrumentParameters::zero());
+
+                let sd = ad.sample_displacement_mu_m.map(|x| x.mean()).unwrap_or(0.0);
+                let sid = to_discretize.sim_res.all_simulated_peaks[idx].struct_idx;
+                to_discretize.sim_res.all_simulated_peaks[idx]
+                    .iter_peaks()
+                    .map(move |p: &Peak| {
                         let rp = p.get_adxrd_render_params(
                             wavelength_ams / 10.0,
-                            &caglioti,
+                            &instrument_parameters,
+                            abs.0[0][sid],
                             mean_ds_nm,
                             ds_eta,
                             mustrain,
@@ -163,11 +175,19 @@ fn display_hkls(
                         );
 
                         let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
+                        if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
+                            return (rp.pos, p.i_hkl as f32);
+                        }
                         (rp.pos, intens)
-                    }
-                    SimulationKind::EnergyDispersive(energy_dispersive) => {
-                        let theta_rad = energy_dispersive.theta_deg.to_radians();
-                        let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
+                    })
+                    .collect_vec()
+            }
+            SimulationKind::EnergyDispersive(ed) => {
+                let theta_rad = ed.theta_deg.to_radians();
+                let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
+                to_discretize.sim_res.all_simulated_peaks[idx]
+                    .iter_peaks()
+                    .map(|p: &Peak| {
                         let rp = p.get_edxrd_render_params(
                             theta_rad,
                             f_lorentz,
@@ -176,22 +196,19 @@ fn display_hkls(
                             0.0,
                             0.0,
                             1.0,
-                            &energy_dispersive.beamline,
+                            &ed.beamline,
                         );
 
                         let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
 
+                        if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
+                            return (rp.pos, p.i_hkl as f32);
+                        }
                         (rp.pos, intens)
-                    }
-                };
-
-                if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
-                    return (pos, p.i_hkl as f32);
-                }
-
-                (pos, intens)
-            })
-            .collect_vec();
+                    })
+                    .collect_vec()
+            }
+        };
 
         let scale = match mode {
             io::HKLDisplayMode::Standard { normalized: true }
@@ -230,6 +247,7 @@ fn display_hkls(
             );
         }
     }
+    Ok(())
 }
 
 fn main() {
@@ -400,7 +418,7 @@ Device ID:           {}",
     let mut to_discretize = cfg
         .kind
         .simulate_peaks(
-            structures.into(),
+            structures.clone().into(),
             pref_o.into(),
             strain_cfgs.into(),
             structure_paths.clone().into(),
@@ -471,8 +489,26 @@ Device ID:           {}",
 
     match cfg.kind.clone() {
         SimulationKind::AngleDispersive(angle_dispersive) => {
-            let gen =
-                adxrd::JobGen::new(angle_dispersive, to_discretize, params, vf_generator, rng);
+            let absorption_factors = precompute_absorption_factors(
+                angle_dispersive
+                    .emission_lines
+                    .iter()
+                    .map(|line| line.wavelength_ams),
+                &structures,
+                &structure_paths,
+            )
+            .unwrap_or_else(|err| {
+                error!("Could not precompute absorption factors: {err}.");
+                std::process::exit(1);
+            });
+            let gen = adxrd::JobGen::new(
+                angle_dispersive,
+                to_discretize,
+                params,
+                vf_generator,
+                absorption_factors,
+                rng,
+            );
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
         SimulationKind::EnergyDispersive(energy_dispersive) => {

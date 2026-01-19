@@ -2,7 +2,6 @@ use ahash::HashMapExt;
 use itertools::Itertools;
 use num_complex::Complex;
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use ordered_float::NotNan;
 use rand::Rng;
@@ -10,14 +9,13 @@ use rand::Rng;
 use crate::cfg::Parameter;
 use crate::cif::CIFContents;
 use crate::composition::FractionalComposition;
-use crate::element::Element;
 use crate::lattice::Lattice;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
-use crate::site::{Atom, Site, SiteLabel};
+use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -31,13 +29,14 @@ const SCALED_INTENSITY_TOL: f64 = 1e-5;
 /// * `sg_no`: space group number
 /// * `sg_class`: space group class
 /// * `density`: density of the phase in g/cm3, if present in the cif
+/// * `wt_composition`: composition of the structure by atomic weights
 pub struct Structure {
     pub lat: Lattice,
     pub sites: Vec<Site>,
     pub sg_no: u8, // there are 230 space groups, so u8 should be enough
     pub sg_class: SGClass,
     pub density: Option<f64>,
-    pub frac_composition: FractionalComposition,
+    pub wt_composition: FractionalComposition,
 }
 
 impl<'a> TryFrom<&CIFContents<'a>> for Structure {
@@ -52,7 +51,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
             density: value.get_density()?,
             sg_no,
             sg_class,
-            frac_composition: value
+            wt_composition: value
                 .get_frac_composition()
                 .map_err(|err| format!("Could not get composition from cif: {err}"))?,
         })
@@ -577,7 +576,7 @@ loop_
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
                 (pos, intensity)
             })
             .collect_vec();
@@ -602,6 +601,7 @@ loop_
                 let PeakRenderParams { pos, intensity, .. } = peak.get_adxrd_render_params(
                     0.071,
                     &InstrumentParameters::zero(),
+                    1.0,
                     100.0,
                     1.0,
                     0.0,

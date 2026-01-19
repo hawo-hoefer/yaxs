@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
 use ordered_float::NotNan;
 
+use crate::composition::FractionalComposition;
 use crate::element::Element;
 
 lazy_static! {
@@ -67,7 +68,12 @@ impl MACData {
     /// by interpolating the loaded data
     ///
     /// * `energy_kev`: energy in keV
-    pub(crate) fn interpolate(&self, energy_kev: f64) -> Option<f64> {
+    pub(crate) fn interpolate(&self, energy_kev: f64) -> Result<f64, String> {
+        let e0 = **self.energies.first().expect("at least one value");
+        let e1 = **self.energies.last().expect("at least one value");
+        if energy_kev < e0 || energy_kev > e1 {
+            return Err(format!("No data to interpolate mass attenuation coefficient outside of energy range [{e0}, {e1}] keV. Got {energy_kev} keV"));
+        }
         match self
             .energies
             .binary_search(&NotNan::new(energy_kev).expect("energy is not NaN"))
@@ -75,7 +81,7 @@ impl MACData {
             Ok(found_index) => {
                 // if the exact value was found in the data,
                 // just return it, no need to interpolate
-                return Some(self.macs[found_index].into());
+                return Ok(self.macs[found_index].into());
             }
             Err(insert_idx) => {
                 let xlo = self.energies[insert_idx];
@@ -85,13 +91,13 @@ impl MACData {
                 let yhi = self.macs[insert_idx + 1];
 
                 let t = (energy_kev - *xlo) / (*xhi - *xlo);
-                return Some(ylo + (yhi - ylo) * t);
+                return Ok(ylo + (yhi - ylo) * t);
             }
         }
     }
 }
 
-pub fn get_mac(el: Element) -> Option<&'static MACData> {
+pub fn get_mac_data(el: Element) -> Option<&'static MACData> {
     MAC_DATA.get(el as usize)
 }
 

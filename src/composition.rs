@@ -29,6 +29,22 @@ impl FractionalComposition {
 
         Self(elements)
     }
+
+    pub fn get_mac_at_energy(&self, energy_kev: f64) -> Result<f64, String> {
+        let mut val = 0.0;
+        for (el, n) in self.0.iter() {
+            let mac = el.mac_at_energy(energy_kev)?;
+            val += n * mac;
+        }
+
+        Ok(val)
+    }
+
+    pub fn get_lac_at_energy(&self, energy_kev: f64, density: f64) -> Result<f64, String> {
+        let mac = self.get_mac_at_energy(energy_kev)?;
+
+        return Ok(density * mac)
+    }
 }
 
 impl FromStr for Composition {

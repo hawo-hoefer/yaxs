@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams,
     RenderCommon, VFGenerator,
@@ -5,7 +7,9 @@ use super::{
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
+use crate::math::funcs;
 use crate::noise::Noise;
+use crate::structure::Structure;
 use itertools::Itertools;
 use rand::Rng;
 
@@ -86,6 +90,7 @@ pub struct DiscretizeAngleDispersive {
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
     pub monochromator_angle_rad: f64,
+    pub precomputed_abs: PrecomputedABS,
 }
 
 impl Discretizer for DiscretizeAngleDispersive {
@@ -111,30 +116,33 @@ impl Discretizer for DiscretizeAngleDispersive {
             mustrain,
             mustrain_eta
         )
-        .cartesian_product(&self.emission_lines)
+        .cartesian_product(self.emission_lines.iter().enumerate())
         .flat_map(
             move |(
                 (phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, phase_mustrain, phase_mustrain_eta),
-                emission_line,
+                (line_idx, emission_line),
             )| {
                 let wavelength_nm = emission_line.wavelength_ams / 10.0;
                 let idx = self.common.idx(phase_idx);
-                self.common.sim_res.all_simulated_peaks[idx]
-                    .iter()
-                    .map(move |peak| {
-                        peak.get_adxrd_render_params(
-                            wavelength_nm,
-                            instrument_parameters,
-                            *phase_mean_ds_nm,
-                            *phase_ds_eta,
-                            *phase_mustrain,
-                            *phase_mustrain_eta,
-                            vf * emission_line.weight,
-                            *sample_displacement_mu_m,
-                            self.goniometer_radius_mm,
-                            self.monochromator_angle_rad,
-                        )
-                    })
+                let peaks = &self.common.sim_res.all_simulated_peaks[idx];
+
+                let abs = self.precomputed_abs.0[line_idx][phase_idx];
+
+                peaks.iter_peaks().map(move |peak| {
+                    peak.get_adxrd_render_params(
+                        wavelength_nm,
+                        instrument_parameters,
+                        abs,
+                        *phase_mean_ds_nm,
+                        *phase_ds_eta,
+                        *phase_mustrain,
+                        *phase_mustrain_eta,
+                        vf * emission_line.weight,
+                        *sample_displacement_mu_m,
+                        self.goniometer_radius_mm,
+                        self.monochromator_angle_rad,
+                    )
+                })
             },
         )
         .chain(
@@ -147,6 +155,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     ip.peak.get_adxrd_render_params(
                         wavelength_nm,
                         instrument_parameters,
+                        1.0, // impurity peaks don't have absorption
                         ip.mean_ds_nm,
                         ip.eta,
                         0.0, // impurity peaks only have one source of
@@ -345,11 +354,48 @@ impl Discretizer for DiscretizeAngleDispersive {
     }
 }
 
+/// absorption factors for all structures and wavelengths
+/// outer index is emission line, inner is structure
+pub struct PrecomputedABS(pub Arc<[Box<[f64]>]>);
+
+impl PrecomputedABS {
+    pub fn try_new(
+        wavelengths: impl Iterator<Item = f64>,
+        structures: &[Structure],
+        structure_paths: &[String],
+    ) -> Result<PrecomputedABS, String> {
+        let mut ret = Vec::new();
+        for w in wavelengths {
+            let energy_kev = funcs::e_kev_to_lambda_ams(w);
+
+            let mut structure_absorption_factors = Vec::with_capacity(structures.len());
+            for (s, p) in structures.iter().zip(structure_paths) {
+                let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
+                let rho = s.density.ok_or(format!(
+                    "Cannot determine linear absorption coefficient: structure {p} has no density."
+                ))?;
+                let lac = mac * rho;
+                structure_absorption_factors.push(1.0 / (2.0 * lac));
+            }
+            ret.push(structure_absorption_factors.into());
+        }
+
+        Ok(PrecomputedABS(ret.into()))
+    }
+}
+
+impl Clone for PrecomputedABS {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
 pub struct JobGen<T> {
     cfg: AngleDispersive,
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
+    precomputed_abs: PrecomputedABS,
     two_thetas: Vec<f32>,
     n: usize,
     rng: T,
@@ -361,6 +407,7 @@ impl<T> JobGen<T> {
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
+        precomputed_abs: PrecomputedABS,
         rng: T,
     ) -> Self {
         let mut two_thetas = Vec::with_capacity(cfg.n_steps);
@@ -378,6 +425,7 @@ impl<T> JobGen<T> {
             two_thetas,
             n: 0,
             rng,
+            precomputed_abs,
         }
     }
 }
@@ -397,6 +445,7 @@ where
             &self.vf_generator,
             &self.cfg,
             &self.sim_params,
+            self.precomputed_abs.clone(),
             &mut self.rng,
         );
 

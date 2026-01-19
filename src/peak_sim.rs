@@ -255,14 +255,17 @@ impl RunCtx {
                         .as_ref()
                         .map(|x| Alignment::Precomputed { po: x }),
                 );
-                peaks.push(p.into_boxed_slice());
+                peaks.push(Peaks::new(p, job.structure));
             }
             PossiblyTextureMeasurementPeaks::Texture(peaks)
         } else {
-            let peaks = perm_s
-                .get_d_spacings_intensities(job.min_r, job.max_r, None, scattering_parameters)
-                .into_boxed_slice();
-            PossiblyTextureMeasurementPeaks::NoTexture(peaks)
+            let p = perm_s.get_d_spacings_intensities(
+                job.min_r,
+                job.max_r,
+                None,
+                scattering_parameters,
+            );
+            PossiblyTextureMeasurementPeaks::NoTexture(Peaks::new(p, job.structure))
         };
 
         Ok(PeakSimResult {
@@ -630,7 +633,8 @@ mod cuda {
                     results.add(PeakSimResult {
                         strain,
                         po: Some(bingham_params),
-                        peaks: PossiblyTextureMeasurementPeaks::Texture(peaks),
+                        // peaks: PossiblyTextureMeasurementPeaks::Texture(peaks),
+                        peaks: todo!(),
                         struct_id: self.struct_id,
                         permutation_id: local_perm_id + self.permutation_start,
                         random_b_iso: b_iso,

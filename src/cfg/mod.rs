@@ -9,6 +9,7 @@ mod volume_fraction;
 
 use std::sync::Arc;
 
+use crate::absorption;
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -29,9 +30,9 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 mod texture;
 
-use crate::math::e_kev_to_lambda_ams;
+use crate::math::{e_kev_to_lambda_ams, funcs};
 use crate::pattern::adxrd::{
-    ADXRDMeta, DiscretizeAngleDispersive, EmissionLine, InstrumentParameters,
+    ADXRDMeta, DiscretizeAngleDispersive, EmissionLine, InstrumentParameters, PrecomputedABS,
 };
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{
@@ -165,6 +166,30 @@ impl SimulationKind {
             rng,
         )
     }
+}
+
+pub fn precompute_absorption_factors(
+    wavelengths: impl Iterator<Item = f64>,
+    structures: &[Structure],
+    structure_paths: &[String],
+) -> Result<PrecomputedABS, String> {
+    let mut ret = Vec::new();
+    for w in wavelengths {
+        let energy_kev = funcs::e_kev_to_lambda_ams(w);
+
+        let mut structure_absorption_factors = Vec::with_capacity(structures.len());
+        for (s, p) in structures.iter().zip(structure_paths) {
+            let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
+            let rho = s.density.ok_or(format!(
+                "Cannot determine linear absorption coefficient: structure {p} has no density."
+            ))?;
+            let lac = mac * rho;
+            structure_absorption_factors.push(1.0 / (2.0 * lac));
+        }
+        ret.push(structure_absorption_factors.into());
+    }
+
+    Ok(PrecomputedABS(ret.into()))
 }
 
 fn default_monochromator_angle() -> f64 {
@@ -425,6 +450,7 @@ impl ToDiscretize {
         vf_generator: &VFGenerator,
         angle_dispersive: &AngleDispersive,
         simulation_parameters: &SimulationParameters,
+        precomputed_lacs: PrecomputedABS,
         rng: &mut impl Rng,
     ) -> DiscretizeAngleDispersive {
         let AngleDispersive {
@@ -473,6 +499,7 @@ impl ToDiscretize {
             emission_lines: emission_lines.clone(),
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
+            precomputed_abs: precomputed_lacs,
             meta: ADXRDMeta {
                 vol_fractions,
                 weight_fractions,
