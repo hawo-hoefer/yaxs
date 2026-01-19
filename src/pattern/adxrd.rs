@@ -317,13 +317,8 @@ impl Discretizer for DiscretizeAngleDispersive {
             ImpuritySum(Array1::<f32>::zeros(n_samples)),
             SampleDisplacementMuM(Array1::<f32>::zeros(n_samples)),
             ImpurityMax(Array1::<f32>::zeros(n_samples)),
+            WeightFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
         ];
-
-        if p.has_weight_fracs {
-            v.push(WeightFractions(Array2::<f32>::zeros((
-                n_samples, p.n_phases,
-            ))));
-        }
 
         if let Some(bkg_params) = p.bkg_params {
             v.push(BackgroundParameters(Array2::<f32>::zeros((
@@ -371,10 +366,7 @@ impl PrecomputedABS {
             let mut structure_absorption_factors = Vec::with_capacity(structures.len());
             for (s, p) in structures.iter().zip(structure_paths) {
                 let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
-                let rho = s.density.ok_or(format!(
-                    "Cannot determine linear absorption coefficient: structure {p} has no density."
-                ))?;
-                let lac = mac * rho;
+                let lac = mac * s.density_g_cm3;
                 structure_absorption_factors.push(1.0 / (2.0 * lac));
             }
             ret.push(structure_absorption_factors.into());
@@ -489,11 +481,6 @@ where
         JobParams {
             n_phases: self.discretize_info.structures.len(),
             abstol: self.sim_params.abstol,
-            has_weight_fracs: self
-                .discretize_info
-                .structures
-                .iter()
-                .all(|s| s.density.is_some()),
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
             bkg_params: self.cfg.background.as_ref().map(|x| x.n_coefs()),

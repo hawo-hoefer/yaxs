@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::element::Element;
-use crate::site::SiteLabel;
+use crate::site::{Site, SiteLabel};
+use crate::structure::Structure;
 
 #[derive(Debug, Clone, PartialEq)]
 /// A Composition by Mole
@@ -16,6 +18,18 @@ pub struct Composition(Vec<(Element, f64)>);
 #[derive(Debug, Clone, PartialEq)]
 pub struct FractionalComposition(pub Vec<(Element, f64)>);
 impl FractionalComposition {
+    pub fn from_sites(sites: &[Site]) -> Self {
+        let mut composition = HashMap::new();
+        for site in sites.iter() {
+            for atom in site.site_label.0.iter() {
+                let entry = composition.entry(atom.el).or_insert(0.0);
+                *entry += site.occu as f64;
+            }
+        }
+
+        Self::new(Composition(composition.drain().collect()))
+    }
+
     pub fn new(Composition(mut elements): Composition) -> Self {
         let total_mass = elements
             .iter()
@@ -43,7 +57,7 @@ impl FractionalComposition {
     pub fn get_lac_at_energy(&self, energy_kev: f64, density: f64) -> Result<f64, String> {
         let mac = self.get_mac_at_energy(energy_kev)?;
 
-        return Ok(density * mac)
+        return Ok(density * mac);
     }
 }
 

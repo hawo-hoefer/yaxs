@@ -375,12 +375,6 @@ Device ID:           {}",
             error!("Invalid contents for CIF '{path}': {err}");
             std::process::exit(1);
         });
-        if structure.density.is_none() {
-            warn!(
-                "Cannot output weight fractions because density is missing in cif '{p}.",
-                p = struct_path.display()
-            );
-        }
 
         if mean_ds_nm.upper_bound() > 200.0 {
             error!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound());
@@ -495,7 +489,6 @@ Device ID:           {}",
                     .iter()
                     .map(|line| line.wavelength_ams),
                 &structures,
-                &structure_paths,
             )
             .unwrap_or_else(|err| {
                 error!("Could not precompute absorption factors: {err}.");

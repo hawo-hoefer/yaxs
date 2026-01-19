@@ -138,6 +138,7 @@ fn parse_matrix_from_symmetric_order_labels(
         [v31, v32, v33],
     ]));
 }
+
 fn extract_aniso_adp(
     label: &str,
     atom_site_aniso_table: Option<&Table>,

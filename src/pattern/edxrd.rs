@@ -400,12 +400,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
             ImpuritySum(Array1::<f32>::zeros(n_samples)),
             ImpurityMax(Array1::<f32>::zeros(n_samples)),
+            WeightFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
         ];
-        if p.has_weight_fracs {
-            v.push(WeightFractions(Array2::<f32>::zeros((
-                n_samples, p.n_phases,
-            ))))
-        }
         if let Some(n) = p.textured_phases {
             v.push(BinghamODFParams {
                 orientations: Array3::zeros((n_samples, n, 4)),
@@ -526,11 +522,6 @@ where
         JobParams {
             abstol: self.sim_params.abstol,
             n_phases: self.discretize_info.structures.len(),
-            has_weight_fracs: self
-                .discretize_info
-                .structures
-                .iter()
-                .all(|s| s.density.is_some()),
             textured_phases,
             texture_measurement: self.sim_params.texture_measurement,
             bkg_params: None,

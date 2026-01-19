@@ -1,5 +1,6 @@
 use ahash::HashMapExt;
 use itertools::Itertools;
+use log::{error, warn};
 use num_complex::Complex;
 use std::collections::HashMap;
 
@@ -10,8 +11,8 @@ use crate::cfg::Parameter;
 use crate::cif::CIFContents;
 use crate::composition::FractionalComposition;
 use crate::lattice::Lattice;
-use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
+use crate::math::{e_kev_to_lambda_ams, funcs};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
@@ -35,7 +36,7 @@ pub struct Structure {
     pub sites: Vec<Site>,
     pub sg_no: u8, // there are 230 space groups, so u8 should be enough
     pub sg_class: SGClass,
-    pub density: Option<f64>,
+    pub density_g_cm3: f64,
     pub wt_composition: FractionalComposition,
 }
 
@@ -45,15 +46,28 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
         let lattice = value.get_lattice();
         let sites = value.get_sites()?;
+
+        let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
+        let density_dalton_per_amstrong_cubed = weight_dalton / lattice.volume();
+        println!("wt - {}, vol - {}", weight_dalton, lattice.volume());
+        const ANGSTROM3_TO_CM3: f64 = 1e-24;
+        let density_g_cm3 = density_dalton_per_amstrong_cubed * funcs::AMU_TO_G / ANGSTROM3_TO_CM3;
+        let given_density = value.get_density()?;
+
+        if let Some(given_density) = given_density {
+            if given_density != density_g_cm3 {
+                let file_path = value.file_path.unwrap_or("(in-memory)");
+                warn!("{file_path}: Given and calculated densities do not match. Given: {given_density} g/cm3, calculated: {density_g_cm3}. Using calculated density.");
+            }
+        }
+
         Ok(Structure {
+            wt_composition: FractionalComposition::from_sites(&sites),
             sites,
             lat: lattice,
-            density: value.get_density()?,
+            density_g_cm3,
             sg_no,
             sg_class,
-            wt_composition: value
-                .get_frac_composition()
-                .map_err(|err| format!("Could not get composition from cif: {err}"))?,
         })
     }
 }

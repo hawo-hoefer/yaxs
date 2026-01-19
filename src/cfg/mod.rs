@@ -171,19 +171,15 @@ impl SimulationKind {
 pub fn precompute_absorption_factors(
     wavelengths: impl Iterator<Item = f64>,
     structures: &[Structure],
-    structure_paths: &[String],
 ) -> Result<PrecomputedABS, String> {
     let mut ret = Vec::new();
     for w in wavelengths {
         let energy_kev = funcs::e_kev_to_lambda_ams(w);
 
         let mut structure_absorption_factors = Vec::with_capacity(structures.len());
-        for (s, p) in structures.iter().zip(structure_paths) {
+        for s in structures.iter() {
             let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
-            let rho = s.density.ok_or(format!(
-                "Cannot determine linear absorption coefficient: structure {p} has no density."
-            ))?;
-            let lac = mac * rho;
+            let lac = mac * s.density_g_cm3;
             structure_absorption_factors.push(1.0 / (2.0 * lac));
         }
         ret.push(structure_absorption_factors.into());

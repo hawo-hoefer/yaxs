@@ -42,7 +42,7 @@ impl Element {
         mac.interpolate(energy_kev)
     }
 
-    /// return the atomic weight  
+    /// return the atomic weight in dalton
     ///
     /// this implements data from table 2 provided at
     /// <https://iupac.qmul.ac.uk/AtWt/index.html>

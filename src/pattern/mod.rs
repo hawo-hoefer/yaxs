@@ -94,12 +94,6 @@ pub fn get_weight_fractions(
     volume_fractions: &[f64],
     structures: &[Structure],
 ) -> Option<Box<[f64]>> {
-    for s in structures.iter() {
-        if s.density.is_none() {
-            return None;
-        }
-    }
-
     // phi_i = V_i / V_tot
     // V_tot = sum_i V_i
     // V_i = rho_i * m_i
@@ -121,7 +115,7 @@ pub fn get_weight_fractions(
         .iter()
         .zip(structures)
         .map(|(phi_i, s)| {
-            let rho_i = s.density.expect("we have all densities");
+            let rho_i = s.density_g_cm3;
             let rpi = rho_i * phi_i;
             sum_rho_i_phi_i += rpi;
             rpi
@@ -423,7 +417,6 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
 pub struct JobParams {
     pub abstol: f32,
     pub n_phases: usize,
-    pub has_weight_fracs: bool,
     pub textured_phases: Option<usize>,
     pub texture_measurement: Option<TextureMeasurement>,
     // TODO: make this a usize (but this makes indexing in peak_sim annoying)

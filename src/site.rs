@@ -57,6 +57,30 @@ impl Site {
             displacement: self.displacement.clone(),
         }
     }
+
+    pub fn weight_contribution(&self) -> f64 {
+        let wt_dalton = self
+            .site_label
+            .0
+            .iter()
+            .map(|x| x.el.atomic_weight())
+            .sum::<f64>();
+        let site_wt_with_duplicates = wt_dalton * self.occu;
+        // let edge_positions = self
+        //     .coords
+        //     .iter_values()
+        //     .map(|x| (*x == 0.0 || *x == 1.0) as u8)
+        //     .sum::<u8>();
+        // let shared_in_cells = match edge_positions {
+        //     0 => 1.0,
+        //     1 => 2.0,
+        //     2 => 4.0,
+        //     3 => 8.0,
+        //     _ => unreachable!("vector has length of 3, not more than 3 elements can be 0 or 1"),
+        // };
+        // site_wt_with_duplicates / shared_in_cells
+        site_wt_with_duplicates
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
