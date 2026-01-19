@@ -2,19 +2,22 @@ use ahash::HashMapExt;
 use itertools::Itertools;
 use num_complex::Complex;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use ordered_float::NotNan;
 use rand::Rng;
 
 use crate::cfg::Parameter;
 use crate::cif::CIFContents;
+use crate::composition::FractionalComposition;
+use crate::element::Element;
 use crate::lattice::Lattice;
 use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
-use crate::site::{Atom, Site};
+use crate::site::{Atom, Site, SiteLabel};
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
@@ -34,6 +37,7 @@ pub struct Structure {
     pub sg_no: u8, // there are 230 space groups, so u8 should be enough
     pub sg_class: SGClass,
     pub density: Option<f64>,
+    pub frac_composition: FractionalComposition,
 }
 
 impl<'a> TryFrom<&CIFContents<'a>> for Structure {
@@ -41,12 +45,16 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
         let lattice = value.get_lattice();
+        let sites = value.get_sites()?;
         Ok(Structure {
-            sites: value.get_sites()?,
+            sites,
             lat: lattice,
             density: value.get_density()?,
             sg_no,
             sg_class,
+            frac_composition: value
+                .get_frac_composition()
+                .map_err(|err| format!("Could not get composition from cif: {err}"))?,
         })
     }
 }

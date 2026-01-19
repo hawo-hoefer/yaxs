@@ -63,7 +63,7 @@ impl Site {
 pub struct SiteLabel(pub Vec<Atom>);
 
 impl SiteLabel {
-    fn try_parse_single_element(val: &str) -> Result<(Element, &str), String> {
+    pub fn try_parse_single_element(val: &str) -> Result<(Element, &str), String> {
         let mut c = 0;
         if let Some((el, _)) = val.split_once(|x: char| {
             c += 1;
