@@ -407,7 +407,7 @@ impl<'a> CIFContents<'a> {
             ];
             SITE_KEYS.iter().map(|&k| t.contains_key(k)).all(|x| x)
         }) else {
-            panic!("No atom site label info in CIF")
+            return Err("No atom site label info in CIF".to_string());
         };
         let n = site_table["_atom_site_type_symbol"].len();
         let symops = self.get_symops()?;
@@ -419,7 +419,9 @@ impl<'a> CIFContents<'a> {
 
         let site_at_index = |i: usize| -> Result<Site, String> {
             let sl: SiteLabel = match &site_table["_atom_site_type_symbol"][i] {
-                Value::Text(label) => label.parse().unwrap(),
+                Value::Text(label) => label.parse().map_err(|err| {
+                    format!("_atom_site_type_symbol needs to be a valid ion: {err}")
+                })?,
                 v => return Err(format!("Invalid _atom_site_type_symbol: {v}")),
             };
 
@@ -428,12 +430,21 @@ impl<'a> CIFContents<'a> {
                 _ => return Err("Invalid site label".to_string()),
             };
 
-            let occu = site_table["_atom_site_occupancy"][i].try_to_f64().unwrap();
+            let occu = site_table["_atom_site_occupancy"][i]
+                .try_to_f64()
+                .map_err(|err| format!("_atom_site_occupancy has wrong type: {err}"))?;
+
             // TODO: remove unwraps, proper error handling
             let coords = Vec3::new(
-                site_table["_atom_site_fract_x"][i].try_to_f64().unwrap(),
-                site_table["_atom_site_fract_y"][i].try_to_f64().unwrap(),
-                site_table["_atom_site_fract_z"][i].try_to_f64().unwrap(),
+                site_table["_atom_site_fract_x"][i]
+                    .try_to_f64()
+                    .map_err(|err| format!("_atom_site_fract_x has wrong type: {err}"))?,
+                site_table["_atom_site_fract_y"][i]
+                    .try_to_f64()
+                    .map_err(|err| format!("_atom_site_fract_y has wrong type: {err}"))?,
+                site_table["_atom_site_fract_z"][i]
+                    .try_to_f64()
+                    .map_err(|err| format!("_atom_site_fract_z has wrong type: {err}"))?,
             );
 
             let iso_adp =
