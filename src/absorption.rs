@@ -1,0 +1,167 @@
+use lazy_static::lazy_static;
+use ordered_float::NotNan;
+
+use crate::composition::FractionalComposition;
+use crate::element::Element;
+use crate::pattern::adxrd::PrecomputedLACs;
+
+lazy_static! {
+    static ref MAC_DATA: [MACData; NUM_ENTRIES] = {
+        // TODO: Verify file format, add version etc
+        // extract MACData for element from binary blob
+        // binary blob file format
+        // [   # Header
+        //     number of elements:       u32 (num_el)
+        //     offset for each element: [num_el * u32]
+        //
+        //     # Data section
+        //     representation for each MACData element
+        //     with format: [
+        //        atomic_number:              u8,
+        //        num_entries:               u32,
+        //        energies:    num_entries * f64,
+        //        macs:        num_entries * f64,
+        //     ]
+        // ]
+
+        let mut offset = 0;
+        let num_el = u8_at_byte_offset(&mut offset);
+
+        for _ in 0..num_el {
+            // ignore since we get all of the entries anyway
+            _ = u32_at_byte_offset(&mut offset);
+        }
+
+        let mut mac_data = core::array::from_fn::<MACData, NUM_ENTRIES, _>(|_| MACData { energies: Vec::new(), macs: Vec::new() });
+        for i in 0..num_el {
+            let entry = &mut mac_data[i as usize];
+            let element_z = u8_at_byte_offset(&mut offset);
+            assert_eq!(element_z, i + 1 as u8, "entry is what we expect");
+
+            let num_samples = u32_at_byte_offset(&mut offset);
+            for _ in 0..num_samples {
+                let energy = NotNan::new(f64_at_byte_offset(&mut offset)).expect("we did not write NaNs to the file");
+                // assert ascending
+                assert!(entry.energies.first().map(|x| *x < energy).unwrap_or(true));
+                entry.energies.push(energy);
+            }
+
+            for _ in 0..num_samples {
+                let mac = NotNan::new(f64_at_byte_offset(&mut offset)).expect("we did not write NaNs to the file");
+                entry.macs.push(mac);
+            }
+        }
+
+        mac_data
+    };
+}
+
+const MAC_DATA_BYTES: &'static [u8] = include_bytes!("macdata.bin");
+const NUM_ENTRIES: usize = MAC_DATA_BYTES[0] as usize;
+#[derive(Clone, PartialEq)]
+pub struct MACData {
+    pub energies: Vec<NotNan<f64>>,
+    pub macs: Vec<NotNan<f64>>,
+}
+
+impl MACData {
+    /// interpolate the Mass attenuation coefficient for a given energy
+    /// by interpolating the loaded data
+    ///
+    /// * `energy_kev`: energy in keV
+    pub(crate) fn interpolate(&self, energy_kev: f64) -> Result<f64, String> {
+        let e0 = **self.energies.first().expect("at least one value");
+        let e1 = **self.energies.last().expect("at least one value");
+        if energy_kev < e0 || energy_kev > e1 {
+            return Err(format!("No data to interpolate mass attenuation coefficient outside of energy range [{e0}, {e1}] keV. Got {energy_kev} keV"));
+        }
+        match self
+            .energies
+            .binary_search(&NotNan::new(energy_kev).expect("energy is not NaN"))
+        {
+            Ok(found_index) => {
+                // if the exact value was found in the data,
+                // just return it, no need to interpolate
+                return Ok(self.macs[found_index].into());
+            }
+            Err(insert_idx) => {
+                let xlo = self.energies[insert_idx];
+                let xhi = self.energies[insert_idx + 1];
+
+                let ylo = self.macs[insert_idx + 1];
+                let yhi = self.macs[insert_idx + 1];
+
+                let t = (energy_kev - *xlo) / (*xhi - *xlo);
+                return Ok(ylo + (yhi - ylo) * t);
+            }
+        }
+    }
+}
+
+/// Compute the linear attenuation coefficient for mixtures of phases present in PrecomputedLACs
+///
+/// Returns one value per emission line present in lacs.
+///
+/// * `volume_fractions`: volume fractions of the phases
+/// * `lacs`: precomputed linear absorption coefficients for pure components
+///
+/// computation is done according to Equation 6 in Chapter 2 of X-Ray Mass Attenuation Coefficients
+/// <https://physics.nist.gov/PhysRefData/XrayMassCoef/chap2.html>
+///
+/// $$ \frac{\mu_\text{m}}{\rho_\text{m}} = \sum_{i} w_i \left(\frac{\mu}{\rho}\right)_i $$
+///
+/// using the relation of volume and mass fraction $$ w_i = \frac{\rho_i v_i}{\rho_m} \Longrightarrow v_i = \frac{w_i}{\rho_i} \rho_m, $$
+/// we can shuffle the above relation a bit and arrive at
+/// $$
+/// \mu_\text{m} = \sum_i \frac{w_i \rho_\text{m}}{\rho_i} \mu_i = \sum_i v_i \mu_i.
+/// $$
+pub fn compute_mixture_attenuation_coef(
+    volume_fractions: &[f64],
+    lacs: &PrecomputedLACs,
+) -> Box<[f64]> {
+    for emission_line_data in lacs.0.iter() {
+        assert_eq!(
+            volume_fractions.len(),
+            emission_line_data.len(),
+            "lacs are present for all structures"
+        );
+    }
+
+    let mut mixture_attenuation_coefs = Vec::with_capacity(lacs.0.len());
+    for by_emission_line in lacs.0.iter() {
+        let mix_lac = volume_fractions
+            .iter()
+            .zip(by_emission_line.iter())
+            .map(|(vf, lac)| vf * lac)
+            .sum::<f64>();
+        mixture_attenuation_coefs.push(mix_lac);
+    }
+    mixture_attenuation_coefs.into()
+}
+
+pub fn get_mac_data(el: Element) -> Option<&'static MACData> {
+    MAC_DATA.get(el as usize)
+}
+
+macro_rules! le_bytes_to_ty {
+    ($offset:ident, $T:ty) => {{
+        const SIZE: usize = std::mem::size_of::<$T>();
+        let bytes = &MAC_DATA_BYTES[*$offset..*$offset + SIZE];
+        *$offset += SIZE;
+        <$T>::from_le_bytes(*bytes.first_chunk().unwrap())
+    }};
+}
+
+fn u8_at_byte_offset(offset: &mut usize) -> u8 {
+    let b = MAC_DATA_BYTES[*offset];
+    *offset += 1;
+    b
+}
+
+fn u32_at_byte_offset(offset: &mut usize) -> u32 {
+    le_bytes_to_ty!(offset, u32)
+}
+
+fn f64_at_byte_offset(offset: &mut usize) -> f64 {
+    le_bytes_to_ty!(offset, f64)
+}

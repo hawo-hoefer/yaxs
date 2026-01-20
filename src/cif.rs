@@ -4,9 +4,9 @@ use crate::math::linalg::{Mat3, Vec3};
 use itertools::Itertools;
 use log::{debug, warn};
 
+use crate::composition::FractionalComposition;
 use crate::lattice::Lattice;
-use crate::site::{AtomicDisplacement, Site};
-use crate::species::Species;
+use crate::site::{AtomicDisplacement, Site, SiteLabel};
 use crate::structure::SGClass;
 use crate::symop::SymOp;
 
@@ -16,6 +16,8 @@ const LOOP_HEADER_START: &str = "loop_";
 const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
+const SUM_FORMULA_KEY: &str = "_chemical_formula_sum";
+
 const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
 const IMPORTANT_FRACTIONS: [f64; 4] = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
@@ -78,6 +80,16 @@ impl Value {
             Value::Text(text) => Err(format!("Could not get value from Text '{text}'")),
         }
     }
+
+    fn try_to_text(&self) -> Result<&str, String> {
+        match self {
+            Value::Inapplicable => Err("Could not get text from Inapplicable".to_string()),
+            Value::Unknown => Err("Could not get text from Unknown".to_string()),
+            Value::Float(v) => Err(format!("Could not get text from float {v}")),
+            Value::Int(v) => Err(format!("Could not get text from integer {v}")),
+            Value::Text(text) => Ok(text.as_str()),
+        }
+    }
 }
 
 pub type Table = HashMap<String, Vec<Value>>;
@@ -126,6 +138,7 @@ fn parse_matrix_from_symmetric_order_labels(
         [v31, v32, v33],
     ]));
 }
+
 fn extract_aniso_adp(
     label: &str,
     atom_site_aniso_table: Option<&Table>,
@@ -278,6 +291,21 @@ fn extract_iso_adp(
 }
 
 impl<'a> CIFContents<'a> {
+    pub fn get_frac_composition(&self) -> Result<FractionalComposition, String> {
+        let formula = self
+            .kvs
+            .get(SUM_FORMULA_KEY)
+            .ok_or(format!("CIF does not contain key {SUM_FORMULA_KEY}."))?;
+        let formula = formula
+            .try_to_text()
+            .map_err(|err| format!("{SUM_FORMULA_KEY} formula key has invalid type: {err}"))?;
+        let composition: FractionalComposition = formula
+            .parse::<FractionalComposition>()
+            .map_err(|err| format!("Could not parse sum formula: {err}"))?;
+
+        Ok(composition)
+    }
+
     pub fn get_symops(&self) -> Result<Vec<SymOp>, String> {
         let mut symop_label = "";
         let Some(symops_table) = self.tables.iter().find(|t: &&Table| {
@@ -368,7 +396,7 @@ impl<'a> CIFContents<'a> {
             .find(|t: &&Table| t.contains_key("_atom_site_aniso_label"));
 
         let site_at_index = |i: usize| -> Result<Site, String> {
-            let sp: Species = match &site_table["_atom_site_type_symbol"][i] {
+            let sl: SiteLabel = match &site_table["_atom_site_type_symbol"][i] {
                 Value::Text(label) => label.parse().unwrap(),
                 v => return Err(format!("Invalid _atom_site_type_symbol: {v}")),
             };
@@ -425,7 +453,7 @@ impl<'a> CIFContents<'a> {
             });
 
             Ok(Site {
-                species: sp,
+                site_label: sl,
                 coords,
                 occu,
                 displacement: adp,
@@ -444,7 +472,7 @@ impl<'a> CIFContents<'a> {
                         .sum::<f64>()
                         < SITE_DIST_TOL.powi(2);
 
-                    inside_dist_tol && (ps.species == site.species) && (ps.occu == site.occu)
+                    inside_dist_tol && (ps.site_label == site.site_label) && (ps.occu == site.occu)
                 })
                 .any(|x| x)
         }
@@ -462,7 +490,7 @@ impl<'a> CIFContents<'a> {
             for op in symops.iter() {
                 let s = Site {
                     coords: op.apply(&base_site.coords),
-                    species: base_site.species.clone(),
+                    site_label: base_site.site_label.clone(),
                     occu: base_site.occu,
                     displacement: match base_site.displacement {
                         Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
@@ -1131,6 +1159,7 @@ _cell_angle_alpha   90.00000000
 _cell_angle_beta   90.00000000
 _cell_angle_gamma   120.00000000
 _cell_volume   83.00697361
+_chemical_formula_sum 'Na Fe'
 loop_
  _symmetry_equiv_pos_site_id
  _symmetry_equiv_pos_as_xyz
@@ -1153,7 +1182,7 @@ loop_
         assert_eq!(
             &Site {
                 coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Na+".parse().unwrap(),
+                site_label: "Na+".parse().unwrap(),
                 occu: 0.25,
                 displacement: None,
             },
@@ -1163,7 +1192,7 @@ loop_
         assert_eq!(
             &Site {
                 coords: Vec3::new(0.0, 0.0, 0.25),
-                species: "Fe-".parse().unwrap(),
+                site_label: "Fe-".parse().unwrap(),
                 occu: 0.75,
                 displacement: None,
             },
@@ -1250,6 +1279,7 @@ _cell_angle_beta  90
 _cell_angle_gamma 120
 _cell_volume 81.27959
 _symmetry_space_group_name_H-M P63/mmc
+_chemical_formula_sum 'Na O'
 _space_group_IT_number 194
 loop_
 _symmetry_equiv_pos_as_xyz

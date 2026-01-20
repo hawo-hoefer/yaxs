@@ -19,7 +19,7 @@ use crate::math::linalg::Vec3;
 use crate::pattern::Peaks;
 use crate::preferred_orientation::{BinghamParams, KDEBinghamODF};
 use crate::scatter::Scatter;
-use crate::species::Atom;
+use crate::site::Atom;
 use crate::strain::Strain;
 use crate::structure::Structure;
 use crate::uninit_vec;
@@ -255,14 +255,17 @@ impl RunCtx {
                         .as_ref()
                         .map(|x| Alignment::Precomputed { po: x }),
                 );
-                peaks.push(p.into_boxed_slice());
+                peaks.push(Peaks::new(p, job.structure));
             }
             PossiblyTextureMeasurementPeaks::Texture(peaks)
         } else {
-            let peaks = perm_s
-                .get_d_spacings_intensities(job.min_r, job.max_r, None, scattering_parameters)
-                .into_boxed_slice();
-            PossiblyTextureMeasurementPeaks::NoTexture(peaks)
+            let p = perm_s.get_d_spacings_intensities(
+                job.min_r,
+                job.max_r,
+                None,
+                scattering_parameters,
+            );
+            PossiblyTextureMeasurementPeaks::NoTexture(Peaks::new(p, job.structure))
         };
 
         Ok(PeakSimResult {
@@ -397,10 +400,11 @@ mod cuda {
     use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
+    use crate::pattern::Peaks;
     use crate::peak_sim::PeakSimResult;
     use crate::preferred_orientation::BinghamParams;
     use crate::scatter::Scatter;
-    use crate::species::Atom;
+    use crate::site::Atom;
     use crate::strain::Strain;
 
     use crate::peak_sim_cuda::single_phase_weight_hkls;
@@ -564,7 +568,12 @@ mod cuda {
             self.n_hkls.len() > 0
         }
 
-        fn compute_chunk(&mut self, results: Arc<WriteCtx>, struct_file: &str) {
+        fn compute_chunk(
+            &mut self,
+            results: Arc<WriteCtx>,
+            struct_file: &str,
+            structure_id: usize,
+        ) {
             let (n_allocated_bytes_host, n_required_bytes_cuda) = self.memory_stats();
             debug!(
             "Computing texture weights for permutations {permutation_start}-{permutation_end} of structure {struct_file}. Requires {mib_cuda:.2} MiB of memory for processing. Current chunk allocates {mib_host:.2} MiB of memory.",
@@ -617,7 +626,7 @@ mod cuda {
                         &self.weights[hkl_pos..hkl_pos + n_hkl],
                         &mut map,
                     );
-                    peaks.push(p.into_boxed_slice());
+                    peaks.push(Peaks::new(p, structure_id));
                 }
 
                 let b_iso = self
@@ -714,13 +723,21 @@ mod cuda {
                 let (_, n_required_bytes_cuda) = batch.memory_stats();
 
                 if n_required_bytes_cuda >= CUDA_DEVICE_INFO.init_free_memory_bytes * 9 / 10 {
-                    batch.compute_chunk(Arc::clone(&results), &ctx.structure_files[struct_id]);
+                    batch.compute_chunk(
+                        Arc::clone(&results),
+                        &ctx.structure_files[struct_id],
+                        struct_id,
+                    );
                 }
             }
 
             // dispatch remaining chunk
             if batch.computations_left() {
-                batch.compute_chunk(Arc::clone(&results), &ctx.structure_files[struct_id]);
+                batch.compute_chunk(
+                    Arc::clone(&results),
+                    &ctx.structure_files[struct_id],
+                    struct_id,
+                );
             }
         }
 
@@ -740,7 +757,7 @@ mod cpu {
     use crate::cfg::{Parameter, TextureMeasurement};
     use crate::peak_sim::PeakSim;
     use crate::scatter::Scatter;
-    use crate::species::Atom;
+    use crate::site::Atom;
 
     use super::{RunCtx, WriteCtx};
 

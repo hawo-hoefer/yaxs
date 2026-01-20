@@ -3,7 +3,9 @@ pub mod cfg;
 pub mod cif;
 pub mod util;
 
+pub mod absorption;
 pub mod element;
+pub mod composition;
 pub mod io;
 pub mod lattice;
 pub mod math;
@@ -13,7 +15,6 @@ pub mod peak_sim;
 pub mod preferred_orientation;
 pub mod scatter;
 pub mod site;
-pub mod species;
 pub mod strain;
 pub mod structure;
 pub mod symop;

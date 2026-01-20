@@ -1,12 +1,6 @@
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::{SplitMix64, Xoshiro256PlusPlus};
-
-fn std_normal_box_muller_tf(rng: &mut impl Rng) -> f64 {
-    let u1: f64 = rng.random();
-    let u2: f64 = rng.random();
-
-    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
-}
+use crate::math::stats::std_normal_box_muller_tf;
 
 #[derive(Debug, Clone)]
 pub enum Noise {

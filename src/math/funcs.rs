@@ -20,11 +20,21 @@ pub const EPS_0_F_M1: f64 = 8.8541788188e-12;
 
 pub const SQRT_8_LN_2: f64 = 2.3548200450309493;
 
+/// atomic mass units to gram conversion factor
+pub const AMU_TO_G: f64 = 1.66053906892e-24;
+
 pub fn e_kev_to_lambda_ams(e_kev: f64) -> f64 {
     // e = h * c / lambda
     // lambda = h * c / e
     // m      = ev * s * m / ev
     H_EV_S * C_M_S / e_kev * 1e7
+}
+
+pub fn wavelength_ams_to_e_kev(wavelength_ams: f64) -> f64 {
+    // e = h * c / lambda
+    // lambda = h * c / e
+    // m      = ev * s * m / ev
+    H_EV_S * C_M_S / wavelength_ams * 1e-7
 }
 
 /// Scherrer broadening constant

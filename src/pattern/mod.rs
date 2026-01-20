@@ -8,6 +8,7 @@ use rand::Rng;
 use serde::Deserialize;
 
 use crate::background::Background;
+use crate::composition::FractionalComposition;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
@@ -93,12 +94,6 @@ pub fn get_weight_fractions(
     volume_fractions: &[f64],
     structures: &[Structure],
 ) -> Option<Box<[f64]>> {
-    for s in structures.iter() {
-        if s.density.is_none() {
-            return None;
-        }
-    }
-
     // phi_i = V_i / V_tot
     // V_tot = sum_i V_i
     // V_i = rho_i * m_i
@@ -120,7 +115,7 @@ pub fn get_weight_fractions(
         .iter()
         .zip(structures)
         .map(|(phi_i, s)| {
-            let rho_i = s.density.expect("we have all densities");
+            let rho_i = s.density_g_cm3;
             let rpi = rho_i * phi_i;
             sum_rho_i_phi_i += rpi;
             rpi
@@ -405,8 +400,8 @@ pub fn lorentz_polarization_factor_edxrd(theta_rad: f64) -> f64 {
 /// * `alpha_rad`: monochromator angle in radians
 pub fn lorentz_polarization_factor(theta_rad: f64, alpha_rad: f64) -> f64 {
     // Cullity 1978 P. 172
-    let polarization_fac = (1.0 + (2.0 * alpha_rad).cos() * (2.0 * theta_rad).cos().powi(2))
-        / (1.0 + (2.0 * alpha_rad).cos().powi(2));
+    let a2cos2 = (2.0 * alpha_rad).cos().powi(2);
+    let polarization_fac = (1.0 + a2cos2 * (2.0 * theta_rad).cos().powi(2)) / (1.0 + a2cos2);
 
     // Cullity 1978 P. 128
     let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
@@ -422,7 +417,6 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
 pub struct JobParams {
     pub abstol: f32,
     pub n_phases: usize,
-    pub has_weight_fracs: bool,
     pub textured_phases: Option<usize>,
     pub texture_measurement: Option<TextureMeasurement>,
     // TODO: make this a usize (but this makes indexing in peak_sim annoying)
@@ -493,7 +487,32 @@ pub struct Peak {
     pub i_hkl: f64,
     pub hkls: Vec<Vec3<i16>>,
 }
-pub type Peaks = Box<[Peak]>;
+
+pub struct Peaks {
+    pub peaks: Box<[Peak]>,
+    pub struct_idx: usize,
+}
+
+impl Peaks {
+    pub fn len(&self) -> usize {
+        self.peaks.len()
+    }
+
+    pub fn new(peaks: Vec<Peak>, struct_idx: usize) -> Self {
+        Self {
+            peaks: peaks.into(),
+            struct_idx,
+        }
+    }
+
+    pub fn iter_peaks(&self) -> impl Iterator<Item = &Peak> {
+        self.peaks.iter()
+    }
+
+    pub fn iter_peaks_mut(&mut self) -> impl Iterator<Item = &mut Peak> {
+        self.peaks.iter_mut()
+    }
+}
 
 impl PeakRenderParams {
     pub fn render(self, xs: &[f32], ys: &mut [f32], abstol: f32) {
@@ -601,6 +620,7 @@ impl Peak {
         &self,
         wavelength_nm: f64,
         instrument_parameters: &InstrumentParameters,
+        absorption_coefficient: f64,
         mean_ds_nm: f64,
         ds_eta: f64,
         mustrain: f64,
@@ -653,7 +673,9 @@ impl Peak {
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
-        let peak_weight = (self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight) as f32;
+        let peak_weight =
+            (absorption_coefficient * self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
+                as f32;
 
         PeakRenderParams {
             pos: (theta_hkl_rad.to_degrees() * 2.0) as f32,

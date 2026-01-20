@@ -1,5 +1,6 @@
 use ahash::HashMapExt;
 use itertools::Itertools;
+use log::{error, warn};
 use num_complex::Complex;
 use std::collections::HashMap;
 
@@ -8,18 +9,19 @@ use rand::Rng;
 
 use crate::cfg::Parameter;
 use crate::cif::CIFContents;
+use crate::composition::FractionalComposition;
 use crate::lattice::Lattice;
-use crate::math::e_kev_to_lambda_ams;
 use crate::math::linalg::{Mat3, Vec3};
+use crate::math::{e_kev_to_lambda_ams, funcs};
 use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
-use crate::site::Site;
-use crate::species::Atom;
+use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
+const DENSITY_RTOL: f64 = 1e-3;
 
 #[derive(Debug, Clone, PartialEq)]
 /// A phase's crystallographic structure
@@ -29,12 +31,14 @@ const SCALED_INTENSITY_TOL: f64 = 1e-5;
 /// * `sg_no`: space group number
 /// * `sg_class`: space group class
 /// * `density`: density of the phase in g/cm3, if present in the cif
+/// * `wt_composition`: composition of the structure by atomic weights
 pub struct Structure {
     pub lat: Lattice,
     pub sites: Vec<Site>,
     pub sg_no: u8, // there are 230 space groups, so u8 should be enough
     pub sg_class: SGClass,
-    pub density: Option<f64>,
+    pub density_g_cm3: f64,
+    pub wt_composition: FractionalComposition,
 }
 
 impl<'a> TryFrom<&CIFContents<'a>> for Structure {
@@ -42,10 +46,28 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
         let lattice = value.get_lattice();
+        let sites = value.get_sites()?;
+
+        let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
+        let density_dalton_per_amstrong_cubed = weight_dalton / lattice.volume();
+        const ANGSTROM3_TO_CM3: f64 = 1e-24;
+        let calc_density_g_cm3 =
+            density_dalton_per_amstrong_cubed * funcs::AMU_TO_G / ANGSTROM3_TO_CM3;
+        let given_density = value.get_density()?;
+
+        if let Some(given_density) = given_density {
+            let rel_diff = (given_density - calc_density_g_cm3).abs() / calc_density_g_cm3;
+            if rel_diff > DENSITY_RTOL {
+                let file_path = value.file_path.unwrap_or("(in-memory)");
+                warn!("{file_path}: Given and calculated densities do not match. Given: {given_density} g/cm3, calculated: {calc_density_g_cm3:.5}. Using calculated density.");
+            }
+        }
+
         Ok(Structure {
-            sites: value.get_sites()?,
+            wt_composition: FractionalComposition::from_sites(&sites),
+            sites,
             lat: lattice,
-            density: value.get_density()?,
+            density_g_cm3: calc_density_g_cm3,
             sg_no,
             sg_class,
         })
@@ -199,7 +221,7 @@ impl Structure {
                 .map(|x| x.debye_waller_factor(&pos, sin_theta_over_lambda))
                 .unwrap_or(1.0);
 
-            for atom in &site.species {
+            for atom in &site.site_label {
                 let scatter = &scattering_parameters[atom];
                 let fs = scatter.eval(sin_theta_over_lambda);
 
@@ -425,7 +447,7 @@ impl Structure {
 
     pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
         for site in self.sites.iter() {
-            for atom in &site.species {
+            for atom in &site.site_label {
                 if !scattering_parameters.contains_key(atom) {
                     let scatter = atom.scattering_params().expect(
                         format!("Could not find atomic scattering parameter for {atom}").as_str(),
@@ -551,9 +573,9 @@ loop_
 
     const FM3M_EXPECTED: [(f32, f32); 4] = [
         (19.70066419257163, 1.0),
-        (22.786339661733468, 0.488065),
-        (32.444550987327624, 0.30115674),
-        (38.244378463227896, 0.3261041),
+        (22.786339661733468, 0.4831601),
+        (32.444550987327624, 0.286404),
+        (38.244378463227896, 0.2998862),
     ];
 
     #[test]
@@ -570,7 +592,7 @@ loop_
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
                 (pos, intensity)
             })
             .collect_vec();
@@ -595,6 +617,7 @@ loop_
                 let PeakRenderParams { pos, intensity, .. } = peak.get_adxrd_render_params(
                     0.071,
                     &InstrumentParameters::zero(),
+                    1.0,
                     100.0,
                     1.0,
                     0.0,

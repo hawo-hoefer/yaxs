@@ -403,7 +403,7 @@ impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
 
 /// sample integers uniformly without replacement from the interval [0, max_val)
 ///
-/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
+/// from here <https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement>
 ///
 /// * `n`: number of samples
 /// * `max_val`: upper bound of the sampling range
@@ -432,7 +432,7 @@ pub fn uniform_sample_no_replacement_knuth_arr<const N: usize>(
 
 /// sample integers uniformly without replacement from the interval [0, max_val)
 ///
-/// from here https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement
+/// from here <https://stackoverflow.com/questions/311703/algorithm-for-sampling-without-replacement>
 ///
 /// * `n`: number of samples
 /// * `max_val`: upper bound of the
