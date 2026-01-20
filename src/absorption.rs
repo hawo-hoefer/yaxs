@@ -3,6 +3,7 @@ use ordered_float::NotNan;
 
 use crate::composition::FractionalComposition;
 use crate::element::Element;
+use crate::pattern::adxrd::PrecomputedLACs;
 
 lazy_static! {
     static ref MAC_DATA: [MACData; NUM_ENTRIES] = {
@@ -95,6 +96,47 @@ impl MACData {
             }
         }
     }
+}
+
+/// Compute the linear attenuation coefficient for mixtures of phases present in PrecomputedLACs
+///
+/// Returns one value per emission line present in lacs.
+///
+/// * `volume_fractions`: volume fractions of the phases
+/// * `lacs`: precomputed linear absorption coefficients for pure components
+///
+/// computation is done according to Equation 6 in Chapter 2 of X-Ray Mass Attenuation Coefficients
+/// <https://physics.nist.gov/PhysRefData/XrayMassCoef/chap2.html>
+///
+/// $$ \frac{\mu_\text{m}}{\rho_\text{m}} = \sum_{i} w_i \left(\frac{\mu}{\rho}\right)_i $$
+///
+/// using the relation of volume and mass fraction $$ w_i = \frac{\rho_i v_i}{\rho_m} \Longrightarrow v_i = \frac{w_i}{\rho_i} \rho_m, $$
+/// we can shuffle the above relation a bit and arrive at
+/// $$
+/// \mu_\text{m} = \sum_i \frac{w_i \rho_\text{m}}{\rho_i} \mu_i = \sum_i v_i \mu_i.
+/// $$
+pub fn compute_mixture_attenuation_coef(
+    volume_fractions: &[f64],
+    lacs: &PrecomputedLACs,
+) -> Box<[f64]> {
+    for emission_line_data in lacs.0.iter() {
+        assert_eq!(
+            volume_fractions.len(),
+            emission_line_data.len(),
+            "lacs are present for all structures"
+        );
+    }
+
+    let mut mixture_attenuation_coefs = Vec::with_capacity(lacs.0.len());
+    for by_emission_line in lacs.0.iter() {
+        let mix_lac = volume_fractions
+            .iter()
+            .zip(by_emission_line.iter())
+            .map(|(vf, lac)| vf * lac)
+            .sum::<f64>();
+        mixture_attenuation_coefs.push(mix_lac);
+    }
+    mixture_attenuation_coefs.into()
 }
 
 pub fn get_mac_data(el: Element) -> Option<&'static MACData> {

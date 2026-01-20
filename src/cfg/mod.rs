@@ -9,7 +9,7 @@ mod volume_fraction;
 
 use std::sync::Arc;
 
-use crate::absorption;
+use crate::absorption::{self, compute_mixture_attenuation_coef};
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -32,7 +32,7 @@ mod texture;
 
 use crate::math::{e_kev_to_lambda_ams, funcs};
 use crate::pattern::adxrd::{
-    ADXRDMeta, DiscretizeAngleDispersive, EmissionLine, InstrumentParameters, PrecomputedABS,
+    ADXRDMeta, DiscretizeAngleDispersive, EmissionLine, InstrumentParameters, PrecomputedLACs,
 };
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{
@@ -171,7 +171,7 @@ impl SimulationKind {
 pub fn precompute_absorption_factors(
     wavelengths: impl Iterator<Item = f64>,
     structures: &[Structure],
-) -> Result<PrecomputedABS, String> {
+) -> Result<PrecomputedLACs, String> {
     let mut ret = Vec::new();
     for w in wavelengths {
         let energy_kev = funcs::e_kev_to_lambda_ams(w);
@@ -185,7 +185,7 @@ pub fn precompute_absorption_factors(
         ret.push(structure_absorption_factors.into());
     }
 
-    Ok(PrecomputedABS(ret.into()))
+    Ok(PrecomputedLACs(ret.into()))
 }
 
 fn default_monochromator_angle() -> f64 {
@@ -446,7 +446,7 @@ impl ToDiscretize {
         vf_generator: &VFGenerator,
         angle_dispersive: &AngleDispersive,
         simulation_parameters: &SimulationParameters,
-        precomputed_lacs: PrecomputedABS,
+        precomputed_lacs: PrecomputedLACs,
         rng: &mut impl Rng,
     ) -> DiscretizeAngleDispersive {
         let AngleDispersive {
@@ -479,6 +479,8 @@ impl ToDiscretize {
         let vol_fractions = vf_generator.generate(rng);
         let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
 
+        let attenuation_coefs = compute_mixture_attenuation_coef(&vol_fractions, &precomputed_lacs);
+
         let random_b_iso = self.get_random_b_iso(&permutation_ids);
 
         DiscretizeAngleDispersive {
@@ -495,7 +497,7 @@ impl ToDiscretize {
             emission_lines: emission_lines.clone(),
             goniometer_radius_mm: *goniometer_radius_mm,
             normalize: simulation_parameters.normalize,
-            precomputed_abs: precomputed_lacs,
+            attenuation_coefs,
             meta: ADXRDMeta {
                 vol_fractions,
                 weight_fractions,

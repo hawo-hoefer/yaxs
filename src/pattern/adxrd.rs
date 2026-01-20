@@ -90,7 +90,7 @@ pub struct DiscretizeAngleDispersive {
     pub meta: ADXRDMeta,
     pub goniometer_radius_mm: f64,
     pub monochromator_angle_rad: f64,
-    pub precomputed_abs: PrecomputedABS,
+    pub attenuation_coefs: Box<[f64]>,
 }
 
 impl Discretizer for DiscretizeAngleDispersive {
@@ -126,7 +126,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                 let idx = self.common.idx(phase_idx);
                 let peaks = &self.common.sim_res.all_simulated_peaks[idx];
 
-                let abs = self.precomputed_abs.0[line_idx][phase_idx];
+                let abs = 1.0 / (2.0 * self.attenuation_coefs[line_idx]);
 
                 peaks.iter_peaks().map(move |peak| {
                     peak.get_adxrd_render_params(
@@ -351,32 +351,32 @@ impl Discretizer for DiscretizeAngleDispersive {
 
 /// absorption factors for all structures and wavelengths
 /// outer index is emission line, inner is structure
-pub struct PrecomputedABS(pub Arc<[Box<[f64]>]>);
+pub struct PrecomputedLACs(pub Arc<[Box<[f64]>]>);
 
-impl PrecomputedABS {
+impl PrecomputedLACs {
     pub fn try_new(
         wavelengths: impl Iterator<Item = f64>,
         structures: &[Structure],
         structure_paths: &[String],
-    ) -> Result<PrecomputedABS, String> {
+    ) -> Result<PrecomputedLACs, String> {
         let mut ret = Vec::new();
         for w in wavelengths {
             let energy_kev = funcs::e_kev_to_lambda_ams(w);
 
-            let mut structure_absorption_factors = Vec::with_capacity(structures.len());
+            let mut structure_lacs = Vec::with_capacity(structures.len());
             for (s, p) in structures.iter().zip(structure_paths) {
                 let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
                 let lac = mac * s.density_g_cm3;
-                structure_absorption_factors.push(1.0 / (2.0 * lac));
+                structure_lacs.push(lac);
             }
-            ret.push(structure_absorption_factors.into());
+            ret.push(structure_lacs.into());
         }
 
-        Ok(PrecomputedABS(ret.into()))
+        Ok(PrecomputedLACs(ret.into()))
     }
 }
 
-impl Clone for PrecomputedABS {
+impl Clone for PrecomputedLACs {
     fn clone(&self) -> Self {
         Self(Arc::clone(&self.0))
     }
@@ -387,7 +387,7 @@ pub struct JobGen<T> {
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
-    precomputed_abs: PrecomputedABS,
+    precomputed_lacs: PrecomputedLACs,
     two_thetas: Vec<f32>,
     n: usize,
     rng: T,
@@ -399,7 +399,7 @@ impl<T> JobGen<T> {
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
-        precomputed_abs: PrecomputedABS,
+        precomputed_lacs: PrecomputedLACs,
         rng: T,
     ) -> Self {
         let mut two_thetas = Vec::with_capacity(cfg.n_steps);
@@ -417,7 +417,7 @@ impl<T> JobGen<T> {
             two_thetas,
             n: 0,
             rng,
-            precomputed_abs,
+            precomputed_lacs,
         }
     }
 }
@@ -437,7 +437,7 @@ where
             &self.vf_generator,
             &self.cfg,
             &self.sim_params,
-            self.precomputed_abs.clone(),
+            self.precomputed_lacs.clone(),
             &mut self.rng,
         );
 

@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 use yaxs::absorption;
 use yaxs::cif::CifParser;
 use yaxs::math::{funcs, pseudo_voigt};
-use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedABS};
+use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak, PeakRenderParams};
 use yaxs::structure::Structure;
 
@@ -143,7 +143,7 @@ fn display_hkls(
             SimulationKind::AngleDispersive(ad) => {
                 let structures = std::sync::Arc::as_ref(&to_discretize.structures);
                 let wavelength_ams = ad.emission_lines[0].wavelength_ams;
-                let abs = PrecomputedABS::try_new(
+                let abs = PrecomputedLACs::try_new(
                     std::iter::once(wavelength_ams),
                     structures,
                     structure_paths,
