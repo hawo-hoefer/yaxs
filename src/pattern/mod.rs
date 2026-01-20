@@ -400,8 +400,8 @@ pub fn lorentz_polarization_factor_edxrd(theta_rad: f64) -> f64 {
 /// * `alpha_rad`: monochromator angle in radians
 pub fn lorentz_polarization_factor(theta_rad: f64, alpha_rad: f64) -> f64 {
     // Cullity 1978 P. 172
-    let polarization_fac = (1.0 + (2.0 * alpha_rad).cos() * (2.0 * theta_rad).cos().powi(2))
-        / (1.0 + (2.0 * alpha_rad).cos().powi(2));
+    let a2cos2 = (2.0 * alpha_rad).cos().powi(2);
+    let polarization_fac = (1.0 + a2cos2 * (2.0 * theta_rad).cos().powi(2)) / (1.0 + a2cos2);
 
     // Cullity 1978 P. 128
     let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
