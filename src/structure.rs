@@ -21,6 +21,7 @@ use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
+const DENSITY_RTOL: f64 = 1e-3;
 
 #[derive(Debug, Clone, PartialEq)]
 /// A phase's crystallographic structure
@@ -49,15 +50,16 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
 
         let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
         let density_dalton_per_amstrong_cubed = weight_dalton / lattice.volume();
-        println!("wt - {}, vol - {}", weight_dalton, lattice.volume());
         const ANGSTROM3_TO_CM3: f64 = 1e-24;
-        let density_g_cm3 = density_dalton_per_amstrong_cubed * funcs::AMU_TO_G / ANGSTROM3_TO_CM3;
+        let calc_density_g_cm3 =
+            density_dalton_per_amstrong_cubed * funcs::AMU_TO_G / ANGSTROM3_TO_CM3;
         let given_density = value.get_density()?;
 
         if let Some(given_density) = given_density {
-            if given_density != density_g_cm3 {
+            let rel_diff = (given_density - calc_density_g_cm3).abs() / calc_density_g_cm3;
+            if rel_diff > DENSITY_RTOL {
                 let file_path = value.file_path.unwrap_or("(in-memory)");
-                warn!("{file_path}: Given and calculated densities do not match. Given: {given_density} g/cm3, calculated: {density_g_cm3}. Using calculated density.");
+                warn!("{file_path}: Given and calculated densities do not match. Given: {given_density} g/cm3, calculated: {calc_density_g_cm3:.5}. Using calculated density.");
             }
         }
 
@@ -65,7 +67,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
             wt_composition: FractionalComposition::from_sites(&sites),
             sites,
             lat: lattice,
-            density_g_cm3,
+            density_g_cm3: calc_density_g_cm3,
             sg_no,
             sg_class,
         })
