@@ -43,6 +43,15 @@ const ANISO_ADP_B_LABELS: [&str; 6] = [
     "_atom_site_aniso_B_33",
 ];
 
+const ANISO_ADP_BETA_LABELS: [&str; 6] = [
+    "_atom_site_aniso_beta_11",
+    "_atom_site_aniso_beta_12",
+    "_atom_site_aniso_beta_22",
+    "_atom_site_aniso_beta_13",
+    "_atom_site_aniso_beta_23",
+    "_atom_site_aniso_beta_33",
+];
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct CifParser<'a> {
     file_path: Option<String>,
@@ -197,6 +206,19 @@ fn extract_aniso_adp(
         )?;
 
         return Ok(Some(AtomicDisplacement::Bani(mat)));
+    }
+
+    let aniso_beta_ident = ANISO_ADP_BETA_LABELS[0];
+    if atom_site_aniso_table.contains_key(aniso_beta_ident) {
+        let mat = parse_matrix_from_symmetric_order_labels(
+            atom_site_aniso_table,
+            &ANISO_ADP_BETA_LABELS,
+            aniso_beta_ident,
+            label,
+            idx,
+        )?;
+
+        return Ok(Some(AtomicDisplacement::BetaAniso(mat)));
     }
 
     let mut table_labels = String::from("[");
@@ -422,7 +444,7 @@ impl<'a> CIFContents<'a> {
                     use IsotropicDisplacementInFile::*;
                     match how_found {
                         FoundUnlabeled => {
-                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using anisotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
                             Some(aniso_adp)
                         }
                         FoundLabeled => {
@@ -488,20 +510,16 @@ impl<'a> CIFContents<'a> {
             }
 
             for op in symops.iter() {
+                use AtomicDisplacement::*;
                 let s = Site {
                     coords: op.apply(&base_site.coords),
                     site_label: base_site.site_label.clone(),
                     occu: base_site.occu,
                     displacement: match base_site.displacement {
-                        Some(AtomicDisplacement::Uiso(_) | AtomicDisplacement::Biso(_)) | None => {
-                            base_site.displacement.clone()
-                        }
-                        Some(AtomicDisplacement::Uani(ref v)) => {
-                            Some(AtomicDisplacement::Uani(op.transform_orientation(&v)))
-                        }
-                        Some(AtomicDisplacement::Bani(ref v)) => {
-                            Some(AtomicDisplacement::Bani(op.transform_orientation(&v)))
-                        }
+                        Some(Uiso(_) | Biso(_)) | None => base_site.displacement.clone(),
+                        Some(Uani(ref v)) => Some(Uani(op.transform_orientation(&v))),
+                        Some(Bani(ref v)) => Some(Bani(op.transform_orientation(&v))),
+                        Some(BetaAniso(ref v)) => Some(BetaAniso(op.transform_orientation(&v))),
                     },
                 };
 

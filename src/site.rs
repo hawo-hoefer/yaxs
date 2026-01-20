@@ -248,6 +248,7 @@ pub enum AtomicDisplacement {
     Biso(f64),
     Uani(Mat3<f64>),
     Bani(Mat3<f64>),
+    BetaAniso(Mat3<f64>),
     // Uovl,
     // Umpe,
     // Bovl,
@@ -281,6 +282,15 @@ impl AtomicDisplacement {
                 }
                 (-2.0 * PI * PI * t).exp()
             }
+            AtomicDisplacement::BetaAniso(b) => {
+                let mut t = 0.0;
+                for j in 0..3 {
+                    for l in 0..3 {
+                        t += b[(j, l)] / (8.0 * PI * PI);
+                    }
+                }
+                (-2.0 * PI * PI * t).exp()
+            }
         }
     }
 
@@ -290,6 +300,7 @@ impl AtomicDisplacement {
             AtomicDisplacement::Biso(_) => "Biso",
             AtomicDisplacement::Uani(_) => "Uani",
             AtomicDisplacement::Bani(_) => "Bani",
+            AtomicDisplacement::BetaAniso(_) => "BetaAniso",
         }
     }
 }
