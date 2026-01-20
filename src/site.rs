@@ -103,7 +103,8 @@ impl SiteLabel {
             let parsed = Element::try_from(el)?;
             Ok((
                 parsed,
-                std::str::from_utf8(&val.as_bytes()[el.len()..]).unwrap(),
+                std::str::from_utf8(&val.as_bytes()[el.len()..])
+                    .expect("we construct bytes from string"),
             ))
         } else {
             Ok((Element::try_from(val)?, &val[..0]))
@@ -136,7 +137,8 @@ impl SiteLabel {
                 }
 
                 let num: i16 = ion.parse().expect("");
-                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..]).unwrap();
+                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..])
+                    .expect("we construct bytes from string");
                 return Some((num, rest));
             }
             Some('-') => {
@@ -162,7 +164,8 @@ impl SiteLabel {
                 }
 
                 let num: i16 = ion.parse().expect("");
-                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..]).unwrap();
+                rest = std::str::from_utf8(&rest.as_bytes()[ion.len()..])
+                    .expect("we construct bytes from string");
                 return Some((-num, rest));
             }
             Some('*') => unimplemented!("'*' - ionization specifier"),
@@ -176,12 +179,17 @@ impl SiteLabel {
         // check for multiple ionization specified with number
         if let Some((ion, _)) = val.split_once(|x: char| !x.is_numeric()) {
             let mut ionization: i16 = ion.parse().ok()?;
-            let mut rest = std::str::from_utf8(&val.as_bytes()[ion.len()..]).unwrap();
+            let mut rest = std::str::from_utf8(&val.as_bytes()[ion.len()..])
+                .expect("we construct bytes from string");
             match rest.chars().next() {
-                Some('+') => rest = std::str::from_utf8(&rest.as_bytes()[1..]).unwrap(),
+                Some('+') => {
+                    rest = std::str::from_utf8(&rest.as_bytes()[1..])
+                        .expect("we construct bytes from string")
+                }
                 Some('-') => {
                     ionization = -ionization;
-                    rest = std::str::from_utf8(&rest.as_bytes()[1..]).unwrap();
+                    rest = std::str::from_utf8(&rest.as_bytes()[1..])
+                        .expect("we construct bytes from string");
                 }
                 Some(_) => (),
                 None => (),

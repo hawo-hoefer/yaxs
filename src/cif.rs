@@ -453,7 +453,6 @@ impl<'a> CIFContents<'a> {
                 .try_to_f64()
                 .map_err(|err| format!("_atom_site_occupancy has wrong type: {err}"))?;
 
-            // TODO: remove unwraps, proper error handling
             let coords = Vec3::new(
                 site_table["_atom_site_fract_x"][i]
                     .try_to_f64()
@@ -660,7 +659,8 @@ impl<'a> CifParser<'a> {
         while self.c.starts_with('#') {
             // skip comments
             let next_line = self.c.find('\n').unwrap_or(self.c.len() - 1) + 1;
-            self.c = std::str::from_utf8(&self.c.as_bytes()[next_line..]).unwrap();
+            self.c = std::str::from_utf8(&self.c.as_bytes()[next_line..])
+                .expect("we construct bytes from self");
         }
     }
 
