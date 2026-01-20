@@ -38,10 +38,7 @@ class MACData:
         return ret.join(data)
 
 
-zmax = 92
-mac_data = []
-for z in range(1, zmax + 1):
-    print(f"Downloading mac data for z = {z} [{int((z - 1)/zmax * 100):>3}% done]", end="\r")
+def download_mac_data(z: int) -> MACData:
     r = requests.get(
         f"https://physics.nist.gov/cgi-bin/ffast/ffast.pl?Z={z}&Formula=&gtype=3&lower=&upper=&density=&frames=no"
     )
@@ -62,7 +59,18 @@ for z in range(1, zmax + 1):
         energies.append(energy)
         macs.append(mac)
 
-    mac_data.append(MACData(energies, macs, z))
+    return MACData(energies, macs, z)
+
+
+zmax = 92
+mac_data = []
+for z in range(1, zmax + 1):
+    print(
+        f"Downloading mac data for z = {z} [{int((z - 1)/zmax * 100):>3}% done]",
+        end="\r",
+    )
+
+    mac_data.append(download_mac_data(z))
 
 cols = os.get_terminal_size().columns
 print(f"{'Done downloading.':<{cols}}")
