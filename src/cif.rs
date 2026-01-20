@@ -363,21 +363,40 @@ impl<'a> CIFContents<'a> {
         Ok(ret)
     }
 
-    pub fn get_lattice(&self) -> Lattice {
-        let Some((a, b, c)) = LENGTH_KEYS
+    pub fn get_lattice(&self) -> Result<Lattice, String> {
+        let (a, b, c) = LENGTH_KEYS
             .iter()
-            .map(|k: &&str| self.kvs.get(*k).unwrap().try_to_f64().unwrap())
-            .collect_tuple::<(f64, f64, f64)>()
-        else {
-            panic!("This has to be three values")
-        };
-        let Some((alpha, beta, gamma)) = ANGLE_KEYS
+            .map(|k: &&str| -> Result<f64, String> {
+                let value = self.kvs.get(*k).ok_or(format!("Missing {k} in cif."))?;
+                let value = value
+                    .try_to_f64()
+                    .map_err(|err| format!("{k} has wrong type: {err}"))?;
+                if value == 0.0 {
+                    return Err(format!("{k} cannot be 0"));
+                }
+                Ok(value)
+            })
+            .process_results(|iter| {
+                iter.collect_tuple::<(f64, f64, f64)>()
+                    .expect("There are 3 values in LENGTH_KEYS.")
+            })?;
+
+        let (alpha, beta, gamma) = ANGLE_KEYS
             .iter()
-            .map(|k: &&str| self.kvs.get(*k).unwrap().try_to_f64().unwrap().to_radians())
-            .collect_tuple::<(f64, f64, f64)>()
-        else {
-            panic!("This has to be three values")
-        };
+            .map(|k: &&str| -> Result<f64, String> {
+                let value = self.kvs.get(*k).ok_or(format!("Missing {k} in cif."))?;
+                let value = value
+                    .try_to_f64()
+                    .map_err(|err| format!("{k} has wrong type: {err}"))?;
+                if value == 0.0 {
+                    return Err(format!("{k} cannot be 0"));
+                }
+                Ok(value)
+            })
+            .process_results(|iter| {
+                iter.collect_tuple::<(f64, f64, f64)>()
+                    .expect("There are 3 values in LENGTH_KEYS.")
+            })?;
 
         // from pymatgen.core.Lattice.from_parameters
         let val = alpha.cos() * beta.cos() - gamma.cos() / (alpha.sin() * beta.sin());
@@ -390,9 +409,9 @@ impl<'a> CIFContents<'a> {
             b * alpha.cos(),
         ];
         let vc = [0.0, 0.0, c];
-        Lattice {
+        Ok(Lattice {
             mat: Mat3::from_cols([va, vb, vc]),
-        }
+        })
     }
 
     pub fn get_sites(&self) -> Result<Vec<Site>, String> {

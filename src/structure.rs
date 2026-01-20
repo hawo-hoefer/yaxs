@@ -45,7 +45,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     type Error = String;
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
-        let lattice = value.get_lattice();
+        let lattice = value.get_lattice()?;
         let sites = value.get_sites()?;
 
         let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
