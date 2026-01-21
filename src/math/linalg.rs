@@ -200,6 +200,11 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
     }
 
     /// Compute magnitude (L2-Norm) of the vector
+    /// ```
+    /// use yaxs::math::linalg::ColVec;
+    /// let vec = ColVec::from_col([1.0f64, 1.0f64, 1.0f64]);
+    /// assert_eq!(vec.magnitude(), 3.0f64.sqrt())
+    /// ```
     pub fn magnitude(&self) -> T
     where
         T: Float,
