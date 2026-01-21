@@ -107,6 +107,10 @@ fn parse_xyz(mut s: &str) -> Result<[f64; 4], String> {
                 s = s.split_once(' ').expect("we know the first character").1;
                 output[3] += coef;
             }
+            Some('-') | Some('+') => {
+                // we parsed the constant but are in the middle of the string
+                output[3] += coef;
+            }
             None => {
                 // we're at the end
                 output[3] += coef;
@@ -126,7 +130,7 @@ fn parse_xyz(mut s: &str) -> Result<[f64; 4], String> {
             }
             Some(a) => {
                 return Err(format!(
-                    "Invalid direction. Expected x, y, or z, but got {a}"
+                    "Invalid direction '{a}' while trying to parse symmetry operation '{s}'. Expected x, y, or z, but got {a}"
                 ))
             }
         }
@@ -197,6 +201,15 @@ mod test {
             [0.0, 0.0, 0.0, 1.0],
         ]);
         assert_eq!(op.mat, exp);
+    }
+
+    #[test]
+    fn parse_xyz_num_before_letter() {
+        assert_eq!([0.0, -1.0, 0.0, 0.5], parse_xyz("1/2-y").expect("is valid"));
+        assert_eq!(
+            [1.0, 0.0, 0.0, 0.5],
+            parse_xyz("1/2 + x").expect("is valid")
+        );
     }
 
     #[test]
