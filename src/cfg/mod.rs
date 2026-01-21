@@ -9,7 +9,7 @@ mod volume_fraction;
 
 use std::sync::Arc;
 
-use crate::absorption::{self, compute_mixture_attenuation_coef};
+use crate::absorption::{compute_mixture_attenuation_coef, MACGenerator};
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -523,6 +523,7 @@ impl ToDiscretize {
     pub fn generate_edxrd_job(
         &self,
         vf_generator: &VFGenerator,
+        mac_generator: &MACGenerator,
         energy_dispersive: &EnergyDispersive,
         simulation_parameters: &SimulationParameters,
         rng: &mut impl Rng,
@@ -540,6 +541,13 @@ impl ToDiscretize {
         let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
         let random_b_iso = self.get_random_b_iso(&permutation_ids);
 
+        let mixture_mac = mac_generator.get_mixture(
+            self.structures
+                .iter()
+                .zip(weight_fractions.iter())
+                .map(|(s, wf)| (&s.wt_composition, *wf)),
+        );
+
         DiscretizeEnergyDispersive {
             common: RenderCommon {
                 sim_res: Arc::clone(&self.sim_res),
@@ -553,6 +561,7 @@ impl ToDiscretize {
             },
             beamline: energy_dispersive.beamline.clone(),
             normalize: simulation_parameters.normalize,
+            mixture_mac,
             meta: EDXRDMeta {
                 vol_fractions,
                 weight_fractions,

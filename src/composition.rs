@@ -3,7 +3,6 @@ use std::str::FromStr;
 
 use crate::element::Element;
 use crate::site::{Site, SiteLabel};
-use crate::structure::Structure;
 
 #[derive(Debug, Clone, PartialEq)]
 /// A Composition by Mole
@@ -13,6 +12,16 @@ use crate::structure::Structure;
 ///
 /// We only support parsing from sum formula right now.
 pub struct Composition(Vec<(Element, f64)>);
+
+impl<'a> IntoIterator for &'a Composition {
+    type Item = &'a (Element, f64);
+
+    type IntoIter = core::slice::Iter<'a, (Element, f64)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 /// a structure's composition by weight fraction
 #[derive(Debug, Clone, PartialEq)]
@@ -27,10 +36,14 @@ impl FractionalComposition {
             }
         }
 
-        Self::new(Composition(composition.drain().collect()))
+        Self::from_composition(Composition(composition.drain().collect()))
     }
 
-    pub fn new(Composition(mut elements): Composition) -> Self {
+    pub fn new(elements: Vec<(Element, f64)>) -> Self {
+        Self(elements)
+    }
+
+    pub fn from_composition(Composition(mut elements): Composition) -> Self {
         let total_mass = elements
             .iter()
             .map(|(el, n)| el.atomic_weight() * n)
@@ -58,6 +71,16 @@ impl FractionalComposition {
         let mac = self.get_mac_at_energy(energy_kev)?;
 
         return Ok(density * mac);
+    }
+}
+
+impl<'a> IntoIterator for &'a FractionalComposition {
+    type Item = &'a (Element, f64);
+
+    type IntoIter = core::slice::Iter<'a, (Element, f64)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -105,7 +128,7 @@ impl FromStr for FractionalComposition {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let c = Composition::from_str(s)?;
-        Ok(Self::new(c))
+        Ok(Self::from_composition(c))
     }
 }
 

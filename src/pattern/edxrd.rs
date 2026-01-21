@@ -3,6 +3,7 @@ use rand::Rng;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
+use crate::absorption::{MACData, MACGenerator};
 use crate::background::Background;
 use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
 use crate::io::PatternMeta;
@@ -190,7 +191,7 @@ impl Beamline {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EDXRDMeta {
     pub vol_fractions: Box<[f64]>,
-    pub weight_fractions: Option<Box<[f64]>>,
+    pub weight_fractions: Box<[f64]>,
     pub mean_ds_nm: Box<[f64]>,
     pub ds_eta: Box<[f64]>,
     pub mustrain: Box<[f64]>,
@@ -205,6 +206,7 @@ pub struct DiscretizeEnergyDispersive {
     pub beamline: Beamline,
     pub normalize: bool,
     pub meta: EDXRDMeta,
+    pub mixture_mac: MACData,
 }
 
 impl Discretizer for DiscretizeEnergyDispersive {
@@ -233,7 +235,6 @@ impl Discretizer for DiscretizeEnergyDispersive {
         .map(
             move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
-                todo!("linear attenuation coefficient");
                 self.common.sim_res.all_simulated_peaks[flat_idx]
                     .peaks
                     .iter()
@@ -247,6 +248,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                             *mus_eta_phase,
                             *vf,
                             &self.beamline,
+                            &self.mixture_mac,
                         )
                     })
             },
@@ -262,6 +264,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                 0.0,
                 1.0,
                 &self.beamline,
+                &self.mixture_mac,
             )
         }))
     }
@@ -334,11 +337,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
             InstrumentParameters(_) => unreachable!("No Caglioti parameters in EDXRD"),
             SampleDisplacementMuM(_) => unreachable!("No sample displacement in EDXRD"),
             WeightFractions(dst) => {
-                let Some(ref wfs) = self.meta.weight_fractions else {
-                    panic!("Can only call this if weight fractions were computed before.");
-                };
                 for i in 0..n_phases {
-                    dst[(pat_id, i)] = wfs[i] as f32;
+                    dst[(pat_id, i)] = self.meta.weight_fractions[i] as f32;
                 }
             }
             BackgroundParameters(_) => {
@@ -430,6 +430,7 @@ pub struct JobGen<T> {
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
     vf_generator: VFGenerator,
+    mac_generator: MACGenerator,
     energies: Vec<f32>,
     n: usize,
     rng: T,
@@ -441,6 +442,7 @@ impl<T> JobGen<T> {
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
         vf_generator: VFGenerator,
+        mac_generator: MACGenerator,
         rng: T,
     ) -> Self
     where
@@ -459,6 +461,7 @@ impl<T> JobGen<T> {
             rng,
             energies,
             n: 0,
+            mac_generator,
         }
     }
 }
@@ -476,6 +479,7 @@ where
 
         let job = self.discretize_info.generate_edxrd_job(
             &self.vf_generator,
+            &self.mac_generator,
             &self.cfg,
             &self.sim_params,
             &mut self.rng,

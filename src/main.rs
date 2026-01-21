@@ -7,18 +7,16 @@ use rand::SeedableRng;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
-use yaxs::absorption;
+use yaxs::absorption::MACGenerator;
 use yaxs::cif::CifParser;
-use yaxs::math::{funcs, pseudo_voigt};
+use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak, PeakRenderParams};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak};
 use yaxs::structure::Structure;
 
-use log::{error, info, warn};
+use log::{error, info};
 
-use yaxs::cfg::{
-    precompute_absorption_factors, Config, SimulationKind, StructureDef, ToDiscretize,
-};
+use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
 use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
     OutputNames, SimulationMetadata,
@@ -185,6 +183,17 @@ fn display_hkls(
             SimulationKind::EnergyDispersive(ed) => {
                 let theta_rad = ed.theta_deg.to_radians();
                 let f_lorentz = lorentz_polarization_factor_edxrd(theta_rad);
+                let structures = std::sync::Arc::as_ref(&to_discretize.structures);
+                let mac_generator = MACGenerator::from_structures_energy(
+                    &structures[idx..idx + 1],
+                    ed.energy_range_kev,
+                )
+                .unwrap_or_else(|err| {
+                    error!("Could not create MAC Generator: {err}");
+                    std::process::exit(1);
+                });
+                let mac_data = mac_generator
+                    .get_mixture(std::iter::once((&structures[idx].wt_composition, 1.0f64)));
                 to_discretize.sim_res.all_simulated_peaks[idx]
                     .iter_peaks()
                     .map(|p: &Peak| {
@@ -197,6 +206,7 @@ fn display_hkls(
                             0.0,
                             1.0,
                             &ed.beamline,
+                            &mac_data,
                         );
 
                         let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
@@ -430,7 +440,10 @@ Device ID:           {}",
     info!("Simulating Peak Positions took {elapsed:.2}s");
 
     if let Some(mode) = args.io.display_hkls {
-        display_hkls(to_discretize, cfg, &structure_paths, mode);
+        display_hkls(to_discretize, cfg, &structure_paths, mode).unwrap_or_else(|err| {
+            error!("Could not display hkls: {err}");
+            std::process::exit(1);
+        });
         std::process::exit(0);
     }
 
@@ -483,12 +496,13 @@ Device ID:           {}",
 
     match cfg.kind.clone() {
         SimulationKind::AngleDispersive(angle_dispersive) => {
-            let absorption_factors = precompute_absorption_factors(
+            let absorption_factors = PrecomputedLACs::try_new(
                 angle_dispersive
                     .emission_lines
                     .iter()
                     .map(|line| line.wavelength_ams),
                 &structures,
+                &structure_paths,
             )
             .unwrap_or_else(|err| {
                 error!("Could not precompute absorption factors: {err}.");
@@ -505,8 +519,22 @@ Device ID:           {}",
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
         SimulationKind::EnergyDispersive(energy_dispersive) => {
-            let gen =
-                edxrd::JobGen::new(energy_dispersive, to_discretize, params, vf_generator, rng);
+            let mac_generator = MACGenerator::from_structures_energy(
+                &structures,
+                energy_dispersive.energy_range_kev,
+            )
+            .unwrap_or_else(|err| {
+                error!("Could not create MAC Generator: {err}");
+                std::process::exit(1);
+            });
+            let gen = edxrd::JobGen::new(
+                energy_dispersive,
+                to_discretize,
+                params,
+                vf_generator,
+                mac_generator,
+                rng,
+            );
             render_and_write_jobs(gen, args, timestamp_started, extra)
         }
     }

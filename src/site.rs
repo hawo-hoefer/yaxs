@@ -66,6 +66,7 @@ impl Site {
             .map(|x| x.el.atomic_weight())
             .sum::<f64>();
         let site_wt_with_duplicates = wt_dalton * self.occu;
+        // TODO: why is this wrong?
         // let edge_positions = self
         //     .coords
         //     .iter_values()

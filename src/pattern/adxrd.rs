@@ -16,7 +16,7 @@ use rand::Rng;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ADXRDMeta {
     pub vol_fractions: Box<[f64]>,
-    pub weight_fractions: Option<Box<[f64]>>,
+    pub weight_fractions: Box<[f64]>,
     pub mean_ds_nm: Box<[f64]>,
     pub ds_eta: Box<[f64]>,
     pub mustrain: Box<[f64]>,
@@ -261,11 +261,8 @@ impl Discretizer for DiscretizeAngleDispersive {
                 }
             }
             WeightFractions(dst) => {
-                let Some(ref wfs) = self.meta.weight_fractions else {
-                    panic!("Can only call this if weight fractions were computed before.");
-                };
                 for i in 0..n_phases {
-                    dst[(pat_id, i)] = wfs[i] as f32;
+                    dst[(pat_id, i)] = self.meta.weight_fractions[i] as f32;
                 }
             }
             SampleDisplacementMuM(dst) => dst[pat_id] = self.meta.sample_displacement_mu_m as f32,

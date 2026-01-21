@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use ordered_float::NotNan;
 
 use crate::composition::FractionalComposition;
 use crate::element::Element;
 use crate::pattern::adxrd::PrecomputedLACs;
+use crate::structure::Structure;
 
 lazy_static! {
     static ref MAC_DATA: [MACData; NUM_ENTRIES] = {
@@ -69,10 +73,9 @@ impl MACData {
     /// by interpolating the loaded data
     ///
     /// * `energy_kev`: energy in keV
-    pub(crate) fn interpolate(&self, energy_kev: f64) -> Result<f64, String> {
-        let e0 = **self.energies.first().expect("at least one value");
-        let e1 = **self.energies.last().expect("at least one value");
-        if energy_kev < e0 || energy_kev > e1 {
+    pub fn interpolate(&self, energy_kev: f64) -> Result<NotNan<f64>, String> {
+        let (e0, e1) = self.energy_limits();
+        if energy_kev < *e0 || energy_kev > *e1 {
             return Err(format!("No data to interpolate mass attenuation coefficient outside of energy range [{e0}, {e1}] keV. Got {energy_kev} keV"));
         }
         match self
@@ -85,15 +88,150 @@ impl MACData {
                 return Ok(self.macs[found_index].into());
             }
             Err(insert_idx) => {
-                let xlo = self.energies[insert_idx];
-                let xhi = self.energies[insert_idx + 1];
+                let xlo = self.energies[insert_idx - 1];
+                let xhi = self.energies[insert_idx];
 
-                let ylo = self.macs[insert_idx + 1];
-                let yhi = self.macs[insert_idx + 1];
+                let ylo = self.macs[insert_idx - 1];
+                let yhi = self.macs[insert_idx];
 
                 let t = (energy_kev - *xlo) / (*xhi - *xlo);
-                return Ok(ylo + (yhi - ylo) * t);
+                return Ok(NotNan::new(ylo + (yhi - ylo) * t).expect("xlo and xhi are not equal"));
             }
+        }
+    }
+
+    pub fn get_for(el: Element) -> Result<&'static Self, String> {
+        MAC_DATA.get(el as usize).ok_or(format!(
+            "Could not eg mass attenuation data for element {el}. Not present in database."
+        ))
+    }
+
+    pub fn energy_limits(&self) -> (NotNan<f64>, NotNan<f64>) {
+        let emin = *self
+            .energies
+            .first()
+            .expect("at least one energy in database");
+        let emax = *self
+            .energies
+            .last()
+            .expect("at least one energy in database");
+
+        (emin, emax)
+    }
+
+    /// interpolate a range of energies
+    ///
+    /// may fail in case the given energy range is outside of the limits of the database
+    ///
+    /// `energies_kev`: energies to interpolate
+    pub fn interpolate_slice(&self, energies_kev: &[NotNan<f64>]) -> Result<Box<[f64]>, String> {
+        let emin = energies_kev.first().expect("at least one energy");
+        let emax = energies_kev.last().expect("at least one energy");
+        let (e0, e1) = self.energy_limits();
+
+        if *emin < e0 || *emax > e1 {
+            return Err(format!("No data to interpolate mass attenuation coefficient outside of energy range [{e0}, {e1}] keV. Got [{emin}, {emax}] keV"));
+        }
+
+        let mut ret = Vec::with_capacity(energies_kev.len());
+        for e in energies_kev {
+            ret.push(*self.interpolate(**e).expect("values are in range"));
+        }
+
+        Ok(ret.into())
+    }
+}
+pub struct MACGenerator {
+    macs: HashMap<Element, Box<[f64]>>,
+    energies: Box<[NotNan<f64>]>,
+}
+
+impl MACGenerator {
+    pub fn from_structures_energy(
+        structures: &[Structure],
+        (emin, emax): (f64, f64),
+    ) -> Result<Self, String> {
+        let energies = {
+            // TODO: figure out how to deal with no structures
+            // if no structures, there should be no error
+            let el = structures
+                .first()
+                .expect("at least one structure")
+                .wt_composition
+                .into_iter()
+                .next()
+                .expect("structure is not empty")
+                .0;
+
+            let emin = NotNan::new(emin).expect("emin is not NaN");
+            let emax = NotNan::new(emax).expect("emax is not NaN");
+
+            let mac_data = MACData::get_for(el)?;
+            // check for errors beforehand, and use interpolate_slice so that
+            // the error messages are the same
+            let _ = mac_data.interpolate_slice(&[emin, emax])?;
+
+            let (smallest, _) = mac_data
+                .energies
+                .iter()
+                .rev()
+                .find_position(|&&x| x <= emin)
+                .expect("values are in range, we check above");
+            let (largest, _) = mac_data
+                .energies
+                .iter()
+                .find_position(|&&x| x >= emax)
+                .expect("values are in range, we check above");
+
+            mac_data.energies[smallest..=largest]
+                .to_vec()
+                .into_boxed_slice()
+        };
+
+        let mut macs = HashMap::new();
+        for s in structures {
+            for (el, _) in s.wt_composition.0.iter() {
+                if macs.contains_key(el) {
+                    break;
+                }
+
+                let mac_data = MACData::get_for(*el)?;
+                macs.insert(*el, mac_data.interpolate_slice(&energies)?);
+            }
+        }
+
+        Ok(MACGenerator { macs, energies })
+    }
+
+    pub fn get_mixture<'a>(
+        &self,
+        components_by_wt: impl Iterator<Item = (&'a FractionalComposition, f64)>,
+    ) -> MACData {
+        let mut all_elements = std::collections::HashMap::new();
+
+        for (composition, wf) in components_by_wt {
+            for (el, frac) in composition.into_iter() {
+                *all_elements.entry(*el).or_insert(0.0) += frac * wf;
+            }
+        }
+
+        let mut macs = vec![NotNan::new(0.0).expect("0.0"); self.energies.len()];
+
+        for (el, wt_frac) in all_elements.iter() {
+            let data = self
+                .macs
+                .get(el)
+                .ok_or(format!("Missing element {el}"))
+                .expect("Error in MACGenerator construction");
+
+            for (dst, src) in macs.iter_mut().zip(data) {
+                *dst += NotNan::new(src * wt_frac).expect("not nan");
+            }
+        }
+
+        MACData {
+            macs: macs,
+            energies: self.energies.clone().to_vec(),
         }
     }
 }
@@ -137,10 +275,6 @@ pub fn compute_mixture_attenuation_coef(
         mixture_attenuation_coefs.push(mix_lac);
     }
     mixture_attenuation_coefs.into()
-}
-
-pub fn get_mac_data(el: Element) -> Option<&'static MACData> {
-    MAC_DATA.get(el as usize)
 }
 
 macro_rules! le_bytes_to_ty {

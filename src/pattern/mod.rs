@@ -7,8 +7,8 @@ use ndarray::{Array2, Array4};
 use rand::Rng;
 use serde::Deserialize;
 
+use crate::absorption::MACData;
 use crate::background::Background;
-use crate::composition::FractionalComposition;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
@@ -90,10 +90,7 @@ pub struct VFGenerator {
     pub max_subset_dim: Option<ConcentrationSubset>,
 }
 
-pub fn get_weight_fractions(
-    volume_fractions: &[f64],
-    structures: &[Structure],
-) -> Option<Box<[f64]>> {
+pub fn get_weight_fractions(volume_fractions: &[f64], structures: &[Structure]) -> Box<[f64]> {
     // phi_i = V_i / V_tot
     // V_tot = sum_i V_i
     // V_i = rho_i * m_i
@@ -127,7 +124,7 @@ pub fn get_weight_fractions(
         *rpi /= sum_rho_i_phi_i;
     }
 
-    Some(mass_fractions.into())
+    mass_fractions.into()
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -701,6 +698,7 @@ impl Peak {
         mustrain_eta: f64,
         weight: f64,
         beamline: &Beamline,
+        mac_data: &MACData,
     ) -> PeakRenderParams
 where {
         // here, we apply intensity corrections to each peak, and
@@ -718,6 +716,10 @@ where {
         // g_hkl in ams = m^-10
         let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
 
+        let absorption = mac_data
+            .interpolate(e_kev)
+            .expect("pregenerated macdata correctly");
+
         let beamline_intensity = beamline.get_intensity(e_kev);
         let polarization_correction = edxrd_polarization_factor_horizontal_plane(theta_rad);
         let peak_weight = self.i_hkl
@@ -725,7 +727,8 @@ where {
             * polarization_correction
             * e_kev_to_lambda_ams(e_kev).powi(3)
             * beamline_intensity
-            * weight;
+            * weight
+            / (2.0 * *absorption);
 
         let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
         // Gerward, Leif, S. Mo/rup, and H. Topso/e.

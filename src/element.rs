@@ -1,3 +1,5 @@
+use crate::absorption::MACData;
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 #[rustfmt::skip]
 pub enum Element {
@@ -35,11 +37,8 @@ impl Element {
     ///
     /// * `energy_kev`:
     pub fn mac_at_energy(&self, energy_kev: f64) -> Result<f64, String> {
-        let mac = crate::absorption::get_mac_data(*self).ok_or(format!(
-            "Could not eg mass attenuation data for element {self}. Not present in database."
-        ))?;
-
-        mac.interpolate(energy_kev)
+        let mac = MACData::get_for(*self)?;
+        mac.interpolate(energy_kev).map(|x| *x)
     }
 
     /// return the atomic weight in dalton
