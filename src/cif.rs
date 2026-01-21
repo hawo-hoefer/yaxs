@@ -398,20 +398,14 @@ impl<'a> CIFContents<'a> {
                     .expect("There are 3 values in LENGTH_KEYS.")
             })?;
 
-        // from pymatgen.core.Lattice.from_parameters
-        let val = alpha.cos() * beta.cos() - gamma.cos() / (alpha.sin() * beta.sin());
-        let val = val.clamp(-1.0, 1.0);
-        let gamma_star = val.acos();
-        let va = [a * beta.sin(), 0.0, a * beta.cos()];
-        let vb = [
-            -b * alpha.sin() * gamma_star.cos(),
-            b * alpha.sin() * gamma_star.sin(),
-            b * alpha.cos(),
-        ];
-        let vc = [0.0, 0.0, c];
-        Ok(Lattice {
-            mat: Mat3::from_cols([va, vb, vc]),
-        })
+        Ok(Lattice::from_abc_angles(
+            a,
+            b,
+            c,
+            alpha.to_radians(),
+            beta.to_radians(),
+            gamma.to_radians(),
+        ))
     }
 
     pub fn get_sites(&self) -> Result<Vec<Site>, String> {

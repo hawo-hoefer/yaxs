@@ -27,11 +27,10 @@ impl Lattice {
 
     /// Returns the volume of this [`Lattice`] in amstrong cubed.
     pub fn volume(&self) -> f64 {
-        self.mat
-            .row(0)
-            .cross(&self.mat.row(1))
-            .dot(&self.mat.row(2))
-            .abs()
+        let a = self.mat.row(0);
+        let b = self.mat.row(1);
+        let c = self.mat.row(2);
+        a.cross(&b).dot(&c).abs()
     }
 
     pub fn abc(&self) -> Vec3<f64> {
@@ -87,6 +86,37 @@ impl Lattice {
                 }
             })
     }
+
+    pub fn a(&self) -> Vec3<f64> {
+        self.mat.col(0)
+    }
+
+    pub fn b(&self) -> Vec3<f64> {
+        self.mat.col(1)
+    }
+
+    pub fn c(&self) -> Vec3<f64> {
+        self.mat.col(2)
+    }
+
+    pub fn from_abc_angles(a: f64, b: f64, c: f64, alpha: f64, beta: f64, gamma: f64) -> Lattice {
+        // from pymatgen.core.Lattice.from_parameters
+        let val = ((alpha.cos() * beta.cos() - gamma.cos()) / (alpha.sin() * beta.sin()))
+            .clamp(-1.0, 1.0);
+
+        let gamma_star = val.acos();
+
+        let va = [a * beta.sin(), 0.0, a * beta.cos()];
+        let vb = [
+            -b * alpha.sin() * gamma_star.cos(),
+            b * alpha.sin() * gamma_star.sin(),
+            b * alpha.cos(),
+        ];
+        let vc = [0.0, 0.0, c];
+        Lattice {
+            mat: Mat3::from_rows([va, vb, vc]),
+        }
+    }
 }
 
 impl std::fmt::Display for Lattice {
@@ -102,5 +132,52 @@ impl std::fmt::Display for Lattice {
             )?;
         }
         writeln!(f, ")")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn lattice_from_abc_angles_90() {
+        let a = 1.0;
+        let b = 2.0;
+        let c = 3.0;
+
+        let right_angle = 90.0f64.to_radians();
+
+        let l = Lattice::from_abc_angles(a, b, c, right_angle, right_angle, right_angle);
+
+        assert_eq!(l.a().magnitude(), a);
+        assert_eq!(l.b().magnitude(), b);
+        assert_eq!(l.c().magnitude(), c);
+
+        let abc = l.abc();
+        assert_eq!(abc[0], a);
+        assert_eq!(abc[1], b);
+        assert_eq!(abc[2], c);
+    }
+
+    #[test]
+    fn lattice_from_abc_angles() {
+        let a = 1.0;
+        let b = 2.0;
+        let c = 3.0;
+
+        let alpha = 45.0f64.to_radians();
+        let beta = 62.0f64.to_radians();
+        let gamma = 87.0f64.to_radians();
+
+        let l = Lattice::from_abc_angles(a, b, c, alpha, beta, gamma);
+
+        assert_eq!(l.a().magnitude(), a);
+        assert_eq!(l.b().magnitude(), b);
+        assert_eq!(l.c().magnitude(), c);
+
+        let abc = l.abc();
+        assert_eq!(abc[0], a);
+        assert_eq!(abc[1], b);
+        assert_eq!(abc[2], c);
     }
 }
