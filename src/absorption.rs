@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use log::debug;
 use ordered_float::NotNan;
 
 use crate::composition::FractionalComposition;
@@ -151,6 +152,7 @@ impl MACGenerator {
         structures: &[Structure],
         (emin, emax): (f64, f64),
     ) -> Result<Self, String> {
+        debug!("Creating MACGenerator");
         let energies = {
             // TODO: figure out how to deal with no structures
             // if no structures, there should be no error
@@ -192,8 +194,9 @@ impl MACGenerator {
         for s in structures {
             for (el, _) in s.wt_composition.0.iter() {
                 if macs.contains_key(el) {
-                    break;
+                    continue;
                 }
+                debug!("Adding {} to MACGenerator.", el);
 
                 let mac_data = MACData::get_for(*el)?;
                 macs.insert(*el, mac_data.interpolate_slice(&energies)?);

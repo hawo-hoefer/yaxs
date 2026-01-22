@@ -14,7 +14,7 @@ use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak};
 use yaxs::structure::Structure;
 
-use log::{error, info};
+use log::{debug, error, info};
 
 use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
 use yaxs::io::{
