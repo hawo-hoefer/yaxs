@@ -22,6 +22,7 @@ use crate::strain::Strain;
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-5;
 const DENSITY_RTOL: f64 = 1e-3;
+const VOLUME_RTOL: f64 = 1e-3;
 
 #[derive(Debug, Clone, PartialEq)]
 /// A phase's crystallographic structure
@@ -47,12 +48,31 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
         let (sg_no, sg_class) = value.get_sg_no_and_class()?;
         let lattice = value.get_lattice()?;
         let sites = value.get_sites()?;
-
         let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
-        let density_dalton_per_amstrong_cubed = weight_dalton / lattice.volume();
+
+        let path = value.file_path.unwrap_or("(in-memory)");
+
+        let volume = lattice.volume();
+        if let Some(given_volume) = value.get_volume()? {
+            if (given_volume - volume).abs() / given_volume > VOLUME_RTOL {
+                warn!("{}: Calculated and given volume do not match. Calculated: {} ang^3. Given: {} ang^3. Using calculated volume.",
+                    path,
+                    volume,
+                    given_volume
+                )
+            }
+        } else {
+            warn!(
+                "No volume in cif {}. Using calculated value {} ang^3.",
+                volume, path,
+            )
+        }
+
+        let density_dalton_per_amstrong_cubed = weight_dalton / volume;
         const ANGSTROM3_TO_CM3: f64 = 1e-24;
         let calc_density_g_cm3 =
             density_dalton_per_amstrong_cubed * funcs::AMU_TO_G / ANGSTROM3_TO_CM3;
+
         let given_density = value.get_density()?;
 
         if let Some(given_density) = given_density {

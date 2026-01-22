@@ -14,6 +14,7 @@ use crate::symop::SymOp;
 const DATA_HEADER_START: &str = "data_";
 const LOOP_HEADER_START: &str = "loop_";
 const DENSITY_KEY: &str = "_exptl_crystal_density_diffrn";
+const VOLUME_KEY: &str = "_cell_volume";
 const ANGLE_KEYS: [&str; 3] = ["_cell_angle_alpha", "_cell_angle_beta", "_cell_angle_gamma"];
 const LENGTH_KEYS: [&str; 3] = ["_cell_length_a", "_cell_length_b", "_cell_length_c"];
 const SUM_FORMULA_KEY: &str = "_chemical_formula_sum";
@@ -579,6 +580,21 @@ impl<'a> CIFContents<'a> {
 
         let sg_class = SGClass::try_from(sg_no).expect("we test this above");
         Ok((sg_no, sg_class))
+    }
+
+    pub fn get_volume(&self) -> Result<Option<f64>, String> {
+        let value = match self.kvs.get(VOLUME_KEY) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match value {
+            Value::Inapplicable | Value::Unknown => Ok(None),
+            Value::Float(v) => Ok(Some(*v)),
+            Value::Int(v) => Ok(Some(*v as f64)),
+            Value::Text(t) => Err(format!(
+                "Invalid value of type Text for {VOLUME_KEY} in CIF: '{t}'"
+            )),
+        }
     }
 
     pub fn get_density(&self) -> Result<Option<f64>, String> {
