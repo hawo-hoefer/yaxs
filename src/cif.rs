@@ -21,7 +21,10 @@ const SUM_FORMULA_KEY: &str = "_chemical_formula_sum";
 
 const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
-const IMPORTANT_FRACTIONS: [f64; 4] = [1.0 / 3.0, 2.0 / 3.0, 1.0 / 6.0, 5.0 / 6.0];
+const IMPORTANT_FRACTIONS: [f64; 4] = [
+    1.0 / 3.0, 2.0 / 3.0,
+    1.0 / 6.0, 5.0 / 6.0,
+];
 
 // in the cif-definition, the elements ase entered by row, and they use the top
 // right half of the symmetric matrix. In yaxs, we usually use the bottom left

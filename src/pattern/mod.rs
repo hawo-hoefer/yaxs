@@ -604,6 +604,9 @@ fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
 }
 
 impl Peak {
+    pub fn get_adxrd_theta_rad(&self, wavelength_ang: f64) -> f64 {
+        (wavelength_ang / (2.0 * self.d_hkl)).asin()
+    }
     /// Get ADXRD Peak location, intensity and fwhm
     ///
     /// * `wavelength_nm`: X-ray wavelength
@@ -632,7 +635,7 @@ impl Peak {
         // theta = asin(lambda / 2d)
         let wavelength_ams = wavelength_nm * 10.0;
         let theta_hkl_rad = {
-            let theta_hkl_rad = (wavelength_ams / (2.0 * self.d_hkl)).asin();
+            let theta_hkl_rad = self.get_adxrd_theta_rad(wavelength_ams);
 
             let sd_delta_theta_rad = sample_displacement_delta_theta_rad(
                 sample_displacement_mu_m,

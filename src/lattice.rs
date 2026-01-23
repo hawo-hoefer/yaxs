@@ -10,7 +10,7 @@ pub struct Lattice {
 impl Lattice {
     pub fn recip_lattice_crystallographic(&self) -> Lattice {
         Self {
-            mat: self.mat.try_inverse().unwrap().transpose(),
+            mat: self.mat.try_inverse().unwrap(),
         }
     }
 
@@ -20,25 +20,21 @@ impl Lattice {
                 .mat
                 .try_inverse()
                 .unwrap()
-                .transpose()
                 .scale(2.0 * std::f64::consts::PI),
         }
     }
 
     /// Returns the volume of this [`Lattice`] in amstrong cubed.
     pub fn volume(&self) -> f64 {
-        let a = self.mat.row(0);
-        let b = self.mat.row(1);
-        let c = self.mat.row(2);
-        a.cross(&b).dot(&c).abs()
+        self.a().cross(&self.b()).dot(&self.c()).abs()
     }
 
     pub fn abc(&self) -> Vec3<f64> {
-        let mut values = [0.0; 3];
-        for i in 0..self.mat.rows() {
-            values[i] = self.mat.row(i).magnitude();
-        }
-        Vec3::new(values[0], values[1], values[2])
+        Vec3::new(
+            self.a().magnitude(),
+            self.b().magnitude(),
+            self.c().magnitude(),
+        )
     }
 
     pub fn iter_hkls<'a>(

@@ -1,7 +1,7 @@
 use ahash::HashMapExt;
 use itertools::Itertools;
 use log::warn;
-use num_complex::Complex;
+use num_complex::{Complex, ComplexFloat};
 use std::collections::HashMap;
 
 use ordered_float::NotNan;
@@ -20,7 +20,7 @@ use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
 const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
-const SCALED_INTENSITY_TOL: f64 = 1e-5;
+const SCALED_INTENSITY_TOL: f64 = 1e-6;
 const DENSITY_RTOL: f64 = 1e-3;
 const VOLUME_RTOL: f64 = 1e-3;
 
@@ -345,15 +345,15 @@ impl Structure {
         &self,
         agg: &mut ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
     ) -> Vec<Peak> {
-        let Some((_, (vmax, _))) = agg.iter().max_by_key(|&(_, (b, _))| b) else {
+        let Some(vmax) = agg.iter().map(|(_, (b, _))| b).max().map(|x| *x) else {
             return Vec::new();
         };
 
         let agg = agg
-            .iter()
+            .drain()
             .sorted_unstable_by_key(|&(a, _)| -a)
-            .map(|(d_hkl, (i_hkl, hkls))| (f64::from(*d_hkl), f64::from(*i_hkl), hkls))
-            .filter(|&(_, b, _)| b / f64::from(*vmax) >= SCALED_INTENSITY_TOL);
+            .map(|(d_hkl, (i_hkl, hkls))| (*d_hkl, *i_hkl, hkls))
+            .filter(|&(_, b, _)| b / *vmax >= SCALED_INTENSITY_TOL);
 
         let mut compressed: Vec<Peak> = Vec::with_capacity(100);
         for (d_hkl, i_hkl, hkls) in agg {
@@ -364,13 +364,9 @@ impl Structure {
                     hkls: last_hkls,
                 }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
                     *last_i_hkl += i_hkl;
-                    last_hkls.extend(hkls.clone())
+                    last_hkls.extend(hkls)
                 }
-                None | Some(&mut Peak { .. }) => compressed.push(Peak {
-                    d_hkl,
-                    i_hkl,
-                    hkls: hkls.clone(),
-                }),
+                None | Some(&mut Peak { .. }) => compressed.push(Peak { d_hkl, i_hkl, hkls }),
             }
         }
 
@@ -404,7 +400,8 @@ impl Structure {
             let f_hkl = self.structure_factor(&hkl, &pos, d_hkl, scattering_parameters);
 
             // # Intensity for hkl is modulus square of structure factor
-            let mut i_hkl = (f_hkl * f_hkl.conj()).re;
+            let mut i_hkl = f_hkl.im().powi(2) + f_hkl.re().powi(2);
+            // let mut i_hkl = (f_hkl * f_hkl.conj()).re;
 
             if let Some(ref a) = alignment {
                 i_hkl *= *a.weight(&pos);
@@ -501,7 +498,7 @@ mod test {
     use crate::cif::CifParser;
     use crate::lattice::Lattice;
     use crate::pattern::adxrd::InstrumentParameters;
-    use crate::pattern::PeakRenderParams;
+    use crate::pattern::{lorentz_polarization_factor, PeakRenderParams};
 
     #[test]
     #[rustfmt::skip]
@@ -756,5 +753,228 @@ O2- -2.000";
         let abc = s.lat.abc();
         assert_eq!([abc[0], abc[1], abc[2]], [7.16, 7.16, 7.16]);
         assert!((s.lat.volume() - 367.1).abs() < 0.05);
+        let wavelength = 1.5401;
+
+        let mut params = HashMap::new();
+        s.gather_scattering_params(&mut params);
+        let expected_peaks = [
+            (17.49695102818386, 0.450287669588085),
+            (21.471551729819332, 100.0),
+            (24.842526090147402, 0.06726952883705128),
+            (27.830524801819138, 1.9931107060773383),
+            (30.548542198284455, 3.5450122462521554),
+            (35.41938048545049, 19.38908150497193),
+            (37.64611736418609, 2.185497541184719),
+            (39.76586388123188, 2.2427227222025485),
+            (41.79525192643519, 1.8768033635889552),
+            (43.74720388492278, 5.206383487412792),
+            (45.63200087422881, 2.9053344256188782),
+            (47.45798594160765, 2.858229040763249),
+            (50.959939303224445, 0.6843203138811946),
+            (52.646559385725794, 1.0365070506975869),
+            (54.29609469085744, 1.3601243047829465),
+            (55.91217406602048, 11.444851441131044),
+            (57.49796838077741, 0.03376721945109315),
+            (59.05627109567773, 1.6389637562272117),
+            (60.589561756641785, 0.21765241253119685),
+            (63.58974971296071, 10.049368160229424),
+            (65.06044580341133, 0.23942484069930534),
+            (66.51378819866414, 0.9357135426188037),
+            (67.95128135523139, 4.240802297658308),
+            (70.78415528150111, 1.8577610917896739),
+            (72.18200843196134, 0.3921604326599308),
+            (74.94612295295615, 4.414030942224158),
+            (76.31441560473135, 0.2940107246492448),
+            (77.67479531030001, 0.8442944458103518),
+            (79.02815236705985, 7.655130876888721),
+            (80.3753387287996, 0.25872174042465246),
+            (81.71717350973307, 0.5631974086823814),
+            (83.05444797903999, 1.4818598343052476),
+            (85.7183689527306, 4.639413043101438),
+            (87.04649832759972, 0.3782835564178739),
+            (88.37304085251397, 0.0993889241097576),
+            (89.69871140659426, 0.8305757889325137),
+        ];
+
+        let calculated_peaks = s.get_adxrd_peaks(wavelength, &(5.0, 90.0), None, &params);
+        let render_params = calculated_peaks
+            .iter()
+            .map(|peak| {
+                let theta_hkl_rad = peak.get_adxrd_theta_rad(wavelength);
+
+                (
+                    (theta_hkl_rad * 2.0).to_degrees() as f32,
+                    peak.i_hkl * lorentz_polarization_factor(theta_hkl_rad, 90.0),
+                )
+            })
+            .collect_vec();
+
+        let imax = *render_params
+            .iter()
+            .map(|p| NotNan::new(p.1).expect("peak i_hkl is not nan"))
+            .max()
+            .expect("at least one peak");
+
+        for (calc, expected) in render_params.iter().zip(expected_peaks) {
+            // println!("{:?}", calc);
+
+            assert_eq!(calc.0, expected.0);
+
+            let i_percent = (calc.1 / imax) * 100.0;
+            println!("{:.2} {:8.4} {:8.4}", calc.0, i_percent, expected.1);
+            // assert_eq!(i_percent, expected.1)
+        }
+        panic!()
+    }
+
+    #[test]
+    fn full_fe2o3_parse() {
+        let cif_str = "
+#------------------------------------------------------------------------------
+#$Date: 2017-10-13 02:32:00 +0300 (Fri, 13 Oct 2017) $
+#$Revision: 201954 $
+#$URL: file:///home/coder/svn-repositories/cod/cif/1/01/12/1011240.cif $
+#------------------------------------------------------------------------------
+#
+# This file is available in the Crystallography Open Database (COD),
+# http://www.crystallography.net/
+#
+# All data on this site have been placed in the public domain by the
+# contributors.
+#
+data_1011240
+loop_
+_publ_author_name
+'Pauling, L'
+'Hendricks, S B'
+_publ_section_title              'The Structure of Hematite'
+_journal_coden_ASTM              JACSAT
+_journal_name_full               'Journal of the American Chemical Society'
+_journal_page_first              781
+_journal_page_last               790
+_journal_paper_doi               10.1021/ja01680a027
+_journal_volume                  47
+_journal_year                    1925
+_chemical_formula_structural     'Fe2 O3'
+_chemical_formula_sum            'Fe2 O3'
+_chemical_name_mineral           Hematite
+_chemical_name_systematic        'Iron(III) oxide'
+_space_group_IT_number           167
+_symmetry_cell_setting           trigonal
+_symmetry_space_group_name_Hall  '-P 3* 2n'
+_symmetry_space_group_name_H-M   'R -3 c :R'
+_cell_angle_alpha                55.28
+_cell_angle_beta                 55.28
+_cell_angle_gamma                55.28
+_cell_formula_units_Z            2
+_cell_length_a                   5.43
+_cell_length_b                   5.43
+_cell_length_c                   5.43
+_cell_volume                     100.8
+_exptl_crystal_density_meas      5.26(4)
+_cod_original_sg_symbol_H-M      'R -3 c R'
+_cod_database_code               1011240
+loop_
+_symmetry_equiv_pos_as_xyz
+x,y,z
+y,z,x
+z,x,y
+-x,-y,-z
+-y,-z,-x
+-z,-x,-y
+1/2+y,1/2+x,1/2+z
+1/2+z,1/2+y,1/2+x
+1/2+x,1/2+z,1/2+y
+1/2-y,1/2-x,1/2-z
+1/2-z,1/2-y,1/2-x
+1/2-x,1/2-z,1/2-y
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_symmetry_multiplicity
+_atom_site_Wyckoff_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_attached_hydrogens
+_atom_site_calc_flag
+Fe1 Fe3+ 4 c 0.105(1) 0.105(1) 0.105(1) 1. 0 d
+O1 O2- 12 f 0.292(7) -0.292(7) 0. 0.5 0 d
+loop_
+_atom_type_symbol
+_atom_type_oxidation_number
+Fe3+ 3.000
+O2- -2.000
+loop_
+_cod_related_entry_id
+_cod_related_entry_database
+_cod_related_entry_code
+1 ChemSpider 14147
+";
+
+        let mut p = CifParser::new(cif_str);
+        let cifcontents = p.parse().expect("valid cif");
+        let s = Structure::try_from(&cifcontents).expect("valid cif contents");
+        let abc = s.lat.abc();
+        assert_eq!([abc[0], abc[1], abc[2]], [5.43, 5.43, 5.43]);
+        assert!((s.lat.volume() - 100.8).abs() < 0.05);
+        let wavelength = 1.5401;
+
+        let mut params = HashMap::new();
+        s.gather_scattering_params(&mut params);
+        let expected_peaks = [
+            (24.1284073682313, 36.459535694752844),
+            (33.1314272795658, 100.0),
+            (35.599345836763305, 81.10960106584687),
+            (39.25274744993037, 2.3474653387645477),
+            (43.469639552269335, 1.5937356854649747),
+            (49.41869384975806, 43.257633520980015),
+            (54.02234393993578, 50.435217884956835),
+            (57.39485528663899, 2.2303885458519153),
+            (57.5496346601114, 9.842495223638245),
+            (62.37815621162154, 36.55585347897848),
+            (63.939355780213674, 32.27563520358085),
+            (69.53248902231903, 3.0954838022030593),
+            (71.88464872641427, 13.579218500709958),
+            (75.37866817836144, 8.731178777769932),
+            (77.66163725071665, 3.8427408155029523),
+            (80.49920778298006, 2.3356633618555573),
+            (80.63149651227161, 4.632027327854485),
+            (82.87476636393217, 6.792561787053419),
+            (84.40769627024017, 0.1772200754923539),
+            (84.84509831466976, 10.114754158014382),
+            (88.46475162233695, 9.978539279338396),
+        ];
+
+        let calculated_peaks = s.get_adxrd_peaks(wavelength, &(5.0, 90.0), None, &params);
+        let render_params = calculated_peaks
+            .iter()
+            .map(|peak| {
+                let theta_hkl_rad = peak.get_adxrd_theta_rad(wavelength);
+
+                (
+                    (theta_hkl_rad * 2.0).to_degrees() as f32,
+                    peak.i_hkl * lorentz_polarization_factor(theta_hkl_rad, 0.0f64.to_radians()),
+                )
+            })
+            .collect_vec();
+
+        let imax = *render_params
+            .iter()
+            .map(|p| NotNan::new(p.1).expect("peak i_hkl is not nan"))
+            .max()
+            .expect("at least one peak");
+
+        for (calc, expected) in render_params.iter().zip(expected_peaks) {
+            // println!("{:?}", calc);
+
+            assert_eq!(calc.0, expected.0);
+            let i_percent = (calc.1 / imax) * 100.0;
+
+            println!("{:.2} {:8.4} {:8.4}", calc.0, i_percent, expected.1);
+            // assert_eq!(i_percent, expected.1)
+        }
+        panic!()
     }
 }

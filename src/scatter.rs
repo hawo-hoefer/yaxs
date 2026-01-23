@@ -84,10 +84,11 @@ pub struct Scatter {
 
 impl Scatter {
     pub fn eval(&self, sin_theta_over_lambda: f64) -> f64 {
+        let sq = sin_theta_over_lambda.powi(2);
         self.a
             .iter()
             .zip(self.b)
-            .map(|(a, b)| a * (-b * sin_theta_over_lambda.powi(2)).exp())
+            .map(|(a, b)| a * (-b * sq).exp())
             .sum::<f64>()
             + self.c
     }
