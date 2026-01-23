@@ -23,7 +23,7 @@ use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
 use self::edxrd::Beamline;
 
-use crate::cfg::{CompactSimResults, TextureMeasurement, VolumeFraction};
+use crate::cfg::{CompactSimResults, CompositionPart, TextureMeasurement};
 
 pub mod adxrd;
 pub mod edxrd;
@@ -83,14 +83,40 @@ impl RenderCommon {
     }
 }
 
-pub struct VFGenerator {
+pub struct CompositionGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
-    pub fractions: Vec<Option<VolumeFraction>>,
-    pub max_subset_dim: Option<ConcentrationSubset>,
+    pub fractions: Vec<Option<CompositionPart>>,
+    pub max_subset_dim: Option<CompositionSubset>,
 }
 
-pub fn get_weight_fractions(volume_fractions: &[f64], structures: &[Structure]) -> Box<[f64]> {
+pub fn get_volume_fractions(
+    weight_fractions: &[f64],
+    structures: &[impl crate::structure::HasDensity],
+) -> Box<[f64]> {
+    let mut volume_total = 0.0;
+    let mut volume_fractions = weight_fractions
+        .iter()
+        .zip(structures)
+        .map(|(wt_i, s)| {
+            let rho_i = s.density();
+            let wri = wt_i / rho_i;
+            volume_total += wri;
+            wri
+        })
+        .collect_vec();
+
+    for vf in volume_fractions.iter_mut() {
+        *vf /= volume_total;
+    }
+
+    volume_fractions.into()
+}
+
+pub fn get_weight_fractions(
+    volume_fractions: &[f64],
+    structures: &[impl crate::structure::HasDensity],
+) -> Box<[f64]> {
     // phi_i = V_i / V_tot
     // V_tot = sum_i V_i
     // V_i = rho_i * m_i
@@ -112,7 +138,7 @@ pub fn get_weight_fractions(volume_fractions: &[f64], structures: &[Structure]) 
         .iter()
         .zip(structures)
         .map(|(phi_i, s)| {
-            let rho_i = s.density_g_cm3;
+            let rho_i = s.density();
             let rpi = rho_i * phi_i;
             sum_rho_i_phi_i += rpi;
             rpi
@@ -128,14 +154,14 @@ pub fn get_weight_fractions(volume_fractions: &[f64], structures: &[Structure]) 
 }
 
 #[derive(PartialEq, Clone, Debug)]
-pub enum ConcentrationSubset {
+pub enum CompositionSubset {
     MaxDim(usize),
     Probabilities(Vec<f64>),
 }
 
-impl ConcentrationSubset {
+impl CompositionSubset {
     pub fn roll(&self, rng: &mut impl Rng) -> usize {
-        use ConcentrationSubset::*;
+        use CompositionSubset::*;
         match self {
             MaxDim(maxdim) => {
                 if *maxdim == 0 {
@@ -162,13 +188,13 @@ impl ConcentrationSubset {
 
     pub fn max_subset_size(&self) -> usize {
         match self {
-            ConcentrationSubset::MaxDim(n) => *n,
-            ConcentrationSubset::Probabilities(items) => items.len(),
+            CompositionSubset::MaxDim(n) => *n,
+            CompositionSubset::Probabilities(items) => items.len(),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for ConcentrationSubset {
+impl<'de> Deserialize<'de> for CompositionSubset {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -183,7 +209,7 @@ impl<'de> Deserialize<'de> for ConcentrationSubset {
         let p = CSProxy::deserialize(deserializer)?;
 
         match p {
-            CSProxy::MaxDim(d) => return Ok(ConcentrationSubset::MaxDim(d)),
+            CSProxy::MaxDim(d) => return Ok(CompositionSubset::MaxDim(d)),
             CSProxy::Weights(mut items) => {
                 for i in items.iter() {
                     if *i < 0.0 {
@@ -206,16 +232,16 @@ impl<'de> Deserialize<'de> for ConcentrationSubset {
                     *i /= sum;
                 }
 
-                return Ok(ConcentrationSubset::Probabilities(items));
+                return Ok(CompositionSubset::Probabilities(items));
             }
         }
     }
 }
 
-impl VFGenerator {
+impl CompositionGenerator {
     pub fn try_new(
-        mut fractions: Vec<Option<VolumeFraction>>,
-        max_subset_dim: Option<ConcentrationSubset>,
+        mut fractions: Vec<Option<CompositionPart>>,
+        max_subset_dim: Option<CompositionSubset>,
     ) -> Result<Self, String> {
         if fractions.len() == 0 {
             // no structures is ok. in that case, no volume fractions will be generated
@@ -291,7 +317,7 @@ impl VFGenerator {
             return Vec::new().into();
         }
 
-        let mut concentration_buf = Vec::with_capacity(self.fractions.len() + 1);
+        let mut composition_buf = Vec::with_capacity(self.fractions.len() + 1);
 
         let roll_n = if let Some(max_subset_dim) = &self.max_subset_dim {
             max_subset_dim.roll(rng)
@@ -300,20 +326,19 @@ impl VFGenerator {
         };
 
         if roll_n > 0 {
-            concentration_buf.push(0.0);
+            composition_buf.push(0.0);
             let free_mass = 1.0 - self.fraction_sum;
-            concentration_buf.extend((0..roll_n - 1).map(|_| rng.random_range(0.0..=free_mass)));
-            concentration_buf.push(free_mass);
+            composition_buf.extend((0..roll_n - 1).map(|_| rng.random_range(0.0..=free_mass)));
+            composition_buf.push(free_mass);
 
-            concentration_buf[1..roll_n]
-                .sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
+            composition_buf[1..roll_n].sort_unstable_by(|a, b| a.partial_cmp(b).expect("not nan"));
 
             // compute the difference
-            for i in 0..concentration_buf.len() - 1 {
-                concentration_buf[i] = concentration_buf[i + 1] - concentration_buf[i];
+            for i in 0..composition_buf.len() - 1 {
+                composition_buf[i] = composition_buf[i + 1] - composition_buf[i];
             }
         }
-        concentration_buf.resize(concentration_buf.capacity(), 0.0);
+        composition_buf.resize(composition_buf.capacity(), 0.0);
 
         // compute zeroed entries because of allow_subsets
         // sample n_zeroed indices smaller than self.n_free without replacement
@@ -357,21 +382,21 @@ impl VFGenerator {
                     // +---+---+---+---+---+---+---+---+
                     // | ? | ? | V | ? | ? | A | ? | ? |
                     // +---+---+---+---+---+---+---+---+
-                    concentration_buf[free_idx] = concentration_buf[idx];
-                    concentration_buf[idx] = fraction.0;
+                    composition_buf[free_idx] = composition_buf[idx];
+                    composition_buf[idx] = fraction.0;
                     free_idx += 1;
                 }
 
                 if zeroed_indices.binary_search(&idx).is_ok() {
-                    concentration_buf[free_idx] = concentration_buf[idx];
-                    concentration_buf[idx] = 0.0;
+                    composition_buf[free_idx] = composition_buf[idx];
+                    composition_buf[idx] = 0.0;
                     free_idx += 1;
                 }
             }
         }
 
-        concentration_buf.truncate(self.fractions.len());
-        concentration_buf.into_boxed_slice()
+        composition_buf.truncate(self.fractions.len());
+        composition_buf.into_boxed_slice()
     }
 }
 
@@ -840,13 +865,15 @@ mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
+    use crate::structure::HasDensity;
+
     use super::*;
 
     #[test]
     fn vf_generation_basic() {
         let n = 5;
         let vfs = (0..n).map(|_| None).collect_vec();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated.len(), n);
@@ -855,9 +882,9 @@ mod test {
 
     #[test]
     fn vf_generation_single_fixed() {
-        let vfs = vec![None, None, Some(VolumeFraction(0.3))];
+        let vfs = vec![None, None, Some(CompositionPart(0.3))];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[2], 0.3);
@@ -868,13 +895,13 @@ mod test {
     #[test]
     fn vf_generation_multiple_fixed() {
         let vfs = vec![
-            Some(VolumeFraction(0.2)),
+            Some(CompositionPart(0.2)),
             None,
             None,
-            Some(VolumeFraction(0.3)),
+            Some(CompositionPart(0.3)),
         ];
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -886,15 +913,15 @@ mod test {
     #[test]
     fn vf_generation_multiple_inbetween_fixed() {
         let vfs = vec![
-            Some(VolumeFraction(0.2)),
+            Some(CompositionPart(0.2)),
             None,
-            Some(VolumeFraction(0.1)),
+            Some(CompositionPart(0.1)),
             None,
-            Some(VolumeFraction(0.3)),
+            Some(CompositionPart(0.3)),
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -906,10 +933,10 @@ mod test {
 
     #[test]
     fn vf_generation_no_degrees_of_freedom() {
-        let vfs = vec![Some(VolumeFraction(0.2)), Some(VolumeFraction(0.1)), None];
+        let vfs = vec![Some(CompositionPart(0.2)), Some(CompositionPart(0.1)), None];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -921,10 +948,10 @@ mod test {
 
     #[test]
     fn vf_generation_no_degrees_of_freedom_two_phases() {
-        let vfs = vec![Some(VolumeFraction(0.6)), Some(VolumeFraction(0.4))];
+        let vfs = vec![Some(CompositionPart(0.6)), Some(CompositionPart(0.4))];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.6);
@@ -937,14 +964,14 @@ mod test {
     fn vf_generation_allow_subsets() {
         let vfs = vec![
             None,
-            Some(VolumeFraction(0.3)),
+            Some(CompositionPart(0.3)),
             None,
             None,
-            Some(VolumeFraction(0.3)),
+            Some(CompositionPart(0.3)),
         ];
 
         let n = vfs.len();
-        let gen = VFGenerator::try_new(vfs, Some(ConcentrationSubset::MaxDim(2))).unwrap();
+        let gen = CompositionGenerator::try_new(vfs, Some(CompositionSubset::MaxDim(2))).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let mut n_zeroed = 0;
         for _ in 0..1000 {
@@ -960,5 +987,44 @@ mod test {
             }
         }
         assert!(n_zeroed > 0)
+    }
+
+    impl HasDensity for f64 {
+        fn density(&self) -> f64 {
+            *self
+        }
+    }
+
+    #[test]
+    fn vol_frac_wt_frac_roundtrip() {
+        let wt_fracs = [0.1, 0.3, 0.5, 0.1];
+        let densities = [1.0, 2.0, 7.5, 0.5];
+
+        let vf = get_volume_fractions(&wt_fracs, &densities);
+        let wf = get_weight_fractions(&vf, &densities);
+
+        for (w0, w1) in wf.iter().zip(wt_fracs) {
+            assert!((w0 - w1).abs() < 1e-3)
+        }
+    }
+
+    #[test]
+    fn vf_from_wt() {
+        let wt_fracs = [0.5, 0.5];
+        let densities = [1.0, 2.0];
+
+        let vf = get_volume_fractions(&wt_fracs, &densities);
+        assert_eq!(vf.len(), 2);
+        assert_eq!([vf[0], vf[1]], [2.0 / 3.0, 1.0 / 3.0]);
+    }
+
+    #[test]
+    fn wt_from_vf() {
+        let wt_fracs = [0.5, 0.5];
+        let densities = [1.0, 2.0];
+
+        let vf = get_weight_fractions(&wt_fracs, &densities);
+        assert_eq!(vf.len(), 2);
+        assert_eq!([vf[0], vf[1]], [1.0 / 3.0, 2.0 / 3.0]);
     }
 }

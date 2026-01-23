@@ -1,11 +1,11 @@
 mod background;
+mod composition;
 mod impurity;
 mod noise;
 mod parameter;
 mod preferred_orientation;
 mod probability;
 mod structure;
-mod volume_fraction;
 
 use std::sync::Arc;
 
@@ -20,10 +20,10 @@ use log::{debug, info};
 pub use parameter::Parameter;
 use probability::Probability;
 
+pub use composition::CompositionPart;
 pub use noise::NoiseSpec;
 pub use preferred_orientation::{KDEApprox, POCfg, POGenerator};
 pub use structure::{apply_strain_cfg, StrainCfg, StructureDef};
-pub use volume_fraction::VolumeFraction;
 
 use itertools::Itertools;
 use rand::Rng;
@@ -36,7 +36,8 @@ use crate::pattern::adxrd::{
 };
 use crate::pattern::edxrd::{Beamline, DiscretizeEnergyDispersive, EDXRDMeta};
 use crate::pattern::{
-    get_weight_fractions, ConcentrationSubset, ImpurityPeak, Peaks, RenderCommon, VFGenerator,
+    get_volume_fractions, get_weight_fractions, CompositionGenerator, CompositionSubset,
+    ImpurityPeak, Peaks, RenderCommon,
 };
 use crate::preferred_orientation::BinghamParams;
 use crate::strain::Strain;
@@ -330,11 +331,25 @@ impl RandomlyScalePeaks {
     }
 }
 
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub enum CompositionKind {
+    ByMass,
+    ByVolume,
+}
+
+impl Default for CompositionKind {
+    fn default() -> Self {
+        CompositionKind::ByVolume
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
+    #[serde(default)]
+    pub composition_kind: CompositionKind,
     pub structures: Vec<StructureDef>,
-    pub concentration_subset: Option<ConcentrationSubset>,
+    pub concentration_subset: Option<CompositionSubset>,
     pub impurities: Option<Vec<ImpuritySpec>>,
 
     #[serde(deserialize_with = "deserialize_nonzero_usize")]
@@ -443,7 +458,7 @@ pub struct ToDiscretize {
 impl ToDiscretize {
     pub fn generate_adxrd_job(
         &self,
-        vf_generator: &VFGenerator,
+        composition_generator: &CompositionGenerator,
         angle_dispersive: &AngleDispersive,
         simulation_parameters: &SimulationParameters,
         precomputed_lacs: PrecomputedLACs,
@@ -474,10 +489,19 @@ impl ToDiscretize {
             .map(|x| x.generate_bkg(rng))
             .unwrap_or(crate::background::Background::None);
 
-        let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
+        let composition = composition_generator.generate(rng);
+        let (vol_fractions, weight_fractions) = match self.sample_parameters.composition_kind {
+            CompositionKind::ByMass => (
+                get_volume_fractions(&composition, &self.structures),
+                composition,
+            ),
+            CompositionKind::ByVolume => {
+                let wt_fractions = get_weight_fractions(&composition, &self.structures);
+                (composition, wt_fractions)
+            }
+        };
 
-        let vol_fractions = vf_generator.generate(rng);
-        let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
+        let sample_displacement_mu_m = (*sample_displacement_mu_m).map_or(0.0, |s| s.generate(rng));
 
         let attenuation_coefs = compute_mixture_attenuation_coef(&vol_fractions, &precomputed_lacs);
 
@@ -522,7 +546,7 @@ impl ToDiscretize {
 
     pub fn generate_edxrd_job(
         &self,
-        vf_generator: &VFGenerator,
+        composition_generator: &CompositionGenerator,
         mac_generator: &MACGenerator,
         energy_dispersive: &EnergyDispersive,
         simulation_parameters: &SimulationParameters,
@@ -537,8 +561,18 @@ impl ToDiscretize {
             mustrain_eta,
         } = self.sample_parameters.generate(rng);
 
-        let vol_fractions = vf_generator.generate(rng);
-        let weight_fractions = get_weight_fractions(&vol_fractions, &self.structures);
+        let composition = composition_generator.generate(rng);
+        let (vol_fractions, weight_fractions) = match self.sample_parameters.composition_kind {
+            CompositionKind::ByMass => (
+                get_volume_fractions(&composition, &self.structures),
+                composition,
+            ),
+            CompositionKind::ByVolume => {
+                let wt_fractions = get_weight_fractions(&composition, &self.structures);
+                (composition, wt_fractions)
+            }
+        };
+
         let random_b_iso = self.get_random_b_iso(&permutation_ids);
 
         let mixture_mac = mac_generator.get_mixture(

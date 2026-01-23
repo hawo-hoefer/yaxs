@@ -13,7 +13,7 @@ use crate::pattern::lorentz_polarization_factor_edxrd;
 
 use super::{
     DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak, PeakRenderParams,
-    RenderCommon, VFGenerator,
+    RenderCommon, CompositionGenerator,
 };
 
 /// Wiggler Beamline Parameters
@@ -429,7 +429,7 @@ pub struct JobGen<T> {
     cfg: EnergyDispersive,
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
-    vf_generator: VFGenerator,
+    vf_generator: CompositionGenerator,
     mac_generator: MACGenerator,
     energies: Vec<f32>,
     n: usize,
@@ -441,7 +441,7 @@ impl<T> JobGen<T> {
         cfg: EnergyDispersive,
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
-        vf_generator: VFGenerator,
+        vf_generator: CompositionGenerator,
         mac_generator: MACGenerator,
         rng: T,
     ) -> Self

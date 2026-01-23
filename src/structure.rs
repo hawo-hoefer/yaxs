@@ -42,6 +42,16 @@ pub struct Structure {
     pub wt_composition: FractionalComposition,
 }
 
+pub trait HasDensity {
+    fn density(&self) -> f64;
+}
+
+impl HasDensity for Structure {
+    fn density(&self) -> f64 {
+        return self.density_g_cm3;
+    }
+}
+
 impl<'a> TryFrom<&CIFContents<'a>> for Structure {
     type Error = String;
     fn try_from(value: &CIFContents) -> Result<Self, Self::Error> {

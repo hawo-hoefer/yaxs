@@ -21,7 +21,7 @@ use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
     OutputNames, SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, VFGenerator};
+use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, CompositionGenerator};
 
 const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulator)
           
@@ -407,7 +407,7 @@ Device ID:           {}",
         structures.push(structure);
     }
 
-    let vf_generator = VFGenerator::try_new(
+    let vf_generator = CompositionGenerator::try_new(
         vf_constraints,
         cfg.sample_parameters.concentration_subset.clone(),
     )

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::strain::Strain;
 use crate::structure::Structure;
 
-use super::{POCfg, Parameter, VolumeFraction};
+use super::{POCfg, Parameter, CompositionPart};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum StrainCfg {
@@ -56,7 +56,7 @@ pub struct StructureDef {
     pub path: String,
     pub preferred_orientation: Option<POCfg>,
     pub strain: Option<StrainCfg>,
-    pub volume_fraction: Option<VolumeFraction>,
+    pub volume_fraction: Option<CompositionPart>,
     pub mustrain: Option<Mustrain>,
     pub mean_ds_nm: Parameter<f64>,
     pub ds_eta: Parameter<f64>,

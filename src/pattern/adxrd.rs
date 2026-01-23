@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{
     DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams,
-    RenderCommon, VFGenerator,
+    RenderCommon, CompositionGenerator,
 };
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
@@ -383,7 +383,7 @@ pub struct JobGen<T> {
     cfg: AngleDispersive,
     discretize_info: ToDiscretize,
     sim_params: SimulationParameters,
-    vf_generator: VFGenerator,
+    vf_generator: CompositionGenerator,
     precomputed_lacs: PrecomputedLACs,
     two_thetas: Vec<f32>,
     n: usize,
@@ -395,7 +395,7 @@ impl<T> JobGen<T> {
         cfg: AngleDispersive,
         discretize_info: ToDiscretize,
         sim_params: SimulationParameters,
-        vf_generator: VFGenerator,
+        vf_generator: CompositionGenerator,
         precomputed_lacs: PrecomputedLACs,
         rng: T,
     ) -> Self {
