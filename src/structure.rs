@@ -50,7 +50,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
         let sites = value.get_sites()?;
         let weight_dalton = sites.iter().map(|s| s.weight_contribution()).sum::<f64>();
 
-        let path = value.file_path.unwrap_or("(in-memory)");
+        let path = value.file_path;
 
         let volume = lattice.volume();
         if let Some(given_volume) = value.get_volume()? {
@@ -78,7 +78,7 @@ impl<'a> TryFrom<&CIFContents<'a>> for Structure {
         if let Some(given_density) = given_density {
             let rel_diff = (given_density - calc_density_g_cm3).abs() / calc_density_g_cm3;
             if rel_diff > DENSITY_RTOL {
-                let file_path = value.file_path.unwrap_or("(in-memory)");
+                let file_path = value.file_path;
                 warn!("{file_path}: Given and calculated densities do not match. Given: {given_density} g/cm3, calculated: {calc_density_g_cm3:.5}. Using calculated density.");
             }
         }

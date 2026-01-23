@@ -21,6 +21,8 @@ const SUM_FORMULA_KEY: &str = "_chemical_formula_sum";
 
 const SITE_DIST_TOL: f64 = 1e-6;
 const FRAC_TOL_POS_ATOL: f64 = 1e-4;
+
+#[rustfmt::skip]
 const IMPORTANT_FRACTIONS: [f64; 4] = [
     1.0 / 3.0, 2.0 / 3.0,
     1.0 / 6.0, 5.0 / 6.0,
@@ -118,7 +120,7 @@ pub struct CIFContents<'a> {
     pub block_name: String,
     pub kvs: HashMap<String, Value>,
     pub tables: Vec<HashMap<String, Vec<Value>>>,
-    pub file_path: Option<&'a str>,
+    pub file_path: &'a str,
 }
 
 fn parse_matrix_from_symmetric_order_labels(
@@ -463,19 +465,18 @@ impl<'a> CIFContents<'a> {
                     .map_err(|err| format!("_atom_site_fract_z has wrong type: {err}"))?,
             );
 
-            let iso_adp =
-                extract_iso_adp(i, label, site_table, &self.file_path.unwrap_or("in-mem"))?;
+            let iso_adp = extract_iso_adp(i, label, site_table, &self.file_path)?;
             let aniso_adp = extract_aniso_adp(label, atom_site_aniso_table)?;
             let adp = match (iso_adp, aniso_adp) {
                 (Some((_iso_adp, how_found)), Some(aniso_adp)) => {
                     use IsotropicDisplacementInFile::*;
                     match how_found {
                         FoundUnlabeled => {
-                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using anisotropic ADP.", p = self.file_path.unwrap_or("in-mem"));
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using anisotropic ADP.", p = self.file_path);
                             Some(aniso_adp)
                         }
                         FoundLabeled => {
-                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP, because ADP is labeled as isotropic in site table.", p = self.file_path.unwrap_or("in-mem"));
+                            warn!("{p}: site '{label}': Both isotropic and anisotropic atomic displacement parameters are defined. Using isotropic ADP, because ADP is labeled as isotropic in site table.", p = self.file_path);
                             Some(_iso_adp)
                         }
                     }
@@ -487,14 +488,17 @@ impl<'a> CIFContents<'a> {
 
             debug!(
                 "{p}: site '{label}': got atomic displacement parameter of type {k}",
-                p = self.file_path.unwrap_or("in-mem"),
+                p = self.file_path,
                 k = adp.as_ref().map(|x| x.fmt_kind()).unwrap_or("None")
             );
 
             let coords = coords.map(|x| {
                 for frac in IMPORTANT_FRACTIONS {
                     if (x - frac).abs() < FRAC_TOL_POS_ATOL {
-                        warn!("Rounded fractional coordinate {x} to {frac}");
+                        warn!(
+                            "{}: Rounded fractional coordinate {x} to {frac}",
+                            self.file_path
+                        );
                         return frac;
                     }
                 }
@@ -614,6 +618,20 @@ impl<'a> CIFContents<'a> {
             )),
         }
     }
+
+    pub fn new(
+        block_name: String,
+        kvs: HashMap<String, Value>,
+        tables: Vec<HashMap<String, Vec<Value>>>,
+        file_path: Option<&'a str>,
+    ) -> Self {
+        Self {
+            block_name,
+            kvs,
+            tables,
+            file_path: file_path.unwrap_or("(in-memory)"),
+        }
+    }
 }
 
 impl<'a> CifParser<'a> {
@@ -660,12 +678,12 @@ impl<'a> CifParser<'a> {
                 }
             }
         }
-        Ok(CIFContents {
-            block_name: bn,
+        Ok(CIFContents::new(
+            bn,
             kvs,
             tables,
-            file_path: self.file_path.as_ref().map(|x| x.as_str()),
-        })
+            self.file_path.as_ref().map(|x| x.as_str()),
+        ))
     }
 
     fn skip_comments(&mut self) {
