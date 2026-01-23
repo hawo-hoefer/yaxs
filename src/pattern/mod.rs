@@ -401,7 +401,7 @@ pub fn lorentz_polarization_factor(theta_rad: f64, alpha_rad: f64) -> f64 {
     let polarization_fac = (1.0 + a2cos2 * (2.0 * theta_rad).cos().powi(2)) / (1.0 + a2cos2);
 
     // Cullity 1978 P. 128
-    let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
+    let lorentz_fac = 1.0 / (theta_rad.sin().powi(2) * theta_rad.cos());
 
     lorentz_fac * polarization_fac
 }
