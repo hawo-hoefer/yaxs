@@ -21,7 +21,7 @@ use yaxs::io::{
     self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
     OutputNames, SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, DiscretizeJobGenerator, Discretizer, CompositionGenerator};
+use yaxs::pattern::{render_jobs, CompositionGenerator, DiscretizeJobGenerator, Discretizer};
 
 const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulator)
           
@@ -344,14 +344,14 @@ Device ID:           {}",
     let mut pref_o = Vec::new();
     let mut strain_cfgs = Vec::new();
     let mut structure_paths = Vec::new();
-    let mut vf_constraints = Vec::new();
+    let mut composition_constraints = Vec::new();
     let mut b_iso_params = Vec::new();
 
     for StructureDef {
         path,
         preferred_orientation: po,
         strain,
-        volume_fraction,
+        composition,
         mean_ds_nm,
         ds_eta: _,
         mustrain: _,
@@ -391,7 +391,7 @@ Device ID:           {}",
             std::process::exit(1);
         }
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
-        vf_constraints.push(volume_fraction.clone());
+        composition_constraints.push(composition.clone());
         strain_cfgs.push(strain.clone());
         b_iso_params.push(b_iso.clone());
         let po_gen = po.as_ref().map(|x| {
@@ -408,7 +408,7 @@ Device ID:           {}",
     }
 
     let vf_generator = CompositionGenerator::try_new(
-        vf_constraints,
+        composition_constraints,
         cfg.sample_parameters.concentration_subset.clone(),
     )
     .map_err(|err| {

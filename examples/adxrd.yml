@@ -24,6 +24,7 @@ kind: !AngleDispersive
 
 sample_parameters:
   concentration_subset: [0.01, 0.8, 0.1]
+  composition_kind: ByMass
   impurities:
     - d_hkl_ams: 2
       intensity: [5, 100]

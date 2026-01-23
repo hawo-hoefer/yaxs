@@ -29,6 +29,7 @@ are fixed for all simulations, while parameters specified as ranges will be samp
 | simulation parameters     | value         |
 | strain                    | (see below)   |
 | volume factions           | value         |
+| mass fractions            | value         |
 | sample displacement       | both          |
 
 ## 1. Simulation Kind
@@ -110,6 +111,7 @@ This section contains (physical) sample parameters, like the phase's domain size
 They are shared for energy- and angle dispersive XRD simulation.
 ```yaml
 sample_parameters:
+  composition_kind: ByMass
   mean_ds_nm: 100.0                                     # domain size
   eta: 0.5                                              # pseudo-voigt eta
   concentration_subset: 4                               # (Optional) subsample the concentration space (where some number of components will be set to zero)
@@ -130,7 +132,7 @@ sample_parameters:
         orientation: [0, 1, 0, 0]
         sampling: {n: 128, kappa: 20}
       strain: !Maximum 0.01                             # optional strain specification
-      volume_fraction: 0.5                              # fix volume fraction of phase 2 to 0.5
+      composition: 0.5                                  # fix composition part of phase 2 to 0.5
     - path: phase-3-with-random-b-iso.cif
       b_iso: [0.5, 2.0]                                 # random b-iso range
       # b_iso: 1.0                                      # alternatively: fixed b-iso
@@ -246,6 +248,14 @@ Ideally, we would implement symmetry-aware per-site randomization, but that requ
 saving the generated values, so the low-complexity version is done for now.
 In the output data (field `random_b_iso`), structures where b-iso values are unchanged from the cif are indicated by the sentinel value -1.
 
+### Mass or Volume Fractions
+Optionally, the key `composition_kind` can be used to specify that compositions
+should be sampled by weight instead of by volume.
+```yaml
+sample_parameters:
+  composition_kind: ByWeight # or ByVolume
+  ...rest of structure definitions
+```
 
 ## 3. Simulation Parameters
 Here, simulation specific parameters are set.
