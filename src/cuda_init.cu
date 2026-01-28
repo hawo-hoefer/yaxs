@@ -50,7 +50,15 @@ DevInfo init_get_dev_info(error_fn errfn, info_fn infofn, debug_fn debugfn) {
   infof = infofn;
   debugf = debugfn;
 
-  DevInfo dev = {0};
+  DevInfo dev = {
+    .device_name = nullptr, // if device_name is null, init has failed
+    .available_memory_bytes = 0,
+    .init_free_memory_bytes = 0,
+    .api_version = 0,
+    .runtime_version = 0,
+    .device_id = 0,
+  };
+
   if (!dev_props(&dev)) {
     dev.device_name = NULL;
   }
