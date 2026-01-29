@@ -19,8 +19,7 @@ fn main() {
             .flag("-Wextra")
             .flag("--dopt=on")
             .flag("--generate-line-info")
-            .flag("-gencode").flag("arch=compute_80,code=sm_80")
-            .flag("-gencode").flag("arch=compute_86,code=sm_86")
+            .flag("-arch=native")
             .flag("-t0")
             .file("./src/cuda_merged.cu")
             .compile("cuda_lib");
