@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, PeakRenderParams,
-    RenderCommon, CompositionGenerator,
+    CompositionGenerator, DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams,
+    PeakRenderParams, RenderCommon,
 };
 use crate::background::Background;
 use crate::cfg::{AngleDispersive, SimulationParameters, ToDiscretize};
@@ -117,6 +117,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             mustrain_eta
         )
         .cartesian_product(self.emission_lines.iter().enumerate())
+        .filter(|((_, &vf, ..), ..)| vf > 0.0)
         .flat_map(
             move |(
                 (phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, phase_mustrain, phase_mustrain_eta),
@@ -171,6 +172,7 @@ impl Discretizer for DiscretizeAngleDispersive {
 
     fn n_peaks_tot(&self) -> usize {
         ((0..self.common.n_phases())
+            .filter(|i| self.meta.vol_fractions[*i] > 0.0)
             .map(|i| self.common.sim_res.all_simulated_peaks[self.common.idx(i)].len())
             .sum::<usize>()
             + self.common.impurity_peaks.len())

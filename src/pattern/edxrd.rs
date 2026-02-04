@@ -12,8 +12,8 @@ use crate::noise::Noise;
 use crate::pattern::lorentz_polarization_factor_edxrd;
 
 use super::{
-    DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak, PeakRenderParams,
-    RenderCommon, CompositionGenerator,
+    CompositionGenerator, DiscretizeJobGenerator, DiscretizeSample, Discretizer, JobParams, Peak,
+    PeakRenderParams, RenderCommon,
 };
 
 /// Wiggler Beamline Parameters
@@ -232,6 +232,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             mustrain,
             mustrain_eta
         )
+        .filter(|(_, &vf, ..)| vf > 0.0)
         .map(
             move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
@@ -271,6 +272,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
 
     fn n_peaks_tot(&self) -> usize {
         (0..self.common.n_phases())
+            .filter(|i| self.meta.vol_fractions[*i] > 0.0)
             .map(|i| self.common.sim_res.all_simulated_peaks[self.common.idx(i)].len())
             .sum::<usize>()
             + self.common.impurity_peaks.len()
