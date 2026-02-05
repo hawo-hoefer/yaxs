@@ -42,6 +42,7 @@ Further information on the input file structure can be found [here](./inputfile.
     - [ ] Air Scattering
     - [ ] Peak Asymmetry
     - [ ] Revisit sample displacement for EDXRD, for now sample displacement is ignored
+    - [ ] check config hash before redoing simulation - dont re-simulate if simulation input hasn't changed
     - [ ] Add better controls for resource consumption
     - [ ] CPU backend multithreading
         - right now, the cpu backend is single threaded, which is really slow

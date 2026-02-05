@@ -1,3 +1,4 @@
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
@@ -6,6 +7,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use clap::Args;
+use log::warn;
 use log::{error, info};
 use ndarray::ArrayBase;
 use ndarray::Data;
@@ -14,6 +16,7 @@ use ndarray::RawData;
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use ndarray_npy::WritableElement;
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
@@ -52,6 +55,13 @@ pub struct Opts {
 
     #[arg(long, default_value_t = false, help = "Overwrite existing data.")]
     pub overwrite: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Use with '--overwrite'. Forces Re-Simulation of data even though config hashes match."
+    )]
+    pub re_simulate: bool,
 
     // TODO: this should be in the configuration file to integrate bettern with follow-up scripts
     // and make generation of patterns and subsequent training more reproducible
@@ -152,7 +162,7 @@ impl PatternMeta {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Extra {
     pub cfg: SimulationKind,
@@ -161,15 +171,16 @@ pub struct Extra {
     pub encoding: Vec<String>,
 }
 
-#[derive(Serialize)]
-pub struct SimulationMetadata<'a> {
+#[derive(Serialize, Deserialize)]
+pub struct SimulationMetadata {
     pub timestamp_started: chrono::DateTime<Utc>,
     pub timestamp_finished: chrono::DateTime<Utc>,
     pub yaxs_version: String,
+    pub cfg_hash: String,
     pub datafiles: Option<Vec<String>>,
     pub chunked: bool,
-    pub input_names: &'a [String],
-    pub target_names: &'a [String],
+    pub input_names: Vec<String>,
+    pub target_names: Vec<String>,
     pub extra: Extra,
 }
 
@@ -231,12 +242,34 @@ pub fn write_to_npz(
     Ok((data_names, meta_names))
 }
 
+pub enum CheckedOutput {
+    ResimulationNotNeeded,
+    ContinueNormally,
+}
+
 /// prepare an output directory for saving generated XRD patterns
 ///
 /// * `opts`: IO options for writing the data
-pub fn prepare_output_directory(opts: &Opts) -> Result<(), String> {
+pub fn prepare_output_directory(opts: &Opts, cfg_hash: &str) -> Result<CheckedOutput, String> {
     match std::fs::DirBuilder::new().create(&opts.output_path) {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && opts.overwrite => {
+
+            let metadata_path = opts.output_path.join("meta.json");
+            let skip_sim = std::fs::File::open(&metadata_path).map(BufReader::new)
+                .map(serde_json::from_reader::<_, SimulationMetadata>)
+                .map(|config| config.map(|x| {
+                    (x.cfg_hash == cfg_hash) && (x.yaxs_version == env!("YAXS_VERSION"))
+                }).unwrap_or(false))
+                .unwrap_or_else(|err|{
+                    warn!("Could not open previous simulation's metadata at {p}: {err}
+Cannot avoid re-simulation.", p=metadata_path.display());
+                    false
+                });
+            if skip_sim && !opts.re_simulate {
+                return Ok(CheckedOutput::ResimulationNotNeeded);
+            }
+
+
             info!(
                 "Removing '{out_dir}' according to user input...",
                 out_dir = opts.output_path.display()
@@ -253,7 +286,7 @@ pub fn prepare_output_directory(opts: &Opts) -> Result<(), String> {
                     out_dir = opts.output_path.display()
                 )
             })?;
-            Ok(())
+            Ok(CheckedOutput::ContinueNormally)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !opts.overwrite => {
             Err(format!("Output directory '{}' already exists. Use '--overwrite' to overwrite existing files and directories.", opts.output_path.display()))
@@ -264,7 +297,7 @@ pub fn prepare_output_directory(opts: &Opts) -> Result<(), String> {
                 out_dir = opts.output_path.display()
             ))
         }
-        Ok(()) => {Ok(())} // all good,
+        Ok(()) => Ok(CheckedOutput::ContinueNormally) // all good,
     }
 }
 

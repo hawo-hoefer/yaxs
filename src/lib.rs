@@ -4,8 +4,8 @@ pub mod cif;
 pub mod util;
 
 pub mod absorption;
-pub mod element;
 pub mod composition;
+pub mod element;
 pub mod io;
 pub mod lattice;
 pub mod math;

@@ -1,6 +1,6 @@
+use crate::math::stats::std_normal_box_muller_tf;
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::{SplitMix64, Xoshiro256PlusPlus};
-use crate::math::stats::std_normal_box_muller_tf;
 
 #[derive(Debug, Clone)]
 pub enum Noise {

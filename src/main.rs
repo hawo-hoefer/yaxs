@@ -4,6 +4,7 @@ use colog::format::CologStyle;
 use colored::Colorize;
 use itertools::Itertools;
 use rand::SeedableRng;
+use sha2::Digest;
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
@@ -273,34 +274,41 @@ fn main() {
         info!("{}", ARTWORK)
     }
 
-    let f = match std::fs::File::open(&args.cfg) {
-        Ok(f) => f,
-        Err(e) => {
-            error!(
-                "Could not open File '{}': {}",
-                args.cfg.to_str().unwrap(),
-                e
-            );
-            std::process::exit(1);
-        }
-    };
+    let cfg_str = std::fs::read_to_string(&args.cfg).unwrap_or_else(|err| {
+        error!(
+            "Could not open File '{}': {}",
+            args.cfg.to_str().unwrap(),
+            err
+        );
+        std::process::exit(1);
+    });
 
-    let mut cfg = match serde_yaml::from_reader::<_, Config>(BufReader::new(f)) {
-        Ok(cfg) => {
-            if cfg.simulation_parameters.n_patterns == 0 {
-                error!("Number n_patterns needs to be larger than 0",);
-                std::process::exit(1);
-            }
-            cfg
+    let cfg_hash = format!("{:x}", sha2::Sha256::digest(&cfg_str));
+    debug!(
+        "SHA256 of config file {f}: {cfg_hash}",
+        f = args.cfg.to_str().expect("config is utf8")
+    );
+
+    let mut cfg = serde_yaml::from_str::<Config>(&cfg_str).unwrap_or_else(|err| {
+        error!(
+            "Could not parse config: '{x}': {err}",
+            x = args.cfg.to_str().unwrap()
+        );
+        std::process::exit(1);
+    });
+
+    let how_continue = prepare_output_directory(&args.io, &cfg_hash).unwrap_or_else(|err| {
+        error!("Could not prepare output directory: {err}");
+        std::process::exit(1);
+    });
+    match how_continue {
+        io::CheckedOutput::ResimulationNotNeeded => {
+            info!("Resimulation is not needed. Config Hash and YaXS version match. Skipping Simulation. In case you want to re-simulate anyway, use the command line flag '--re-simulate'.");
+            std::process::exit(0);
         }
-        Err(e) => {
-            error!(
-                "Could not parse config: '{x}': {e}",
-                x = args.cfg.to_str().unwrap()
-            );
-            std::process::exit(1);
-        }
-    };
+        io::CheckedOutput::ContinueNormally => (),
+    }
+
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
@@ -320,10 +328,10 @@ Device ID:           {}",
                 CUDA_DEVICE_INFO.api_version,
                 CUDA_DEVICE_INFO.runtime_version,
                 CUDA_DEVICE_INFO.device_id
-
             );
         }
     }
+
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
         cfg.simulation_parameters.seed.unwrap_or(0),
     );
@@ -390,6 +398,7 @@ Device ID:           {}",
             error!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound());
             std::process::exit(1);
         }
+
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
         composition_constraints.push(composition.clone());
         strain_cfgs.push(strain.clone());
@@ -457,13 +466,6 @@ Device ID:           {}",
         }
     }
 
-    prepare_output_directory(&args.io)
-        .map_err(|err| {
-            error!("Could not prepare output directory: {err}");
-            std::process::exit(1);
-        })
-        .expect("error is handled inside");
-
     let cfg_file_name = args
         .cfg
         .file_name()
@@ -516,7 +518,7 @@ Device ID:           {}",
                 absorption_factors,
                 rng,
             );
-            render_and_write_jobs(gen, args, timestamp_started, extra)
+            render_and_write_jobs(gen, args, timestamp_started, extra, cfg_hash)
         }
         SimulationKind::EnergyDispersive(energy_dispersive) => {
             let mac_generator = MACGenerator::from_structures_energy(
@@ -535,7 +537,7 @@ Device ID:           {}",
                 mac_generator,
                 rng,
             );
-            render_and_write_jobs(gen, args, timestamp_started, extra)
+            render_and_write_jobs(gen, args, timestamp_started, extra, cfg_hash)
         }
     }
     .unwrap_or_else(|err| {
@@ -549,6 +551,7 @@ fn render_and_write_jobs<T, G>(
     args: Cli,
     timestamp_started: chrono::DateTime<Utc>,
     extra: io::Extra,
+    cfg_hash: String,
 ) -> Result<(), String>
 where
     T: Discretizer + Send + Sync + 'static,
@@ -602,9 +605,10 @@ where
         yaxs_version: env!("YAXS_VERSION").to_string(),
         chunked: args.io.chunk_size.is_some(),
         datafiles: output_names.chunk_names,
-        input_names: &output_names.data_slot_names,
-        target_names: &output_names.metadata_slot_names,
+        input_names: output_names.data_slot_names,
+        target_names: output_names.metadata_slot_names,
         extra,
+        cfg_hash,
     })
     .expect("SimulationMetadata is serializable");
 
