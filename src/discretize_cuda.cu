@@ -290,8 +290,9 @@ bool render_noise(float *intensities_d, Noise noise, uint64_t *rng_state, size_t
 
 // TODO: find a more efficient way to do this!
 //       maybe a fancy reduction kernel is in better, but this works for now
-__global__ void get_extrema(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima,
-                            float *all_maxima) {
+// if a pattern is constant, return values that lead to normalization of the entire pattern to 1
+__global__ void get_extrema_for_normalization(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima,
+                                              float *all_maxima) {
   size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
   if (tid >= n_patterns)
     return;
@@ -303,8 +304,14 @@ __global__ void get_extrema(float *intensities, size_t n_patterns, size_t pat_le
     vmin = fmin(vmin, intensities[p0 + off]);
     vmax = fmax(vmax, intensities[p0 + off]);
   }
-  all_minima[tid] = vmin;
-  all_maxima[tid] = vmax;
+  if (vmin != vmax) {
+    all_minima[tid] = vmin;
+    all_maxima[tid] = vmax;
+  } else {
+    float c = vmin;
+    all_minima[tid] = c - 1.0;
+    all_maxima[tid] = c;
+  }
 }
 
 __global__ void normalize(float *intensities, size_t n_patterns, size_t pat_len, float *all_minima, float *all_maxima) {
@@ -329,12 +336,13 @@ bool normalize_patterns(float *intensities, size_t n_patterns, size_t pat_len) {
     int block_size = 0;
     int min_grid_size = 0;
     int array_count = n_patterns;
-    cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)get_extrema, 0, array_count),
+    cu_lerr(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, (void *)get_extrema_for_normalization, 0,
+                                               array_count),
             "finding cuda kernel launch configuration");
     int grid_size = (array_count + block_size - 1) / block_size;
 
     debugf("launching get_extrema kernel");
-    get_extrema<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
+    get_extrema_for_normalization<<<grid_size, block_size>>>(intensities, n_patterns, pat_len, all_minima, all_maxima);
     cudaError_t ret = cudaPeekAtLastError();
     cu_lerr(ret, "launching get_extrema kernel");
   }
