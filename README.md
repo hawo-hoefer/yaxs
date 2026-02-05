@@ -50,6 +50,7 @@ Further information on the input file structure can be found [here](./inputfile.
 - **BUGFIXES**
     - [ ] fix 'invalid resource handle' bug in CUDA when compiling with rustc 1.89
     - [ ] not setting chunk size for large amounts of XRD patterns causes crash with unhelpful error message
+    - [ ] chebyshev backgrounds with single coefficient produce NaN-values in output
 - [ ] DOCS: find some way to add example cifs into repo that does not infringe on someones copyright
 - [x] DOCS: document randomized atomic displacement factors 
 - [ ] CI: improve CI speed using caching
