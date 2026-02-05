@@ -64,7 +64,7 @@ impl Background {
         let iterator = intensities.iter_mut().zip(positions);
 
         match self {
-            Background::None => (),
+            Background::None => return,
             Background::Chebyshev { coef, scale } => {
                 let poly_coef = cheb2poly(coef);
                 let mut d_max = std::f32::MIN;
@@ -80,8 +80,14 @@ impl Background {
                     *intensity += d;
                 }
 
-                for i in intensities.iter_mut() {
-                    *i = (*i - d_min) / (d_max - d_min) * scale;
+                if d_max != d_min {
+                    for i in intensities.iter_mut() {
+                        *i = (*i - d_min) / (d_max - d_min) * scale;
+                    }
+                } else {
+                    for i in intensities.iter_mut() {
+                        *i *= scale;
+                    }
                 }
             }
             Background::Exponential { slope, scale } => {
@@ -94,8 +100,14 @@ impl Background {
                     *intensity += d;
                 }
 
-                for i in intensities.iter_mut() {
-                    *i = (*i - d_min) / (d_max - d_min) * scale;
+                if d_max != d_min {
+                    for i in intensities.iter_mut() {
+                        *i = (*i - d_min) / (d_max - d_min) * scale;
+                    }
+                } else {
+                    for i in intensities.iter_mut() {
+                        *i *= scale;
+                    }
                 }
             }
         }
