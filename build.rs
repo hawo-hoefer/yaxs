@@ -6,6 +6,7 @@ fn main() {
     println!("cargo::rerun-if-changed=./src/texture_weight_cuda.cu");
     println!("cargo::rerun-if-changed=./src/cuda_common.cu");
     println!("cargo::rerun-if-changed=./src/cuda_init.cu");
+    println!("cargo::rerun-if-changed=.git/");
     println!("cargo::rerun-if-changed=./src/cuda_merged.cu");
     if cfg!(feature = "use-gpu") {
         #[rustfmt::skip]
