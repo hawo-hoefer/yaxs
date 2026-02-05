@@ -121,7 +121,9 @@ impl WriteCtx {
         let sample_idx = p.struct_id * *n_permutations + p.permutation_id;
         match p.peaks {
             PossiblyTextureMeasurementPeaks::NoTexture(res) => {
-                assert_eq!(*n_measurements, 1, "n_measurements needs to be 1 if no texture measurement is done. this is likely a bug in yaxs.");
+                // this assert is wrong, since we can have phases with no texture mixed in with
+                // textured phases
+                // assert_eq!(*n_measurements, 1, "n_measurements needs to be 1 if no texture measurement is done. this is likely a bug in yaxs.");
 
                 peaks[sample_idx] = MaybeUninit::new(res);
             }
@@ -685,6 +687,7 @@ mod cuda {
 
         for struct_id in 0..n_structs {
             let Some(ref mut po) = ctx.po_gens[struct_id] else {
+                // TODO: multithread?
                 for permutation_id in 0..n_permutations {
                     let res = ctx.run(
                         PeakSim {

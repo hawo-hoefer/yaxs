@@ -11,6 +11,7 @@ kind: !EnergyDispersive
 
 sample_parameters:
   structure_permutations: 1000
+  composition_kind: ByVolume
   structures:
     - path: ./cif/Ir_53813.cif
       mean_ds_nm: 50.0
@@ -19,6 +20,10 @@ sample_parameters:
         k: [1000, 0.5, 0.5, 0.0]
         orientation: [1, 0, 0, 0]
         sampling: {n: 1024, kappa: 20}
+      composition: 0.5
+    - path: ./cif/HfO2_monoclinic_27313.cif
+      mean_ds_nm: 50.0
+      ds_eta: 0.5
 
 simulation_parameters:
   normalize: false
