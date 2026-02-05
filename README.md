@@ -42,7 +42,6 @@ Further information on the input file structure can be found [here](./inputfile.
     - [ ] Air Scattering
     - [ ] Peak Asymmetry
     - [ ] Revisit sample displacement for EDXRD, for now sample displacement is ignored
-    - [ ] check config hash before redoing simulation - dont re-simulate if simulation input hasn't changed
     - [ ] Add better controls for resource consumption
     - [ ] CPU backend multithreading
         - right now, the cpu backend is single threaded, which is really slow
@@ -55,6 +54,7 @@ Further information on the input file structure can be found [here](./inputfile.
 - [ ] DOCS: find some way to add example cifs into repo that does not infringe on someones copyright
 - [x] DOCS: document randomized atomic displacement factors 
 - [ ] CI: improve CI speed using caching
+- [x] check config hash before redoing simulation - dont re-simulate if simulation input hasn't changed
 - [x] optionally randomize atomic displacement factors
     - current randomization generates one B-Iso factor per structure
     - one factor per site in cif seems like the correct thing to do to respect symmetries of the structure
