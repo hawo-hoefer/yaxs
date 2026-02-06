@@ -14,8 +14,7 @@ use ndarray::Data;
 use ndarray::Dimension;
 use ndarray::RawData;
 use ndarray::{Array1, Array2, Array3};
-use ndarray_npy::NpzWriter;
-use ndarray_npy::WritableElement;
+use ndarray_npy::{NpzWriter, WritableElement, WriteNpyExt};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -216,11 +215,13 @@ pub fn write_to_npz(
         )
     })?);
 
-    let mut w = if compress {
-        NpzWriter::new_compressed(w)
+    let mut opts = zip::write::SimpleFileOptions::default().large_file(true);
+    if compress {
+        opts = opts.compression_method(zip::CompressionMethod::Deflated);
     } else {
-        NpzWriter::new(w)
-    };
+        opts = opts.compression_method(zip::CompressionMethod::Stored);
+    }
+    let mut w = NpzWriter::new_with_options(w, opts);
 
     let mut meta_names = Vec::new();
     for m in meta.iter() {
