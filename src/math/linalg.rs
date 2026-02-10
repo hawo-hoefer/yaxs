@@ -237,6 +237,15 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
     }
 }
 
+impl<T> ColVec<T, 2> {
+    pub fn extend(&self, v: T) -> ColVec<T, 3>
+    where
+        T: Copy,
+    {
+        ColVec::<T, 3>::new(self[0], self[1], v)
+    }
+}
+
 impl<T> Vec3<T> {
     pub fn new(x: T, y: T, z: T) -> Self {
         Mat::from_rows([[x], [y], [z]])
