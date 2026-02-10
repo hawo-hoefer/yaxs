@@ -10,6 +10,7 @@ use crate::noise::Noise;
 use crate::pattern::{DiscretizeSample, Discretizer, PeakRenderParams};
 use crate::uninit_vec;
 
+use self::ffi::BkgSOA;
 use self::ffi::Uniform;
 
 mod ffi {
@@ -148,10 +149,10 @@ impl RenderCtx {
 
 unsafe impl Sync for RenderCtx {}
 
-pub fn discretize_peaks_cuda<T>(
+pub fn prepare_cuda_discretize<T>(
     mut jobs: Vec<DiscretizeSample<T>>,
-    two_thetas: &[f32],
-) -> Result<Vec<f32>, String>
+    two_thetas: Vec<f32>,
+) -> Result<PreparedCudaBatch, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
@@ -184,7 +185,7 @@ where
     };
 
     let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(num_peak_sets);
-    let mut ctx = Arc::new(RenderCtx::new(n_peaks_tot));
+    let ctx = Arc::new(RenderCtx::new(n_peaks_tot));
 
     let mut rng_state = Vec::<u64>::with_capacity(num_peak_sets * 4);
 
@@ -365,9 +366,46 @@ where
         })?
     }
 
-    let ctx = Arc::get_mut(&mut ctx).expect("all threads owning ctx have stopped");
-    let soa = ctx.as_soa();
+    let ctx = Arc::into_inner(ctx).expect("all threads owning ctx have stopped");
 
+    Ok(PreparedCudaBatch {
+        ctx,
+        noise_kind,
+        noise_data,
+        rng_state,
+        patterns: Arc::into_inner(patterns).expect("all threads owning patterns have stopped"),
+        two_thetas,
+        bkg_soa,
+        bkg_scales,
+        normalize,
+    })
+}
+
+pub struct PreparedCudaBatch {
+    ctx: RenderCtx,
+    noise_kind: ffi::NoiseKind,
+    noise_data: Vec<f64>,
+    rng_state: Vec<u64>,
+    patterns: Vec<ffi::CUDAPattern>,
+    two_thetas: Vec<f32>,
+    bkg_soa: BkgSOA,
+    bkg_scales: Vec<f32>,
+    normalize: bool,
+}
+
+pub fn render_with_cuda(
+    PreparedCudaBatch {
+        mut ctx,
+        noise_kind,
+        noise_data,
+        rng_state,
+        patterns,
+        two_thetas,
+        bkg_soa,
+        bkg_scales,
+        normalize,
+    }: PreparedCudaBatch,
+) -> Result<Vec<f32>, String> {
     let noise_val = match noise_kind {
         ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
             none: core::ptr::null(),
@@ -395,6 +433,8 @@ where
     };
 
     let mut intensities = unsafe { uninit_vec(patterns.len() * two_thetas.len()) };
+
+    let soa = ctx.as_soa();
 
     unsafe {
         let ret = ffi::render_peaks_and_background(

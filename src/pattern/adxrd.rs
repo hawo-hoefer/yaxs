@@ -363,7 +363,7 @@ impl PrecomputedLACs {
             let energy_kev = funcs::e_kev_to_lambda_ams(w);
 
             let mut structure_lacs = Vec::with_capacity(structures.len());
-            for (s, p) in structures.iter().zip(structure_paths) {
+            for (s, _p) in structures.iter().zip(structure_paths) {
                 let mac = s.wt_composition.get_mac_at_energy(energy_kev)?;
                 let lac = mac * s.density_g_cm3;
                 structure_lacs.push(lac);

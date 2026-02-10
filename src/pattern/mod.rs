@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use cfg_if::cfg_if;
 use itertools::Itertools;
-use log::{info, warn};
+use log::{warn};
 use ndarray::{Array2, Array4};
 use rand::Rng;
 use serde::Deserialize;
@@ -17,7 +16,6 @@ use crate::math::{
     scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
 };
 use crate::noise::Noise;
-use crate::structure::Structure;
 
 use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
@@ -435,7 +433,7 @@ fn edxrd_polarization_factor_horizontal_plane(theta_rad: f64) -> f64 {
     (theta_rad * 2.0).cos().powi(2)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JobParams {
     pub abstol: f32,
     pub n_phases: usize,
@@ -790,74 +788,6 @@ pub enum Intensities {
     /// Xrd patterns, where n and m are the resolution in phi and chi, respectively
     /// therefore, the resolution must be [n_samples, phi_steps, chi_steps, pattern_steps]
     TextureMeasurement(Array4<f32>),
-}
-
-pub fn render_jobs<T>(
-    jobs: Vec<DiscretizeSample<T>>,
-    xs: &[f32],
-    p: &JobParams,
-) -> Result<(Intensities, Vec<PatternMeta>), String>
-where
-    T: Discretizer + Send + Sync + 'static,
-{
-    let n_samples = jobs.len();
-    let mut metadata = T::init_meta_data(n_samples, p);
-    info!("Initialized metadata for {n_samples} sample(s).");
-
-    for (i, job) in jobs.iter().enumerate() {
-        for m in metadata.iter_mut() {
-            let job = match job {
-                DiscretizeSample::Standard(job) => job,
-                DiscretizeSample::TextureMeasurement(items) => items
-                    .first()
-                    .expect("at least one pattern in texture measurement"),
-            };
-            job.write_meta_data(m, i)
-        }
-    }
-
-    let n_peak_sets = jobs.iter().map(|x| x.n_patterns()).sum();
-
-    // actual rendering of the patterns
-    cfg_if! {
-        if #[cfg(feature = "use-gpu")] {
-            use crate::discretize_cuda::discretize_peaks_cuda;
-            let intensities = discretize_peaks_cuda(jobs, xs)?;
-            let intensities = ndarray::Array2::from_shape_vec((n_peak_sets, xs.len()), intensities)
-                .expect("sizes must match");
-        } else {
-        let mut intensities = Array2::<f32>::zeros((n_peak_sets, xs.len()));
-            let mut peak_set = 0;
-            for job in jobs {
-                // TODO: somehow encode that all samples have the same simulation type
-                // in the type system
-                match job {
-                    DiscretizeSample::Standard(job) => {
-                        job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
-                        peak_set += 1;
-                    },
-                    DiscretizeSample::TextureMeasurement(items) => {
-                        for job in items.iter() {
-                            job.discretize_into(intensities.row_mut(peak_set).as_slice_mut().unwrap(), &xs, p.abstol);
-                            peak_set += 1;
-                        }
-                    },
-                }
-            }
-        }
-    };
-
-    let intensities = if let Some(t) = p.texture_measurement {
-        Intensities::TextureMeasurement(
-            intensities
-                .into_shape_with_order((n_samples, t.chi.steps, t.phi.steps, xs.len()))
-                .expect("shapes match"),
-        )
-    } else {
-        Intensities::Standard(intensities)
-    };
-
-    Ok((intensities, metadata))
 }
 
 #[cfg(test)]
