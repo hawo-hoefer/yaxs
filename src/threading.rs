@@ -1,4 +1,4 @@
-use std::sync::mpsc::{RecvError, SendError, Sender, SyncSender};
+use std::sync::mpsc::{RecvError, SendError, SyncSender};
 use std::thread::JoinHandle;
 
 pub enum Action<T> {
