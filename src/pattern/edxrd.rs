@@ -374,7 +374,8 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     ks[(pat_id, i, 0)] = phase_ks.w as f32;
                     ks[(pat_id, i, 1)] = phase_ks.x as f32;
                     ks[(pat_id, i, 2)] = phase_ks.y as f32;
-                    ks[(pat_id, i, 3)] = phase_ks.z as f32;
+                    // ks[(pat_id, i, 3)] = phase_ks.z as f32;
+                    assert_eq!(phase_ks.z, 0.0);
                 }
             }
             RandomBIsos(dst) => {
@@ -407,7 +408,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         if let Some(n) = p.textured_phases {
             v.push(BinghamODFParams {
                 orientations: Array3::zeros((n_samples, n, 4)),
-                ks: Array3::zeros((n_samples, n, 4)),
+                ks: Array3::zeros((n_samples, n, 3)),
             })
         }
 
