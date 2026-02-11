@@ -19,10 +19,10 @@ use log::{debug, error, info};
 
 use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
 use yaxs::io::{
-    self, prepare_output_directory, render_write_chunked, write_to_npz, HKLDisplayMode,
-    OutputNames, SimulationMetadata,
+    self, prepare_output_directory, render_write_chunked, HKLDisplayMode,
+    SimulationMetadata,
 };
-use yaxs::pattern::{render_jobs, CompositionGenerator, DiscretizeJobGenerator, Discretizer};
+use yaxs::pattern::{CompositionGenerator, DiscretizeJobGenerator, Discretizer};
 
 const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulator)
           
@@ -309,7 +309,6 @@ fn main() {
         io::CheckedOutput::ContinueNormally => (),
     }
 
-
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             use yaxs::cuda_common::CUDA_DEVICE_INFO;
@@ -547,7 +546,7 @@ Device ID:           {}",
 }
 
 fn render_and_write_jobs<T, G>(
-    mut gen: G,
+    gen: G,
     args: Cli,
     timestamp_started: chrono::DateTime<Utc>,
     extra: io::Extra,
@@ -558,39 +557,7 @@ where
     G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();
-    let output_names = if args.io.chunk_size.is_some() {
-        render_write_chunked(gen, &args.io)
-    } else {
-        // write as single chunk
-        let mut jobs = Vec::with_capacity(gen.remaining());
-        while let Some(job) = gen.next() {
-            jobs.push(job);
-        }
-        let xs = gen.xs();
-        let (intensities, pattern_metadata) = render_jobs(jobs, xs, &gen.get_job_params())?;
-        let mut data_path = std::path::PathBuf::new();
-        data_path.push(&args.io.output_path);
-        data_path.push("data.npz");
-        let (data_slot_names, metadata_slot_names) = write_to_npz(
-            data_path,
-            &intensities,
-            &pattern_metadata,
-            args.io.compress,
-            1,
-            1,
-        )
-        .unwrap_or_else(|err| {
-            error!("Error writing data to disk: {err}");
-            std::process::exit(1)
-        });
-        Ok(OutputNames {
-            chunk_names: None,
-            data_slot_names,
-            metadata_slot_names,
-        })
-    };
-
-    let output_names = output_names.unwrap_or_else(|err| {
+    let output_names = render_write_chunked(gen, &args.io).unwrap_or_else(|err| {
         error!("could not write data to disk: {err}");
         std::process::exit(1)
     });

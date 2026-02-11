@@ -38,6 +38,5 @@ debug = true
 strip = false
 
 [features]
-default = ["use-gpu", "use-avx"]
+default = ["use-gpu"]
 use-gpu = []
-use-avx = []
