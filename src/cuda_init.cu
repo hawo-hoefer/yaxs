@@ -46,17 +46,17 @@ bool dev_props(DevInfo *di) {
 }
 
 DevInfo init_get_dev_info(error_fn errfn, info_fn infofn, debug_fn debugfn) {
-  errf = errfn;
-  infof = infofn;
-  debugf = debugfn;
+  _errf = errfn;
+  _infof = infofn;
+  _debugf = debugfn;
 
   DevInfo dev = {
-    .device_name = nullptr, // if device_name is null, init has failed
-    .available_memory_bytes = 0,
-    .init_free_memory_bytes = 0,
-    .api_version = 0,
-    .runtime_version = 0,
-    .device_id = 0,
+      .device_name = nullptr, // if device_name is null, init has failed
+      .available_memory_bytes = 0,
+      .init_free_memory_bytes = 0,
+      .api_version = 0,
+      .runtime_version = 0,
+      .device_id = 0,
   };
 
   if (!dev_props(&dev)) {

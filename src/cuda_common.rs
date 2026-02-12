@@ -6,6 +6,8 @@ use log::{debug, error, info};
 pub extern "C" fn c_error_handler(
     _file: *const c_char,
     _line: c_int,
+    chunk_idx: usize,
+    n_chunks: usize,
     msg: *const c_char,
     cuda_err_code: c_int,
     cuda_err: *const c_char,
@@ -13,21 +15,33 @@ pub extern "C" fn c_error_handler(
     let msg = unsafe { CStr::from_ptr(msg) };
     let cuda_err = unsafe { CStr::from_ptr(cuda_err) };
     error!(
-        "CUDA Error {} while {}: {}",
+        "(Chunk {} / {}) CUDA Error {} while {}: {}",
+        chunk_idx + 1,
+        n_chunks,
         cuda_err_code,
         msg.to_str().expect("valid utf-8"),
         cuda_err.to_str().expect("valid utf-8")
     );
 }
 
-pub extern "C" fn c_info_handler(msg: *const c_char) {
+pub extern "C" fn c_info_handler(chunk_idx: usize, n_chunks: usize, msg: *const c_char) {
     let msg = unsafe { CStr::from_ptr(msg) };
-    info!("CUDA: {}", msg.to_str().expect("valid utf-8"));
+    info!(
+        "(Chunk {} / {}) CUDA: {}",
+        chunk_idx + 1,
+        n_chunks,
+        msg.to_str().expect("valid utf-8")
+    );
 }
 
-pub extern "C" fn c_debug_handler(msg: *const c_char) {
+pub extern "C" fn c_debug_handler(chunk_idx: usize, n_chunks: usize, msg: *const c_char) {
     let msg = unsafe { CStr::from_ptr(msg) };
-    debug!("CUDA: {}", msg.to_str().expect("valid utf-8"));
+    debug!(
+        "(Chunk {} / {}) CUDA: {}",
+        chunk_idx + 1,
+        n_chunks,
+        msg.to_str().expect("valid utf-8")
+    );
 }
 
 pub struct DevInfo {
@@ -59,15 +73,23 @@ fn init_cuda() -> DevInfo {
     #[rustfmt::skip]
     extern "C" {
         pub fn init_get_dev_info(
-           error_print_handle: extern "C" fn(
-               file: *const c_char,
-               line: c_int,
-               msg: *const c_char,
-               cuda_err_code: c_int,
-               cuda_err: *const c_char,
-           ),
-           info_print_handle: extern "C" fn(msg: *const c_char),
-           debug_print_handle: extern "C" fn(msg: *const c_char),
+            error_print_handle: extern "C" fn(
+                file: *const c_char,
+                line: c_int,
+                chunk_idx: usize,
+                n_chunks: usize,
+                msg: *const c_char,
+                cuda_err_code: c_int,
+                cuda_err: *const c_char,
+            ),
+            info_print_handle: extern "C" fn(
+                chunk_idx: usize,
+                n_chunks: usize,
+                msg: *const c_char),
+            debug_print_handle: extern "C" fn(
+                chunk_idx: usize,
+                n_chunks: usize,
+                msg: *const c_char),
         ) -> FFIDevInfo;
     }
 

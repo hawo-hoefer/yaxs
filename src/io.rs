@@ -203,7 +203,7 @@ pub fn write_to_npz(
     total: usize,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     info!(
-        "Writing ({progress}/{total}) path: {path}",
+        "(Chunk {progress} / {total}) path: {path}",
         path = path.as_ref().display()
     );
     let w = BufWriter::new(std::fs::File::create_new(&path).map_err(|err| {
@@ -378,6 +378,8 @@ pub mod cuda {
         n_peak_sets: usize,
         n_steps: usize,
         n_samples: usize,
+        chunk_idx: usize,
+        n_chunks: usize,
     }
 
     pub fn cuda_dispatcher<'a>(
@@ -392,11 +394,15 @@ pub mod cuda {
             n_peak_sets,
             n_steps,
             n_samples,
+            chunk_idx,
+            n_chunks,
         } = Arc::into_inner(cmd).expect("only one reference");
 
-        let intensities = crate::discretize_cuda::render_with_cuda(batch).map(|i| {
-            ndarray::Array2::from_shape_vec((n_peak_sets, n_steps), i).expect("sizes must match")
-        })?;
+        let intensities = crate::discretize_cuda::render_with_cuda(batch, chunk_idx, n_chunks)
+            .map(|i| {
+                ndarray::Array2::from_shape_vec((n_peak_sets, n_steps), i)
+                    .expect("sizes must match")
+            })?;
 
         let intensities = if let Some(t) = params.texture_measurement {
             Intensities::TextureMeasurement(
@@ -414,17 +420,24 @@ pub mod cuda {
                 meta,
                 path: file_dst,
             })
-            .map_err(|err| format!("Could not queue write job: {}", err.to_string()))
+            .map_err(|err| {
+                format!(
+                    "(Chunk {} / {}) Could not queue write job: {}",
+                    chunk_idx + 1,
+                    n_chunks,
+                    err.to_string()
+                )
+            })
     }
 
     pub fn cuda_prep_thread<T>(
-        (jobs, job_params, xs, file_dst, cuda_tx): (
-            Batch<T>,
-            JobParams,
-            Vec<f32>,
-            PathBuf,
-            &ExecuteSender<Arc<CudaRenderCommand>>,
-        ),
+        jobs: Batch<T>,
+        file_dst: PathBuf,
+        chunk_idx: usize,
+        job_params: JobParams,
+        xs: Vec<f32>,
+        n_chunks: usize,
+        cuda_tx: &ExecuteSender<Arc<CudaRenderCommand>>,
     ) -> Result<(), String>
     where
         T: Discretizer + Send + Sync + 'static,
@@ -437,7 +450,10 @@ pub mod cuda {
         let n_steps = xs.len();
 
         let mut metadata = T::init_meta_data(n_samples, &job_params);
-        info!("Initialized metadata for {n_samples} sample(s).");
+        info!(
+            "(Chunk {} / {n_chunks}) Initialized metadata for {n_samples} sample(s).",
+            chunk_idx + 1
+        );
 
         for (i, job) in jobs.iter().enumerate() {
             for m in metadata.iter_mut() {
@@ -452,7 +468,12 @@ pub mod cuda {
         }
 
         // actual rendering of the patterns
-        let batch = crate::discretize_cuda::prepare_cuda_discretize(jobs, xs.to_vec())?;
+        let batch = crate::discretize_cuda::prepare_cuda_discretize(
+            jobs,
+            xs.to_vec(),
+            chunk_idx,
+            n_chunks,
+        )?;
         cuda_tx
             .queue(Arc::new(CudaRenderCommand {
                 batch,
@@ -462,8 +483,10 @@ pub mod cuda {
                 n_peak_sets,
                 n_steps,
                 n_samples,
+                chunk_idx,
+                n_chunks,
             }))
-            .map_err(|err| format!("Could not send batch to cuda controller thread: {err}"))?;
+            .map_err(|err| format!("Could not send chunk {chunk_idx} / {n_chunks} to cuda controller thread: {err}"))?;
 
         Ok(())
     }
@@ -501,19 +524,27 @@ pub mod cuda {
 
         let (prep_tx, prep_thread) = {
             let cuda_tx = cuda_tx.clone();
-            ExecuteSender::create(move |(jobs, file_dst): (Batch<T>, PathBuf)| {
-                cuda_prep_thread((jobs, job_params.clone(), xs.clone(), file_dst, &cuda_tx))
-            })
+            ExecuteSender::create(
+                move |(jobs, file_dst, chunk_idx): (Batch<T>, PathBuf, usize)| {
+                    cuda_prep_thread(
+                        jobs,
+                        file_dst,
+                        chunk_idx,
+                        job_params.clone(),
+                        xs.clone(),
+                        n_chunks,
+                        &cuda_tx,
+                    )
+                },
+            )
         };
 
         let mut i = 0;
         let mut datafiles = Vec::new();
         while i < samples {
-            let chunk_file_name = format!(
-                "data_{:0width$}.npz",
-                i / chunk_size,
-                width = pad_width as usize
-            );
+            let chunk_idx = i / chunk_size;
+            let chunk_file_name =
+                format!("data_{:0width$}.npz", chunk_idx, width = pad_width as usize);
             let mut chunk = Vec::with_capacity(chunk_size.min(gen.remaining()));
             for _ in 0..chunk_size {
                 let Some(job) = gen.next() else {
@@ -531,7 +562,7 @@ pub mod cuda {
             datafiles.push(chunk_file_name);
 
             prep_tx
-                .queue((Arc::new(chunk), chunk_path.clone()))
+                .queue((Arc::new(chunk), chunk_path.clone(), chunk_idx))
                 .map_err(|err| format!("Could not queue chunk in prep thread: {err}"))?;
 
             i += actual_chunk_size;

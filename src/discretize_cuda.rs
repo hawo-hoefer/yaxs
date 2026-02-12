@@ -30,6 +30,8 @@ mod ffi {
             bkg_degree_if_poly: usize,
             bkg_scale_if_not_none: *const f32,
             normalize: bool,
+            chunk_idx: usize,
+            n_chunks: usize,
         ) -> bool;
     }
 
@@ -152,11 +154,16 @@ unsafe impl Sync for RenderCtx {}
 pub fn prepare_cuda_discretize<T>(
     mut jobs: Vec<DiscretizeSample<T>>,
     two_thetas: Vec<f32>,
+    chunk_idx: usize,
+    n_chunks: usize,
 ) -> Result<PreparedCudaBatch, String>
 where
     T: Discretizer + Send + Sync + 'static,
 {
-    debug!("Collecting peak rendering info for CUDA-based rendering");
+    debug!(
+        "(Chunk {} / {n_chunks}) Collecting peak rendering info for CUDA-based rendering",
+        chunk_idx + 1
+    );
     use self::ffi::BkgSOA;
 
     let n_peaks_tot: usize = jobs
@@ -327,11 +334,16 @@ where
     }
     assert!(chunk_size * n_threads >= n_jobs);
     if chunk_size < 10 {
-        info!("Small amount of jobs ({n_jobs}). Falling back to single threaded CUDA input preparation.");
+        info!("(Chunk {} / {n_chunks}) Small amount of jobs ({n_jobs}). Falling back to single threaded CUDA input preparation.",
+            chunk_idx + 1,
+        );
         n_threads = 1;
         chunk_size = n_jobs;
     }
-    info!("Generating CUDA inputs using {n_threads} threads");
+    info!(
+        "(Chunk {} / {n_chunks}) Generating CUDA inputs using {n_threads} threads",
+        chunk_idx + 1
+    );
 
     // TODO: find some way to prune small peaks.
     let mut handles = Vec::new();
@@ -351,7 +363,10 @@ where
                     unsafe { ctx.set_at(peak_idx, p) };
                 }
             }
-            debug!("Peak info generation thread {i} exiting");
+            debug!(
+                "(Chunk {} / {n_chunks}) Peak info generation thread {i} exiting",
+                chunk_idx + 1
+            );
         });
         handles.push(handle);
 
@@ -362,7 +377,7 @@ where
 
     for (i, handle) in handles.drain(..).enumerate() {
         handle.join().map_err(|err| {
-            format!("Cuda backend: could not join peak info generation thread {i}: '{err:?}'")
+            format!("(Chunk {} / {n_chunks}) Cuda backend: could not join peak info generation thread {i}: '{err:?}'", chunk_idx + 1)
         })?
     }
 
@@ -405,6 +420,8 @@ pub fn render_with_cuda(
         bkg_scales,
         normalize,
     }: PreparedCudaBatch,
+    chunk_idx: usize,
+    n_chunks: usize,
 ) -> Result<Vec<f32>, String> {
     let noise_val = match noise_kind {
         ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
@@ -466,6 +483,8 @@ pub fn render_with_cuda(
                 BkgSOA::Polynomial { .. } | BkgSOA::Exponential(_) => bkg_scales.as_ptr(),
             },
             normalize,
+            chunk_idx,
+            n_chunks,
         );
         if !ret {
             return Err(

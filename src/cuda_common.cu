@@ -1,21 +1,28 @@
 #ifndef CUDA_COMMON
 #define CUDA_COMMON
 
-typedef void (*error_fn)(const char *, int, const char *, int, const char *);
-typedef void (*info_fn)(const char *);
-typedef void (*debug_fn)(const char *);
+thread_local size_t n_chunks;
+thread_local size_t chunk_id;
 
-error_fn errf;
-info_fn infof;
-debug_fn debugf;
+typedef void (*error_fn)(size_t, size_t, const char *, int, const char *, int, const char *);
+typedef void (*info_fn)(size_t, size_t, const char *);
+typedef void (*debug_fn)(size_t, size_t, const char *);
+
+error_fn _errf;
+info_fn _infof;
+debug_fn _debugf;
 
 char tmp_str_buf[1024] = {0};
+
+#define infof(msg) _infof(chunk_id, n_chunks, (msg))
+#define debugf(msg) _debugf(chunk_id, n_chunks, (msg))
+#define errf(ret, msg, err_string) _errf(chunk_id, n_chunks, __FILE__, __LINE__, (ret), (msg), (err_string))
 
 #define TAU 3.1415926535897932384626433832795028841972f * 2.0f
 #define PI 3.1415926535897932384626433832795028841972f
 #define cu_lerr(ret, msg)                                                                                              \
   if (ret != cudaSuccess) {                                                                                            \
-    errf(__FILE__, __LINE__, (msg), (int)(ret), cudaGetErrorString((ret)));                                            \
+    errf((msg), (int)(ret), cudaGetErrorString((ret)));                                                                \
     fflush(stderr);                                                                                                    \
     return false;                                                                                                      \
   }

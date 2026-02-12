@@ -498,7 +498,10 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind backg
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len, Noise noise, uint64_t *rng_state,
                                  BkgKind background_kind, float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none, bool normalize) {
+                                 float *bkg_scales_if_not_none, bool normalize, size_t _chunk_id, size_t _n_chunks) {
+  chunk_id = _chunk_id;
+  n_chunks = _n_chunks;
+
   infof("Beginning CUDA rendering");
 
   float *intensities_d, *two_thetas_d;
@@ -517,19 +520,15 @@ bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float
   memset(tmp_str_buf, 0, sizeof(tmp_str_buf));
 
   // clang-format off
-  cu_lerr(cudaMalloc( &two_thetas_d,              pat_len * sizeof(float)), "allocating two_thetas_buffer");
+  cu_lerr(cudaMalloc(&two_thetas_d,               pat_len * sizeof(float)), "allocating two_thetas_buffer");
   cu_lerr(cudaMalloc(&intensities_d, n_patterns * pat_len * sizeof(float)), "allocating intensities buffer");
-  cu_lerr(cudaMalloc(   &patterns_d,     n_patterns * sizeof(CUDAPattern)), "allocating pattern buffer");
+  cu_lerr(cudaMalloc(&patterns_d,        n_patterns * sizeof(CUDAPattern)), "allocating pattern buffer");
 
   cu_lerr(cudaDeviceSynchronize(), "synchronizing device after allocating patterns");
 
   static_assert(sizeof(PeakSOA) == 5 * sizeof(size_t), "Number of Components in PeaksSOA has changed");
   cu_lerr(cudaMalloc(&peaks_d, 4 * sizeof(float) * peaks_soa.n_peaks_tot), "allocating peak info buffer");
 
-  if (!patterns_d) {
-    errf("", 0, "allocation failed", 0, "device pointer to peak info is null");
-    return false;
-  }
   debugf("Copying data to GPU");
 
 
