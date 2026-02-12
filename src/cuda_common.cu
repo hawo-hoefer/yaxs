@@ -1,12 +1,13 @@
 #ifndef CUDA_COMMON
 #define CUDA_COMMON
 
-thread_local size_t n_chunks;
-thread_local size_t chunk_id;
+thread_local size_t n_chunks = 0;
+thread_local size_t chunk_id = 0;
+thread_local int device_id = -1;
 
-typedef void (*error_fn)(size_t, size_t, const char *, int, const char *, int, const char *);
-typedef void (*info_fn)(size_t, size_t, const char *);
-typedef void (*debug_fn)(size_t, size_t, const char *);
+typedef void (*error_fn)(int, size_t, size_t, const char *, int, const char *, int, const char *);
+typedef void (*info_fn)(int, size_t, size_t, const char *);
+typedef void (*debug_fn)(int, size_t, size_t, const char *);
 
 error_fn _errf;
 info_fn _infof;
@@ -14,9 +15,9 @@ debug_fn _debugf;
 
 char tmp_str_buf[1024] = {0};
 
-#define infof(msg) _infof(chunk_id, n_chunks, (msg))
-#define debugf(msg) _debugf(chunk_id, n_chunks, (msg))
-#define errf(ret, msg, err_string) _errf(chunk_id, n_chunks, __FILE__, __LINE__, (ret), (msg), (err_string))
+#define infof(msg) _infof(device_id, chunk_id, n_chunks, (msg))
+#define debugf(msg) _debugf(device_id, chunk_id, n_chunks, (msg))
+#define errf(ret, msg, err_string) _errf(device_id, chunk_id, n_chunks, __FILE__, __LINE__, (ret), (msg), (err_string))
 
 #define TAU 3.1415926535897932384626433832795028841972f * 2.0f
 #define PI 3.1415926535897932384626433832795028841972f

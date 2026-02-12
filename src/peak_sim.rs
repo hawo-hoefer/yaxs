@@ -725,7 +725,9 @@ mod cuda {
                 )?;
                 let (_, n_required_bytes_cuda) = batch.memory_stats();
 
-                if n_required_bytes_cuda >= CUDA_DEVICE_INFO.init_free_memory_bytes * 9 / 10 {
+                if n_required_bytes_cuda
+                    >= CUDA_DEVICE_INFO[0].init_free_memory_bytes * 9 / 10
+                {
                     batch.compute_chunk(
                         Arc::clone(&results),
                         &ctx.structure_files[struct_id],

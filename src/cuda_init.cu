@@ -13,9 +13,15 @@ struct DevInfo {
   int device_id;
 };
 
-bool dev_props(DevInfo *di) {
-  int device = 0;
-  cu_lerr(cudaGetDevice(&device), "getting cuda device");
+bool dev_props(DevInfo *di, int device) {
+  *di = (DevInfo){
+    .device_name = nullptr, // if device_name is null, init has failed
+      .available_memory_bytes = 0,
+      .init_free_memory_bytes = 0,
+      .api_version = 0,
+      .runtime_version = 0,
+      .device_id = device,
+  };
 
   cudaDeviceProp prop;
   cu_lerr(cudaGetDeviceProperties(&prop, device), "getting cuda device properties");
@@ -45,24 +51,24 @@ bool dev_props(DevInfo *di) {
   return true;
 }
 
-DevInfo init_get_dev_info(error_fn errfn, info_fn infofn, debug_fn debugfn) {
+bool init_get_dev_info(error_fn errfn, info_fn infofn, debug_fn debugfn, DevInfo** dst, int* n_dev) {
   _errf = errfn;
   _infof = infofn;
   _debugf = debugfn;
 
-  DevInfo dev = {
-      .device_name = nullptr, // if device_name is null, init has failed
-      .available_memory_bytes = 0,
-      .init_free_memory_bytes = 0,
-      .api_version = 0,
-      .runtime_version = 0,
-      .device_id = 0,
-  };
 
-  if (!dev_props(&dev)) {
-    dev.device_name = NULL;
+  cu_lerr(cudaGetDeviceCount(n_dev), "getting device count");
+  DevInfo* devices = (DevInfo*)malloc(*n_dev * sizeof(DevInfo));
+
+  for (int device_id = 0; device_id < *n_dev; ++device_id) {
+
+    if (!dev_props(&devices[device_id], device_id)) {
+      devices[device_id].device_name = NULL;
+      return false;
+    }
   }
+  *dst = devices;
 
-  return dev;
+  return true;
 }
 }
