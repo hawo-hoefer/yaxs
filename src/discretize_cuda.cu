@@ -498,9 +498,12 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind backg
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len, Noise noise, uint64_t *rng_state,
                                  BkgKind background_kind, float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none, bool normalize, size_t _chunk_id, size_t _n_chunks) {
+                                 float *bkg_scales_if_not_none, bool normalize, size_t _chunk_id, size_t _n_chunks, int device) {
   chunk_id = _chunk_id;
   n_chunks = _n_chunks;
+
+  cu_lerr(cudaSetDevice(device), "setting cuda device");
+  device_id = device;
 
   infof("Beginning CUDA rendering");
 

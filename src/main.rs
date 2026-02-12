@@ -19,8 +19,7 @@ use log::{debug, error, info};
 
 use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
 use yaxs::io::{
-    self, prepare_output_directory, render_write_chunked, HKLDisplayMode,
-    SimulationMetadata,
+    self, prepare_output_directory, render_write_chunked, HKLDisplayMode, SimulationMetadata,
 };
 use yaxs::pattern::{CompositionGenerator, DiscretizeJobGenerator, Discretizer};
 
@@ -312,22 +311,24 @@ fn main() {
     cfg_if::cfg_if! {
         if #[cfg(feature = "use-gpu")] {
             use yaxs::cuda_common::CUDA_DEVICE_INFO;
-            info!("Enabled CUDA-Based Simulation.
-Device name:         {}
+            info!("Enabled CUDA-Based Simulation. Devices:");
+            for d in CUDA_DEVICE_INFO.iter() {
+                info!("Device name: {}
 Available memory:    {:.3} GiB
 Initial free memory: {:.3} GiB
 Memory usage limit:  {:.3} GiB
 API version:         {}
 Runtime version:     {}
 Device ID:           {}", 
-                CUDA_DEVICE_INFO.device_name,
-                CUDA_DEVICE_INFO.available_memory_bytes as f32 / 1e9,
-                CUDA_DEVICE_INFO.init_free_memory_bytes as f32 / 1e9,
-                CUDA_DEVICE_INFO.mem_limit_bytes as f32 / 1e9,
-                CUDA_DEVICE_INFO.api_version,
-                CUDA_DEVICE_INFO.runtime_version,
-                CUDA_DEVICE_INFO.device_id
+                d.device_name,
+                d.available_memory_bytes as f32 / 1e9,
+                d.init_free_memory_bytes as f32 / 1e9,
+                d.mem_limit_bytes as f32 / 1e9,
+                d.api_version,
+                d.runtime_version,
+                d.device_id
             );
+            }
         }
     }
 

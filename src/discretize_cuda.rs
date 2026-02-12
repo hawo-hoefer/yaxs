@@ -32,6 +32,7 @@ mod ffi {
             normalize: bool,
             chunk_idx: usize,
             n_chunks: usize,
+            device_id: std::ffi::c_int,
         ) -> bool;
     }
 
@@ -422,6 +423,7 @@ pub fn render_with_cuda(
     }: PreparedCudaBatch,
     chunk_idx: usize,
     n_chunks: usize,
+    device_id: usize,
 ) -> Result<Vec<f32>, String> {
     let noise_val = match noise_kind {
         ffi::NoiseKind::NoiseNone => ffi::NoiseVal {
@@ -485,6 +487,9 @@ pub fn render_with_cuda(
             normalize,
             chunk_idx,
             n_chunks,
+            device_id
+                .try_into()
+                .expect("device_id is not that large and greater than 0"),
         );
         if !ret {
             return Err(

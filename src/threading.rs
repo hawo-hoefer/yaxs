@@ -1,4 +1,4 @@
-use std::sync::mpsc::{RecvError, SendError, SyncSender};
+use crossbeam_channel::{RecvError, SelectedOperation, SendError, Sender};
 use std::thread::JoinHandle;
 
 pub enum Action<T> {
@@ -25,7 +25,7 @@ where
 
 #[derive(Clone)]
 pub struct ExecuteSender<R> {
-    pub tx: SyncSender<Action<R>>,
+    pub tx: Sender<Action<R>>,
 }
 
 impl<R> ExecuteSender<R> {
@@ -35,7 +35,7 @@ impl<R> ExecuteSender<R> {
         I: Send + std::fmt::Display + 'static,
         F: Fn(R) -> Result<(), I> + Send + 'static,
     {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         let handle = std::thread::spawn(move || loop {
             match rx.recv() {
                 Ok(input_val) => match input_val {
@@ -53,7 +53,15 @@ impl<R> ExecuteSender<R> {
         self.tx.send(Action::Process(v))
     }
 
-    pub fn finish(self) -> Result<(), SendError<Action<R>>> {
+    pub fn queue_in_select<'a>(
+        &self,
+        o: SelectedOperation<'a>,
+        v: R,
+    ) -> Result<(), SendError<Action<R>>> {
+        o.send(&self.tx, Action::Process(v))
+    }
+
+    pub fn finish(&self) -> Result<(), SendError<Action<R>>> {
         self.tx.send(Action::Finish)
     }
 }

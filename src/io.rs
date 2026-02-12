@@ -357,8 +357,10 @@ pub mod cuda {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use crossbeam_channel::{select, Select};
     use log::info;
 
+    use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::discretize_cuda::PreparedCudaBatch;
     use crate::io::io_thread_fn;
     use crate::pattern::{
@@ -385,6 +387,7 @@ pub mod cuda {
     pub fn cuda_dispatcher<'a>(
         cmd: Arc<CudaRenderCommand>,
         io_tx: &std::sync::mpsc::Sender<WriteJob<PathBuf>>,
+        device_id: usize,
     ) -> Result<(), String> {
         let CudaRenderCommand {
             batch,
@@ -398,11 +401,12 @@ pub mod cuda {
             n_chunks,
         } = Arc::into_inner(cmd).expect("only one reference");
 
-        let intensities = crate::discretize_cuda::render_with_cuda(batch, chunk_idx, n_chunks)
-            .map(|i| {
-                ndarray::Array2::from_shape_vec((n_peak_sets, n_steps), i)
-                    .expect("sizes must match")
-            })?;
+        let intensities = crate::discretize_cuda::render_with_cuda(
+            batch, chunk_idx, n_chunks, device_id,
+        )
+        .map(|i| {
+            ndarray::Array2::from_shape_vec((n_peak_sets, n_steps), i).expect("sizes must match")
+        })?;
 
         let intensities = if let Some(t) = params.texture_measurement {
             Intensities::TextureMeasurement(
@@ -437,7 +441,7 @@ pub mod cuda {
         job_params: JobParams,
         xs: Vec<f32>,
         n_chunks: usize,
-        cuda_tx: &ExecuteSender<Arc<CudaRenderCommand>>,
+        cuda_tx: &Arc<Vec<ExecuteSender<Arc<CudaRenderCommand>>>>,
     ) -> Result<(), String>
     where
         T: Discretizer + Send + Sync + 'static,
@@ -474,19 +478,31 @@ pub mod cuda {
             chunk_idx,
             n_chunks,
         )?;
-        cuda_tx
-            .queue(Arc::new(CudaRenderCommand {
-                batch,
-                meta: metadata,
-                params: job_params,
-                file_dst,
-                n_peak_sets,
-                n_steps,
-                n_samples,
-                chunk_idx,
-                n_chunks,
-            }))
-            .map_err(|err| format!("Could not send chunk {chunk_idx} / {n_chunks} to cuda controller thread: {err}"))?;
+
+        let cmd = Arc::new(CudaRenderCommand {
+            batch,
+            meta: metadata,
+            params: job_params,
+            file_dst,
+            n_peak_sets,
+            n_steps,
+            n_samples,
+            chunk_idx,
+            n_chunks,
+        });
+
+        let mut sel = Select::new();
+
+        for s in cuda_tx.iter() {
+            sel.send(&s.tx);
+        }
+        let oper = sel.select();
+        let idx = oper.index();
+        cuda_tx[idx].queue_in_select(oper, cmd).map_err(|err| {
+            format!(
+                "Could not send chunk {chunk_idx} / {n_chunks} to cuda controller thread: {err}"
+            )
+        })?;
 
         Ok(())
     }
@@ -514,16 +530,22 @@ pub mod cuda {
         let (io_tx, io_rx) = std::sync::mpsc::channel::<WriteJob<PathBuf>>();
         let io_thread_handle = std::thread::spawn(move || io_thread_fn(io_rx, compress, n_chunks));
 
-        let (cuda_tx, cuda_controller_thread) = {
+        let mut cuda_controller_threads = Vec::new();
+        let mut cuda_txs = Vec::new();
+        for idx in 0..CUDA_DEVICE_INFO.len() {
             let io_tx = io_tx.clone();
-            ExecuteSender::create(move |cmd| cuda_dispatcher(cmd, &io_tx))
-        };
+            let (cuda_tx, thread) =
+                ExecuteSender::create(move |cmd| cuda_dispatcher(cmd, &io_tx, idx));
+            cuda_txs.push(cuda_tx);
+            cuda_controller_threads.push(thread);
+        }
+        let cuda_txs = Arc::new(cuda_txs);
 
         let job_params = gen.get_job_params();
         let xs = gen.xs().to_vec();
 
         let (prep_tx, prep_thread) = {
-            let cuda_tx = cuda_tx.clone();
+            let cuda_txs = Arc::clone(&cuda_txs);
             ExecuteSender::create(
                 move |(jobs, file_dst, chunk_idx): (Batch<T>, PathBuf, usize)| {
                     cuda_prep_thread(
@@ -533,7 +555,7 @@ pub mod cuda {
                         job_params.clone(),
                         xs.clone(),
                         n_chunks,
-                        &cuda_tx,
+                        &cuda_txs,
                     )
                 },
             )
@@ -576,13 +598,17 @@ pub mod cuda {
             .map_err(|err| format!("Could not join cuda prep thread: {err:?}"))?
             .map_err(|err| format!("Error in cuda prep thread: {err}"))?;
 
-        cuda_tx.finish().map_err(|err| {
-            format!("Could not send finish signal to cuda controller thread: {err}")
-        })?;
-        cuda_controller_thread
-            .join()
-            .map_err(|err| format!("Could not join cuda controller thread: {err:?}"))?
-            .map_err(|err| format!("Error in cuda controller thread: {err}"))?;
+        for tx in cuda_txs.iter() {
+            tx.finish().map_err(|err| {
+                format!("Could not send finish signal to cuda controller thread: {err}")
+            })?;
+        }
+
+        for t in cuda_controller_threads {
+            t.join()
+                .map_err(|err| format!("Could not join cuda controller thread: {err:?}"))?
+                .map_err(|err| format!("Error in cuda controller thread: {err}"))?;
+        }
 
         io_tx
             .send(WriteJob::Done)
