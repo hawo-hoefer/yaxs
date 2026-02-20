@@ -80,7 +80,11 @@ impl<const N: usize> ACGDistribution<N> {
     ///
     /// * `x`: point to compute pdf for. Is assumed to have length 1 (/ be on $S^{N-1}$)
     pub fn pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        x.transpose().matmul(&self.omega).matmul(x).item().powi(-2)
+        x.transpose()
+            .matmul(&self.omega)
+            .matmul(x)
+            .item()
+            .powf(-(N as f64) / 2.0f64)
     }
 
     /// compute the logarithm of the unnormalized probability density function
