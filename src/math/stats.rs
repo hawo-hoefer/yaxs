@@ -99,8 +99,9 @@ impl<const N: usize> ACGDistribution<N> {
     /// we first sample a vector of standard normally distributed values using
     /// the Box-Muller Transform. They are mapped to a multivariate gaussian using
     /// the method described on page 315 (PDF page 328) in
-    /// Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
-    /// https://doi.org/10.1007/978-0-387-98144-4
+    ///     Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
+    ///     https://doi.org/10.1007/978-0-387-98144-4
+    ///     Section: Transformations Based on the Variance-Covariance Matrix
     ///
     ///
     /// * `rng`: Random number generator
@@ -109,8 +110,8 @@ impl<const N: usize> ACGDistribution<N> {
         for i in v.iter_values_mut() {
             *i = std_normal_box_muller_tf(rng);
         }
-
         // multivariate gaussian distributed
+
         let x = self.l.matmul(&v);
         // map onto sphere
 
