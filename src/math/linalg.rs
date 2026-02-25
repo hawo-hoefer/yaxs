@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::iter::Sum;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub};
@@ -70,7 +71,7 @@ impl<T> Mat<T, 2, 2> {
     }
 }
 
-impl<T> Mat<T, 3, 3> {
+impl<T> Mat3<T> {
     /// Compute the determinant
     pub fn det(&self) -> T
     where
@@ -104,6 +105,22 @@ impl<T> Mat<T, 3, 3> {
             [  b2 * c3 - c2 * b3 , -(a2 * c3 - c2 * a3),   a2 * b3 - b2 * a3 ],
             [-(b1 * c3 - c1 * b3),   a1 * c3 - c1 * a3 , -(a1 * b3 - b1 * a3)],
             [  b1 * c2 - c1 * b2 , -(a1 * c2 - c1 * a2),   a1 * b2 - b1 * a2 ],
+        ])
+    }
+
+    /// create a symmetric matrix from the diagonal
+    /// and lower triangular elements
+    ///
+    ///
+    ///
+    pub fn sym_from_tri_lo(a11: T, a22: T, a33: T, a21: T, a31: T, a32: T) -> Self
+    where
+        T: Clone,
+    {
+        Self::from_rows([
+            [a11, a21.clone(), a31.clone()],
+            [a21.clone(), a22, a32.clone()],
+            [a31, a32, a33],
         ])
     }
 
@@ -152,6 +169,52 @@ impl<T> Mat<T, 3, 3> {
         ret[(3, 3)] = T::one();
 
         ret
+    }
+
+    /// Assuming that self is symmetric, compute the eigenvalues
+    /// using the method described in
+    ///     Smith, Oliver K. "Eigenvalues of a symmetric 3× 3 matrix."
+    ///     Communications of the ACM 4.4 (1961): 168.
+    ///     <https://doi.org/10.1145/355578.366316>
+    /// ```
+    /// use yaxs::math::linalg::Mat3;
+    /// use yaxs::math::linalg::Vec3;
+    /// let atol = 1e-6;
+    ///
+    /// let m1 = Mat3::from_diag([1.0, 2.0, 3.0]);
+    /// assert_eq!(m1.symmetric_eigvals().isclose(&Vec3::new(1.0, 2.0, 3.0), atol), None);
+    ///
+    /// let m2 = Mat3::from_rows([[1.0, 2.0, 3.0], [2.0, 5.0, 7.0], [3.0, 7.0, 9.0]]);
+    /// assert_eq!(m2.symmetric_eigvals().isclose(&Vec3::new(15.19312555, -0.37068613, 0.17756057), atol), None);
+    ///
+    /// let m3 = Mat3::from_rows([[1.0, 2.0, 8.0], [2.0, 5.0, 9.0], [8.0, 9.0, 9.0]]);
+    /// assert_eq!(m3.symmetric_eigvals().isclose(&Vec3::new(19.36931688, -5.36931688, 1.0), atol), None);
+    /// ```
+    pub fn symmetric_eigvals(&self) -> Vec3<T>
+    where
+        T: Float + Copy + Sum<T>,
+        for<'a> &'a T: Sub<Output = T> + Mul<Output = T>,
+    {
+        if self.is_diag() {
+            return Vec3::new(self[(0, 0)], self[(1, 1)], self[(2, 2)]);
+        }
+
+        let two = T::one() + T::one();
+        let three = two + T::one();
+        let six = two * three;
+
+        let m = self.trace() / three;
+        let a_sub_m_i = self - &(Self::identity() * m);
+        let p: T = a_sub_m_i.iter_values().map(|x| x * x).sum::<T>() / six;
+        let q = a_sub_m_i.det() / two;
+        let det = (p.powi(3) - q.powi(2)).sqrt() / q;
+        let phi = det.atan() / three;
+
+        Vec3::new(
+            m + two * p.sqrt() * phi.cos(),
+            m - p.sqrt() * (phi.cos() + three.sqrt() * phi.sin()),
+            m - p.sqrt() * (phi.cos() - three.sqrt() * phi.sin()),
+        )
     }
 }
 
@@ -518,6 +581,8 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     ///
     /// * `other`: right hand side of fuzzy equality
     /// * `atol`: maximum allowed (absolute) difference
+    ///
+    /// returns first element outside of tolerance, if any
     pub fn isclose(&self, other: &Mat<T, ROWS, COLS>, atol: T) -> Option<(T, T)>
     where
         T: Sub<T, Output = T> + Zero + Neg<Output = T> + PartialOrd + Copy,
@@ -699,7 +764,7 @@ impl<T> Mat<T, 4, 4> {
 }
 
 impl<T, const N: usize> Mat<T, N, N> {
-    #[rustfmt::skip]
+    /// construct an identity matrix
     pub fn identity() -> Mat<T, N, N>
     where
         T: Zero + One + Copy,
@@ -738,6 +803,62 @@ impl<T, const N: usize> Mat<T, N, N> {
             }
         }
         Ok(ret)
+    }
+
+    pub fn from_diag(vals: [T; N]) -> Self
+    where
+        T: num_traits::Zero + Copy,
+    {
+        let mut ret = Self::zeros();
+        for (i, val) in vals.iter().enumerate() {
+            ret[(i, i)] = *val;
+        }
+
+        ret
+    }
+
+    /// check if self is a diagonal matrix
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// assert!(Mat::from_rows([[2, 0, 0], [0, 1, 0], [0, 0, 9]]).is_diag());
+    /// assert!(Mat::<isize, 10, 10>::identity().is_diag());
+    /// assert!(!Mat::from_rows([[2, 2, 0], [0, 1, 0], [0, 0, 9]]).is_diag());
+    /// assert!(!Mat::from_rows([[2, 0, 0], [0, 1, 2], [0, 0, 9]]).is_diag());
+    /// ```
+    pub fn is_diag(&self) -> bool
+    where
+        T: Zero + PartialEq,
+    {
+        for i in 0..N {
+            for j in 0..i {
+                if !self[(i, j)].is_zero() || !self[(j, i)].is_zero() {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// compute the trace of self
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m = Mat::from_rows([[1, 5, 7], [4, 2, 0], [6, 6, 6]]);
+    /// assert_eq!(m.trace(), 1 + 2 + 6);
+    /// ```
+    pub fn trace(&self) -> T
+    where
+        T: Zero + Copy + Add<T>,
+    {
+        let mut r = T::zero();
+        for i in 0..N {
+            r = r + self[(i, i)];
+        }
+        r
     }
 }
 
