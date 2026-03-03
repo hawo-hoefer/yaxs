@@ -651,7 +651,7 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         let mut ret = self.clone();
         for row in 0..ROWS {
             for col in 0..COLS {
-                ret[(row, col)] *= other[row]
+                ret[(row, col)] *= other[col]
             }
         }
         ret
@@ -1331,6 +1331,15 @@ mod test {
         ]);
         let res = m1.matmul(&m2);
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn matmul_diag() {
+        let m = Mat::from_rows([[1, 2, 3], [1, 3, 5], [7, 9, 18]]);
+        let d = [7, 9, 10];
+        let diag = Mat::from_diag(d);
+
+        assert_eq!(m.matmul(&diag), m.matmul_diag(&ColVec::from_col(d)));
     }
 
     #[test]
