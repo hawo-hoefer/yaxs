@@ -179,7 +179,7 @@ impl<T> Mat3<T> {
     ///     <https://doi.org/10.1145/355578.366316>
     pub fn symmetric_eigvals(&self) -> [T; 3]
     where
-        T: Float + Copy + Sum<T>,
+        T: Float + FloatConst + Copy + Sum<T> + AddAssign<T>,
         for<'a> &'a T: Sub<Output = T> + Mul<Output = T>,
     {
         if self.is_diag() {
@@ -206,79 +206,128 @@ impl<T> Mat3<T> {
 
     pub fn symmetric_eigendecomp(&self) -> ([T; 3], Mat3<T>)
     where
-        T: Float
-            + FloatConst
-            + Copy
-            + Sum<T>
-            + AddAssign<T>
-            + DivAssign<T>
-            + MulAssign<T>
-            + Clone
-            + ConstOne
-            + Copy
-            + Mul<T, Output = T>
-            + std::fmt::Display
-            + std::fmt::Debug,
-        for<'a> &'a T: Sub<Output = T> + Mul<Output = T> + PartialOrd,
+        T: Float + FloatConst + Copy + ConstOne + AddAssign<T>,
+        for<'a> &'a T: Sub<Output = T> + PartialOrd,
     {
-        let [[a, _, _], [d, b, _], [f, e, c]] = self.v;
+        let compute_ev_0 = |a: &Mat3<T>, eval: T| -> Vec3<T> {
+            let r = a - &(Mat3::identity() * eval);
 
-        let two = T::ONE + T::ONE;
-        let three = two + T::ONE;
-        let four = two + two;
-        let nine = three.powi(2);
+            let c = [
+                r.row(0).cross(&r.row(1)),
+                r.row(0).cross(&r.row(2)),
+                r.row(1).cross(&r.row(2)),
+            ];
+            let maxidx = c
+                .iter()
+                .map(|x| x.magnitude())
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).expect("not nan"))
+                .expect("at least one element")
+                .0;
 
-        let x1 = a.powi(2) + b.powi(2) + c.powi(2) - a * b - a * c - b * c
-            + three * (d * d + f * f + e * e);
-        let x2 = -(two * a - b - c) * (two * b - a - c) * (two * c - a - b)
-            + nine
-                * ((two * c - a - b) * (d * d)
-                    + (two * b - a - c) * (f * f)
-                    + (two * a - b - c) * (e * e))
-            - two * three.powi(3) * (d * e * f);
-
-        let phi = if x2.is_zero() {
-            T::FRAC_PI_2()
-        } else if x2.is_sign_positive() {
-            ((four * x1.powi(3) - x2.powi(2)).sqrt() / x2).atan()
-        } else {
-            ((four * x1.powi(3) - x2.powi(2)).sqrt() / x2).atan() + T::PI()
+            return c[maxidx].normalize();
         };
 
-        let tr = self.trace();
+        let compute_ev_1 = |a: &Mat3<T>, evec1: &Vec3<T>, eval2: T| {
+            let (u, v) = compute_orthogonal_complement(&evec1);
+            let j = Mat::from_col_vecs([u.clone(), v.clone()]);
+            let mut m = j
+                .transpose()
+                .matmul(&(a - &Mat::from_diag([eval2, eval2, eval2])))
+                .matmul(&j);
 
-        #[rustfmt::skip]
-        let evals = [
-            (tr - two * x1.sqrt() * ( phi            / three).cos()) / three,
-            (tr + two * x1.sqrt() * ((phi - T::PI()) / three).cos()) / three,
-            (tr + two * x1.sqrt() * ((phi + T::PI()) / three).cos()) / three,
-        ];
-        let [ev1, ev2, ev3] = evals;
+            let mabs = m.map(|x| x.abs());
 
-        let m1 = (d * (c - ev1) - e * f) / (f * (b - ev1) - d * e);
-        let m2 = (d * (c - ev2) - e * f) / (f * (b - ev2) - d * e);
-        let m3 = (d * (c - ev3) - e * f) / (f * (b - ev3) - d * e);
+            if mabs[(0, 0)] >= mabs[(1, 1)] {
+                if mabs[(0, 0)].max(mabs[(0, 1)]).is_zero() {
+                    return u;
+                }
 
-        let evecs = [
-            Vec3::new((ev1 - c - e * m1) / f, m1, T::ONE).normalize(),
-            Vec3::new((ev2 - c - e * m2) / f, m2, T::ONE).normalize(),
-            Vec3::new((ev3 - c - e * m3) / f, m3, T::ONE).normalize(),
-        ];
+                if mabs[(0, 0)] >= mabs[(0, 1)] {
+                    m[(0, 1)] = m[(0, 1)] / m[(0, 0)];
+                    m[(0, 0)] = (T::ONE + m[(0, 1)] * m[(0, 1)]).sqrt().recip();
+                    m[(0, 1)] = m[(0, 1)] * m[(0, 0)];
+                } else {
+                    m[(0, 0)] = m[(0, 0)] / m[(0, 1)];
+                    m[(0, 1)] = (T::ONE + m[(0, 0)] * m[(0, 0)]).sqrt().recip();
+                    m[(0, 0)] = m[(0, 0)] * m[(0, 1)];
+                }
+                return u * m[(0, 1)] - v * m[(0, 0)];
+            } else {
+                if mabs[(1, 1)].max(mabs[(0, 1)]).is_zero() {
+                    return u;
+                }
 
-        let mut idx = [0, 1, 2];
-        idx.sort_by(|&i, &j| evals[i].partial_cmp(&evals[j]).expect("not nan"));
-        let evec1 = evecs[idx[0]].clone();
-        let evec2 = evecs[idx[1]].clone();
-        let mut evec3 = evecs[idx[2]].clone();
+                if m[(1, 1)] >= m[(0, 1)] {
+                    m[(0, 1)] = m[(0, 1)] / m[(1, 1)];
+                    m[(1, 1)] = (T::ONE + m[(0, 1)] * m[(0, 1)]).sqrt().recip();
+                    m[(0, 1)] = m[(0, 1)] * m[(1, 1)];
+                } else {
+                    m[(1, 1)] = m[(1, 1)] / m[(0, 1)];
+                    m[(0, 1)] = (T::ONE + m[(1, 1)] * m[(1, 1)]).sqrt().recip();
+                    m[(1, 1)] = m[(1, 1)] * m[(0, 1)];
+                }
+                return u * m[(1, 1)] - v * m[(0, 1)];
+            }
+        };
 
-        if evec1.cross(&evec2).dot(&evec3).is_sign_negative() {
-            evec3 = -evec3;
+        // precondition the matrix
+        let max_el = self
+            .iter_values()
+            .map(|x| x.abs())
+            .max_by(|a, b| a.partial_cmp(b).expect("not nan"))
+            .expect("more than one element in iterator");
+
+        if max_el.is_zero() {
+            return ([T::zero(); 3], Mat::identity());
         }
 
-        (
-            [evals[idx[0]], evals[idx[1]], evals[idx[2]]],
-            Mat3::from_col_vecs([evec1, evec2, evec3]),
-        )
+        let a = self * max_el.recip();
+
+        let three = T::ONE + T::ONE + T::ONE;
+        let two = T::ONE + T::ONE;
+        let six = two * three;
+
+        let norm = a[(0, 1)].powi(2) + a[(0, 2)].powi(2) + a[(1, 2)].powi(2);
+        if !norm.is_zero() {
+            let q = a.trace() / three;
+            let b = &a - &(Mat3::identity() * q);
+            let p = ((b[(0, 0)].powi(2) + b[(1, 1)].powi(2) + b[(2, 2)].powi(2) + norm * two)
+                / six)
+                .sqrt();
+
+            let det = b.det() / p.powi(3);
+
+            let half_det = (det / two).clamp(-T::ONE, T::ONE);
+
+            let angle = half_det.acos() / three;
+            let beta2 = angle.cos() * two;
+            let beta0 = (angle + T::FRAC_PI_3() * two).cos() * two;
+            let beta1 = -(beta0 + beta2);
+
+            let mut evals = [q + p * beta0, q + p * beta1, q + p * beta2];
+
+            let evecs = if half_det.is_sign_positive() {
+                let evec2 = compute_ev_0(&a, evals[2]).normalize();
+                let evec1 = compute_ev_1(&a, &evec2, evals[1]).normalize();
+                let evec0 = evec1.cross(&evec2);
+                [evec0, evec1, evec2]
+            } else {
+                let evec0 = compute_ev_0(&a, evals[0]).normalize();
+                let evec1 = compute_ev_1(&a, &evec0, evals[1]).normalize();
+                let evec2 = evec0.cross(&evec1);
+                [evec0, evec1, evec2]
+            };
+
+            evals[0] = evals[0] * max_el;
+            evals[1] = evals[1] * max_el;
+            evals[2] = evals[2] * max_el;
+
+            return (evals, Mat3::from_col_vecs(evecs));
+        } else {
+            // diagonal matrix
+            return ([self[(0, 0)], self[(1, 1)], self[(2, 2)]], Mat::identity());
+        }
     }
 }
 
@@ -1693,67 +1742,33 @@ mod test {
     fn symmetric_ev_decomp() {
         let atol = 1e-6;
         {
-            // let m = Mat3::from_rows([[1.0, 2.0, 8.0], [2.0, 5.0, 9.0], [8.0, 9.0, 9.0]]);
-
             let m = Mat3::from_rows([[1.0, 2.0, 3.0], [2.0, 5.0, 9.0], [3.0, 9.0, 7.0]]);
 
             let (evals, evecs) = m.symmetric_eigendecomp();
             let evals_exp = Vec3::new(-3.13134799, 0.22078822, 15.91055977);
-            // assert_eq!(
-            //     Vec3::from_col(evals).isclose(&evals_exp, atol),
-            //     None
-            // );
+            assert_eq!(Vec3::from_col(evals).isclose(&evals_exp, atol), None);
 
-            println!("evals_exp = {evals_exp}");
-            println!("evals     = {evals}", evals = Vec3::from_col(evals));
-
-            let m_ = evecs
-                .matmul_diag(&ColVec::from_col(evals))
-                .matmul(&evecs.transpose());
-
-            println!("input: {}", m);
-            println!("recon: {}", m_);
-
-            let exp = Mat3::from_rows([
-                [0.14711668, 0.96128502, 0.23299742],
-                [0.71745077, -0.26586414, 0.64387937],
-                [-0.68089725, -0.07243878, 0.72878773],
-            ]);
-
-            let m__ = exp
-                .matmul_diag(&ColVec::from_col(evals))
-                .matmul(&exp.transpose());
-            println!("correct: {}", m__);
-
-            println!("exp = {}", exp);
-            println!("actual = {}", evecs);
-            // assert_eq!(evecs.isclose(&exp, atol), None);
-
-            assert_eq!(m.matmul(&evecs.col(0)), evecs.col(0) * evals[0]);
-            assert_eq!(m.matmul(&evecs.col(1)), evecs.col(1) * evals[1]);
-            assert_eq!(m.matmul(&evecs.col(2)), evecs.col(2) * evals[2]);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(0)) .isclose(&(evecs.col(0) * evals[0]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(1)) .isclose(&(evecs.col(1) * evals[1]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(2)) .isclose(&(evecs.col(2) * evals[2]), atol), None);
         }
 
         {
             let m = Mat3::from_rows([[5.0, 7.0, 8.0], [7.0, -32.0, 9.0], [8.0, 9.0, 55.0]]);
+            let evals_exp = Vec3::new(-33.91424985, 4.54560765, 57.3686422);
 
             let (evals, evecs) = m.symmetric_eigendecomp();
-            println!("evals = {}", ColVec::from_col(evals));
-            assert_eq!(
-                Vec3::from_col(evals)
-                    .isclose(&Vec3::new(-33.91424985, 4.54560765, 57.3686422), atol),
-                None
-            );
+            assert_eq!(Vec3::from_col(evals).isclose(&evals_exp, atol), None);
 
-            let exp = Mat3::from_rows([
-                [0.15940203, 0.97339037, 0.16462738],
-                [-0.98352932, 0.1421895, 0.11158949],
-                [0.08521185, -0.17970345, 0.98002327],
-            ]);
-
-            println!("exp = {}", exp);
-            println!("actual = {}", evecs);
-            assert_eq!(evecs.isclose(&exp, atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(0)) .isclose(&(evecs.col(0) * evals[0]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(1)) .isclose(&(evecs.col(1) * evals[1]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(2)) .isclose(&(evecs.col(2) * evals[2]), atol), None);
         }
     }
 
