@@ -110,7 +110,7 @@ impl Lattice {
         ];
         let vc = [0.0, 0.0, c];
         Lattice {
-            mat: Mat3::from_rows([va, vb, vc]),
+            mat: Mat3::from_cols([va, vb, vc]),
         }
     }
 }
