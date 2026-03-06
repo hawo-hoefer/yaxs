@@ -3,7 +3,7 @@ use std::ffi::c_float;
 use itertools::Itertools;
 
 use crate::math::quaternion::Quaternion;
-use crate::structure::ReflectionPart;
+use crate::structure::Peak;
 
 mod ffi {
     use std::ffi::c_float;
@@ -75,7 +75,7 @@ mod ffi {
 }
 
 pub fn single_phase_weight_hkls(
-    reflection_parts: &[ReflectionPart],
+    reflection_parts: &[Peak],
     ori_samples: &[Quaternion],
     bingham_alignments: &[Quaternion],
     phis: &[f32],

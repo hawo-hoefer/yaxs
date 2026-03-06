@@ -1,5 +1,6 @@
 mod background;
 mod composition;
+mod domain_size;
 mod impurity;
 mod noise;
 mod parameter;
@@ -10,6 +11,7 @@ mod structure;
 use std::sync::Arc;
 
 use crate::absorption::{compute_mixture_attenuation_coef, MACGenerator};
+use crate::domain_size::DomainSize;
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -358,7 +360,7 @@ pub struct SampleParameters {
 
 pub struct Sample {
     ds_eta: Box<[f64]>,
-    mean_ds_nm: Box<[f64]>,
+    mean_ds_nm: Box<[DomainSize]>,
     mustrain: Box<[f64]>,
     mustrain_eta: Box<[f64]>,
     impurity_peaks: Box<[ImpurityPeak]>,
@@ -370,7 +372,7 @@ impl SampleParameters {
         let mean_ds_nm = self
             .structures
             .iter()
-            .map(|s| s.mean_ds_nm.generate(rng))
+            .map(|s| s.domain_size.generate(rng))
             .collect_vec()
             .into_boxed_slice();
 
@@ -526,7 +528,7 @@ impl ToDiscretize {
                 vol_fractions,
                 weight_fractions,
 
-                mean_ds_nm,
+                domain_sizes: mean_ds_nm,
                 ds_eta,
                 mustrain,
                 mustrain_eta,
@@ -599,7 +601,7 @@ impl ToDiscretize {
             meta: EDXRDMeta {
                 vol_fractions,
                 weight_fractions,
-                mean_ds_nm,
+                domain_sizes: mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),
                 ds_eta,
                 mustrain,

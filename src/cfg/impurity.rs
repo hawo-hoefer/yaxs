@@ -2,7 +2,7 @@ use log::{error, warn};
 use rand::Rng;
 use serde::Deserialize;
 
-use crate::pattern::{ImpurityPeak, Peak};
+use crate::pattern::ImpurityPeak;
 use crate::util::deserialize_positive_parameter;
 
 use super::{Parameter, Probability};
@@ -101,11 +101,12 @@ pub fn generate_impurities(
             let d_hkl = spec.d_hkl_ams.generate(rng);
             let i_hkl = spec.intensity.generate(rng);
             impurity_peaks.push(ImpurityPeak {
-                peak: Peak {
-                    d_hkl,
-                    i_hkl,
-                    hkls: Vec::new(),
-                },
+                peak:  todo!("reimplement impurity peak"),
+                // Peak {
+                //     d_hkl,
+                //     i_hkl,
+                //     hkls: Vec::new(),
+                // },
                 eta: spec.eta.generate(rng),
                 mean_ds_nm: spec.mean_ds_nm.generate(rng),
             })

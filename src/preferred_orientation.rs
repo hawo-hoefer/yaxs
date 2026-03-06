@@ -191,7 +191,7 @@ mod test {
         let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
-k: [1000, 0.5, 0.5, 1.0]
+k: [1000, 0.5, 0.5]
 orientation: [{}, {}, {}, {}]
 sampling: {{n: 30, kappa: 20}}
 ",
@@ -223,7 +223,7 @@ sampling: {{n: 30, kappa: 20}}
         let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
         let input = format!(
             "!DirectBingham
-k: [1000, 0.5, 0.5, 1.0]
+k: [1000, 0.5, 0.5]
 orientation: [{}, {}, {}, {}]
 sampling: {{n: 1024, kappa: 20}}
 ",

@@ -9,7 +9,7 @@ use serde::de::{self, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 
-use num_traits::{ConstOne, Float, FloatConst, One, Zero};
+use num_traits::{ConstOne, ConstZero, Float, FloatConst, One, Zero};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 #[repr(C)]
@@ -157,7 +157,7 @@ impl<T> Mat3<T> {
 
     pub fn extend_to_homog(&self) -> Mat4<T>
     where
-        T: Clone + Copy + Zero + One,
+        T: Clone + Copy + ConstZero + ConstOne,
     {
         let mut ret = Mat4::zeros();
 
@@ -179,7 +179,7 @@ impl<T> Mat3<T> {
     ///     <https://doi.org/10.1145/355578.366316>
     pub fn symmetric_eigvals(&self) -> [T; 3]
     where
-        T: Float + FloatConst + Copy + Sum<T> + AddAssign<T>,
+        T: Float + FloatConst + Copy + Sum<T> + AddAssign<T> + ConstZero + ConstOne,
         for<'a> &'a T: Sub<Output = T> + Mul<Output = T>,
     {
         if self.is_diag() {
@@ -206,7 +206,7 @@ impl<T> Mat3<T> {
 
     pub fn symmetric_eigendecomp(&self) -> ([T; 3], Mat3<T>)
     where
-        T: Float + FloatConst + Copy + ConstOne + AddAssign<T>,
+        T: Float + FloatConst + Copy + ConstZero + ConstOne + AddAssign<T>,
         for<'a> &'a T: Sub<Output = T> + PartialOrd,
     {
         let compute_ev_0 = |a: &Mat3<T>, eval: T| -> Vec3<T> {
@@ -355,11 +355,19 @@ impl<T, const ROWS: usize> std::ops::IndexMut<usize> for ColVec<T, ROWS> {
 
 impl<T, const ROWS: usize> ColVec<T, ROWS> {
     /// Normalize the vector so that the magnitude is T::one()
+    /// 
+    /// ```
+    /// use yaxs::math::linalg::ColVec;
+    ///
+    /// let v = ColVec::from_col([1.0, 2.0, 3.0]);
+    /// let v_ = v.normalize();
+    /// assert_eq!(v_.magnitude(), 1.0);
+    /// ```
     pub fn normalize(&self) -> Self
     where
         T: Float,
     {
-        self.scale(self.magnitude().recip())
+        self.scale(T::one() / self.magnitude())
     }
 
     /// Normalize the vector inplace so that the magnitude is T::one()
@@ -392,13 +400,15 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
     }
 
     /// Compute magnitude (L2-Norm) of the vector
+    ///
     /// ```
     /// use yaxs::math::linalg::ColVec;
-    /// let vec = ColVec::from_col([1.0f64, 1.0f64, 1.0f64]);
-    /// assert_eq!(vec.magnitude(), 3.0f64.sqrt())
     ///
-    /// let vec = ColVec::from_col([5.0f64, 77f64, 1.1832f64]);
-    /// assert_eq!(vec.magnitude(), 77.17123792087308)
+    /// let v = ColVec::from_col([1.0f64, 1.0f64, 1.0f64]);
+    /// assert_eq!(v.magnitude(), 3.0f64.sqrt());
+    ///
+    /// let v = ColVec::from_col([5.0f64, 77f64, 1.1832f64]);
+    /// assert_eq!(v.magnitude(), 77.17123792087308);
     /// ```
     pub fn magnitude(&self) -> T
     where
@@ -423,6 +433,16 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
         other: &'a mut Self,
     ) -> impl Iterator<Item = (&'a mut T, &'a mut T)> {
         self.iter_values_mut().zip(other.iter_values_mut())
+    }
+
+    pub fn unit(pos: usize) -> Self
+    where
+        T: ConstZero + ConstOne + Copy,
+    {
+        let mut f = Self::zeros();
+        f[pos] = T::ONE;
+
+        f
     }
 }
 
@@ -792,10 +812,10 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// Create Zeroed Matrix
     pub fn zeros() -> Mat<T, ROWS, COLS>
     where
-        T: Zero + Copy,
+        T: ConstZero + Copy,
     {
         Mat {
-            v: [[T::zero(); COLS]; ROWS],
+            v: [[T::ZERO; COLS]; ROWS],
         }
     }
 
@@ -827,7 +847,7 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         other: &Mat<T, COLS, RHS_COLS>,
     ) -> Mat<T, ROWS, RHS_COLS>
     where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Copy + Zero + AddAssign<T>,
+        T: Mul<T, Output = T> + Add<T, Output = T> + Copy + ConstZero + AddAssign<T>,
     {
         let mut ret = Mat::<T, ROWS, RHS_COLS>::zeros();
         for row in 0..ROWS {
@@ -843,6 +863,14 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// Scale self
     ///
     /// * `s`: scale by value
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m = Mat::from_rows([[1, 2], [3, 4]]);
+    /// assert_eq!(m.scale(2), Mat::from_rows([[2, 4], [6, 8]]));
+    ///
+    /// ```
     pub fn scale(&self, s: T) -> Self
     where
         T: Mul<T, Output = T> + Clone + Copy,
@@ -901,7 +929,7 @@ impl<T> Mat<T, 4, 4> {
     /// * `rhs`: vector to transform
     pub fn homog_mul_mat(&self, rhs: &Mat3<T>) -> Mat3<T>
     where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + One + Copy + AddAssign<T>,
+        T: Mul<T, Output = T> + Add<T, Output = T> + ConstZero + One + Copy + AddAssign<T>,
     {
         let mut m = Mat4::zeros();
         for r in 0..rhs.rows() {
@@ -956,7 +984,7 @@ impl<T, const N: usize> Mat<T, N, N> {
     /// construct an identity matrix
     pub fn identity() -> Mat<T, N, N>
     where
-        T: Zero + One + Copy,
+        T: ConstZero + ConstOne + Copy,
     {
         let mut ret = Mat::<T, N, N>::zeros();
 
@@ -970,7 +998,7 @@ impl<T, const N: usize> Mat<T, N, N> {
     /// Compute colesky decomposition using the cholesky-banachiewicz algorithm
     pub fn cholesky_decompose(&self) -> Result<Mat<T, N, N>, String>
     where
-        T: Float + AddAssign<T>,
+        T: Float + ConstZero + AddAssign<T>,
     {
         let mut ret = Mat::zeros();
         for i in 0..N {
@@ -996,7 +1024,7 @@ impl<T, const N: usize> Mat<T, N, N> {
 
     pub fn from_diag(vals: [T; N]) -> Self
     where
-        T: num_traits::Zero + Copy,
+        T: ConstZero + Copy,
     {
         let mut ret = Self::zeros();
         for (i, val) in vals.iter().enumerate() {
@@ -1127,6 +1155,24 @@ where
     type Output = Mat<T, ROWS, COLS>;
 
     fn mul(self, rhs: Self) -> Self::Output {
+        let mut ret = rhs.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
+            *r = *r * *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul<&Mat<T, ROWS, COLS>>
+    for Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: &Mat<T, ROWS, COLS>) -> Self::Output {
         let mut ret = rhs.clone();
 
         for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {

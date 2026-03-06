@@ -237,43 +237,39 @@ impl RunCtx {
 
         let b_iso = perm_s.randomize_b_iso(&job.randomize_b_iso, &mut rng);
 
-        let peaks = if let Some(t) = job.t {
-            let hkls_intensities_spacings = perm_s
+        let measurement = if let Some(t) = job.t {
+            let peaks = perm_s
                 .get_hkl_intensities_spacings(job.min_r, job.max_r, scattering_parameters, None)
-                .1
-                .into_boxed_slice();
+                .1;
 
-            let mut peaks = Vec::new();
+            let mut texture_measurement = Vec::new();
             for (_, (chi, phi)) in t
                 .chi
                 .into_iter()
                 .cartesian_product(t.phi.into_iter())
                 .enumerate()
             {
-                let transformed_po = po.as_ref().map(|x| x.with_orientation(chi, phi));
-                let p = perm_s.apply_alignment_to_hkls_intensities(
-                    &hkls_intensities_spacings,
-                    transformed_po
-                        .as_ref()
-                        .map(|x| Alignment::Precomputed { po: x }),
-                );
-                peaks.push(Peaks::new(p, job.structure));
+                let mut p = peaks.clone();
+                if let Some(a) = po.as_ref().map(|x| x.with_orientation(chi, phi)) {
+                    perm_s.apply_alignment_to_peaks(&mut p, Alignment::Precomputed { po: &a });
+                }
+                perm_s.finalize_peaks(&mut p);
+                texture_measurement.push(Peaks::new(p, job.structure));
             }
-            PossiblyTextureMeasurementPeaks::Texture(peaks)
+            PossiblyTextureMeasurementPeaks::Texture(texture_measurement)
         } else {
-            let p = perm_s.get_d_spacings_intensities(
-                job.min_r,
-                job.max_r,
-                None,
-                scattering_parameters,
-            );
+            let mut p = perm_s
+                .get_hkl_intensities_spacings(job.min_r, job.max_r, scattering_parameters, None)
+                .1;
+            perm_s.finalize_peaks(&mut p);
+
             PossiblyTextureMeasurementPeaks::NoTexture(Peaks::new(p, job.structure))
         };
 
         Ok(PeakSimResult {
             strain,
             po: po.map(|x| x.params),
-            peaks,
+            peaks: measurement,
             struct_id: job.structure,
             permutation_id: job.permutation,
             random_b_iso: b_iso,
@@ -410,14 +406,14 @@ mod cuda {
     use crate::strain::Strain;
 
     use crate::peak_sim_cuda::single_phase_weight_hkls;
-    use crate::structure::{ReflectionPart, Structure};
+    use crate::structure::{Peak, Structure};
 
     use super::{
         PeakSim, PossiblyTextureMeasurementPeaks, RunCtx, WriteCtx, UNSET_BISO_SENTINEL_VALUE,
     };
 
     struct CudaBatch {
-        reflection_parts: Vec<ReflectionPart>,
+        peaks: Vec<Peak>,
 
         orientation_samples: Vec<Quaternion>,
         bingham_alignments: Vec<Quaternion>,
@@ -448,7 +444,7 @@ mod cuda {
             phis: Vec<f32>,
         ) -> Self {
             Self {
-                reflection_parts: Vec::new(),
+                peaks: Vec::new(),
                 orientation_samples: Vec::with_capacity(
                     texture_measurement.stride() * n_permutations / 10,
                 ),
@@ -491,7 +487,7 @@ mod cuda {
                 + std::mem::size_of_val(&*self.chis)
                 + std::mem::size_of_val(&*self.phis)
                 + std::mem::size_of_val(&*self.orientation_samples)
-                + std::mem::size_of_val(&*self.reflection_parts)
+                + std::mem::size_of_val(&*self.peaks)
                 + std::mem::size_of_val(&*self.weights);
 
             let n_transformed_quaternions =
@@ -512,7 +508,7 @@ mod cuda {
             self.permutation_start = permutation_id;
             self.n_hkls_batch = 0;
 
-            self.reflection_parts.clear();
+            self.peaks.clear();
             self.bingham_alignments.clear();
             self.orientation_samples.clear();
             self.permuted_structures.clear();
@@ -545,10 +541,10 @@ mod cuda {
             let bingham_params = po.sample_into(&mut rng, &mut self.orientation_samples);
 
             let mut v = Vec::new();
-            std::mem::swap(&mut self.reflection_parts, &mut v);
+            std::mem::swap(&mut self.peaks, &mut v);
 
             let n_hkl;
-            (n_hkl, self.reflection_parts) =
+            (n_hkl, self.peaks) =
                 perm_s.get_hkl_intensities_spacings(min_r, max_r, scattering_parameters, Some(v));
 
             self.n_hkls_batch += n_hkl;
@@ -585,7 +581,7 @@ mod cuda {
                 mib_host = n_allocated_bytes_host as f64 / 1e6
             );
             single_phase_weight_hkls(
-                &self.reflection_parts,
+                &self.peaks,
                 &self.orientation_samples,
                 &self.bingham_alignments,
                 &self.phis,
@@ -606,8 +602,6 @@ mod cuda {
             assert!(self.bingham_params.len() == batch_size_permutations);
 
             // TODO: multithread this maybe
-            let mut map = ahash::HashMap::new();
-
             let mut hkl_pos = 0;
             for (local_perm_id, (perm_s, n_hkl, strain, bingham_params)) in itertools::izip!(
                 self.permuted_structures.drain(..),
@@ -624,9 +618,8 @@ mod cuda {
                 // [i_chi, i_phi, n_hkl]
                 for _ in 0..self.texture_measurement.stride() {
                     let p = perm_s.apply_precomputed_weights_to_hkls_intensities(
-                        &self.reflection_parts[hkl_pos..hkl_pos + n_hkl],
+                        &self.peaks[hkl_pos..hkl_pos + n_hkl],
                         &self.weights[hkl_pos..hkl_pos + n_hkl],
-                        &mut map,
                     );
                     peaks.push(Peaks::new(p, structure_id));
                 }
@@ -725,9 +718,7 @@ mod cuda {
                 )?;
                 let (_, n_required_bytes_cuda) = batch.memory_stats();
 
-                if n_required_bytes_cuda
-                    >= CUDA_DEVICE_INFO[0].init_free_memory_bytes * 9 / 10
-                {
+                if n_required_bytes_cuda >= CUDA_DEVICE_INFO[0].init_free_memory_bytes * 9 / 10 {
                     batch.compute_chunk(
                         Arc::clone(&results),
                         &ctx.structure_files[struct_id],

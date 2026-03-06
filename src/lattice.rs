@@ -59,6 +59,7 @@ impl Lattice {
             .cartesian_product(n_min[2]..n_max[2])
             .filter_map(move |((a, b), c)| -> Option<_> {
                 let hkl = Vec3::new(a as f64, b as f64, c as f64);
+                // pos is the position of the peak in reciprocal space
                 let pos = recip_lat.mat.matmul(&hkl);
                 let g_hkl = pos.magnitude();
 
