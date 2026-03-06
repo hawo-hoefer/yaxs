@@ -2,9 +2,8 @@ use std::hash::Hash;
 use std::iter::Sum;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub};
 
-use itertools::Itertools;
 use serde::de::{self, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};

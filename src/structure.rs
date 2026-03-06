@@ -1,5 +1,3 @@
-use ahash::HashMapExt;
-use itertools::Itertools;
 use log::warn;
 use num_complex::{Complex, ComplexFloat};
 use std::collections::HashMap;
@@ -18,7 +16,7 @@ use crate::scatter::Scatter;
 use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
-const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
+// const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-6;
 const DENSITY_RTOL: f64 = 1e-3;
 const VOLUME_RTOL: f64 = 1e-3;
@@ -136,7 +134,7 @@ impl TryFrom<u8> for SGClass {
 pub struct Peak {
     /// hkl vector of peak
     pub hkl: Vec3<f64>,
-    /// cartesian coordinates of peak in reciprocal space 
+    /// cartesian coordinates of peak in reciprocal space
     pub pos: Vec3<f64>,
     pub i_hkl: NotNan<f64>,
     pub d_hkl: NotNan<f64>,
@@ -444,6 +442,8 @@ impl Structure {
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
+
     use super::*;
     use crate::cif::CifParser;
     use crate::domain_size::DomainSize;

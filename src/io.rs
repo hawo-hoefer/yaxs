@@ -357,7 +357,7 @@ pub mod cuda {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use crossbeam_channel::{select, Select};
+    use crossbeam_channel::Select;
     use log::info;
 
     use crate::cuda_common::CUDA_DEVICE_INFO;

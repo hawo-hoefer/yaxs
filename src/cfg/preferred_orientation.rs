@@ -251,7 +251,7 @@ impl POCfg {
                 //
                 let k_max = *k_max;
                 let s_lo = strength.lower_bound();
-                let s_hi = strength.upper_bound();
+                // let _ = strength.upper_bound();
                 let constraints = Constraints([
                     // k1 in [0, k_max]
                     IneqConstraint::ge([1.0, 0.0, 0.0], 0.0),

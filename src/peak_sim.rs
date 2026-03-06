@@ -385,7 +385,6 @@ mod cuda {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use ahash::HashMapExt;
     use itertools::Itertools;
     use log::debug;
     use rand::{Rng, SeedableRng};

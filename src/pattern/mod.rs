@@ -10,7 +10,6 @@ use crate::absorption::MACData;
 use crate::background::Background;
 use crate::domain_size::DomainSize;
 use crate::io::PatternMeta;
-use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
     e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, C_M_S, H_EV_S,

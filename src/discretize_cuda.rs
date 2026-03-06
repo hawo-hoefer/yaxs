@@ -1,6 +1,5 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use std::thread;
 
 use ahash::HashMapExt;
 use log::debug;
@@ -92,6 +91,7 @@ mod ffi {
         pub n_peaks_tot: usize,
     }
 
+    #[derive(Clone)]
     #[repr(C)]
     pub struct CUDAPattern {
         pub start_idx: usize,
@@ -180,16 +180,6 @@ where
     );
     use self::ffi::BkgSOA;
 
-    let n_peaks_tot: usize = jobs
-        .iter()
-        .map(|job| match job {
-            DiscretizeSample::Standard(job) => job.n_peaks_tot(),
-            DiscretizeSample::TextureMeasurement(items) => {
-                items.iter().map(|x| x.n_peaks_tot()).sum()
-            }
-        })
-        .sum();
-
     let num_peak_sets = jobs.iter().map(|job| job.n_patterns()).sum();
 
     let jobs = {
@@ -206,7 +196,7 @@ where
     };
 
     let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(num_peak_sets);
-    let mut ctx = Arc::new(RenderCtx::empty());
+    let ctx = Arc::new(RenderCtx::empty());
 
     let mut rng_state = Vec::<u64>::with_capacity(num_peak_sets * 4);
 
@@ -327,14 +317,16 @@ where
         }
     }
 
-    for job in jobs.iter() {
-        patterns.push(ffi::CUDAPattern {
+    // TODO: check if this is correct for texture measurement. do we want n_peak_sets?
+    patterns.resize(
+        jobs.len(),
+        ffi::CUDAPattern {
             start_idx: 0,
             n_peaks: 0,
-        });
-    }
+        },
+    );
 
-    let mut patterns = Arc::new(CudaPatterns(UnsafeCell::new(patterns)));
+    let patterns = Arc::new(CudaPatterns(UnsafeCell::new(patterns)));
     let jobs = Arc::new(jobs);
     let n_jobs = jobs.len();
 

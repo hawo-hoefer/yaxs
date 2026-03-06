@@ -1,4 +1,4 @@
-use crate::math::linalg::{Mat3, Vec3, Vec4};
+use crate::math::linalg::{Mat3, Vec3};
 use crate::math::quaternion::Quaternion;
 use crate::math::{C_M_S, H_EV_S};
 
