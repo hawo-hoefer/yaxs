@@ -1,8 +1,8 @@
 use crate::math::linalg::{Mat3, Vec3};
 use crate::math::quaternion::Quaternion;
 use crate::util::{
-    deserialize_positive_parameter_list_3, deserialize_symmetric_3x3_to_aniso_ellipse,
-    deserialize_unit_quaternion,
+    deserialize_positive_parameter, deserialize_positive_parameter_list_3,
+    deserialize_symmetric_3x3_to_aniso_ellipse, deserialize_unit_quaternion,
 };
 use rand::Rng;
 use serde::Deserialize;
@@ -25,11 +25,18 @@ pub enum EllipsoidalInner {
         orientation: Quaternion,
         main_sizes: [Parameter<f64>; 3],
     },
-    /// roll a random orientation and strength in the parameter range for each sample
+    /// roll a random orientation and axis lengths in the parameter range for each sample
     /// this effectively creates an ellipsoid with random orientation and main axis
     /// lengths specified in the strength parameter
     #[serde(deserialize_with = "deserialize_positive_parameter_list_3")]
     SizesRandomOri([Parameter<f64>; 3]),
+    /// roll a random orientation and axis length in the parameter range for each sample
+    /// this effectively creates an ellipsoid with random orientation and main axis
+    /// lengths specified in the strength parameter
+    SingleSizeRandomOri {
+        #[serde(deserialize_with = "deserialize_positive_parameter")]
+        ani: Parameter<f64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -81,6 +88,19 @@ impl DomainSize {
                         q_ori,
                     }
                 }
+                EllipsoidalInner::SingleSizeRandomOri { ani } => {
+                    let ori = crate::math::stats::sample_sphere_unif::<4>(rng);
+                    let q_ori =
+                        Quaternion::new(ori[0] as f32, ori[1] as f32, ori[2] as f32, ori[3] as f32);
+                    let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
+                    let strength =
+                        Vec3::new(ani.generate(rng), ani.generate(rng), ani.generate(rng));
+                    DS::Ellipsoidal {
+                        orientation,
+                        main_sizes: strength,
+                        q_ori,
+                    }
+                }
             },
         };
 
@@ -99,15 +119,23 @@ impl DomainSize {
         match self {
             DomainSize::Uniform(v) => v.upper_bound(),
             DomainSize::Ellipsoidal(inner) => match inner {
-                Exact { main_sizes: strength, .. } => *strength
+                Exact {
+                    main_sizes: strength,
+                    ..
+                } => *strength
                     .iter_values()
                     .max_by(|&a, &b| a.partial_cmp(b).expect("not nan"))
                     .expect("three values in iterator"),
-                OrientationAndSizes { main_sizes: strength, .. } | SizesRandomOri(strength) => strength
+                OrientationAndSizes {
+                    main_sizes: strength,
+                    ..
+                }
+                | SizesRandomOri(strength) => strength
                     .iter()
                     .map(|x| x.upper_bound())
                     .max_by(|a, b| a.partial_cmp(b).expect("not nan"))
                     .expect("three values in iterator"),
+                SingleSizeRandomOri { ani } => ani.upper_bound(),
             },
         }
     }
@@ -183,7 +211,7 @@ mod test {
     #[test]
     fn parse_ellipsoidal_selected_direction() {
         parse_test(
-            "{orientation: [0, 1, 0, 0], strength: [100, [100, 200], 300]}",
+            "{orientation: [0, 1, 0, 0], main_sizes: [100, [100, 200], 300]}",
             DomainSize::Ellipsoidal(EllipsoidalInner::OrientationAndSizes {
                 orientation: Quaternion::new(0.0, 1.0, 0.0, 0.0),
                 main_sizes: [
@@ -191,6 +219,17 @@ mod test {
                     Parameter::Range(100.0, 200.0),
                     Parameter::Fixed(300.0),
                 ],
+            }),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn parse_ellipsoidal_equal_all_dirs() {
+        parse_test(
+            "{ani: [10, 100]}",
+            DomainSize::Ellipsoidal(EllipsoidalInner::SingleSizeRandomOri {
+                ani: Parameter::Range(10.0, 100.0),
             }),
         )
         .unwrap();
