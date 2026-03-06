@@ -1,10 +1,9 @@
-use crate::math::linalg::{Mat3, Vec3, Vec4};
+use crate::math::linalg::{Mat3, Vec3};
 use crate::math::quaternion::Quaternion;
 use crate::util::{
     deserialize_positive_parameter_list_3, deserialize_symmetric_3x3_to_aniso_ellipse,
     deserialize_unit_quaternion,
 };
-use log::error;
 use rand::Rng;
 use serde::Deserialize;
 
@@ -17,20 +16,20 @@ pub enum EllipsoidalInner {
     Exact {
         q_ori: Quaternion,
         orientation: Mat3<f64>,
-        strength: Vec3<f64>,
+        main_sizes: Vec3<f64>,
     },
     /// for a specific orientation, roll axis lengths of the anisotropy ellipsoid
     /// orientation needs to be a unit quaternion
-    OrientationAndStrength {
+    OrientationAndSizes {
         #[serde(deserialize_with = "deserialize_unit_quaternion")]
         orientation: Quaternion,
-        strength: [Parameter<f64>; 3],
+        main_sizes: [Parameter<f64>; 3],
     },
     /// roll a random orientation and strength in the parameter range for each sample
     /// this effectively creates an ellipsoid with random orientation and main axis
     /// lengths specified in the strength parameter
     #[serde(deserialize_with = "deserialize_positive_parameter_list_3")]
-    StrengthRandomOri([Parameter<f64>; 3]),
+    SizesRandomOri([Parameter<f64>; 3]),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -48,16 +47,16 @@ impl DomainSize {
             DomainSize::Ellipsoidal(inner) => match inner {
                 EllipsoidalInner::Exact {
                     orientation,
-                    strength,
+                    main_sizes: strength,
                     q_ori,
                 } => DS::Ellipsoidal {
                     orientation: orientation.clone(),
                     main_sizes: strength.clone(),
                     q_ori: q_ori.clone(),
                 },
-                EllipsoidalInner::OrientationAndStrength {
+                EllipsoidalInner::OrientationAndSizes {
                     orientation: q_ori,
-                    strength,
+                    main_sizes: strength,
                 } => {
                     let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
                     DS::Ellipsoidal {
@@ -70,7 +69,7 @@ impl DomainSize {
                         ]),
                     }
                 }
-                EllipsoidalInner::StrengthRandomOri([a, b, c]) => {
+                EllipsoidalInner::SizesRandomOri([a, b, c]) => {
                     let ori = crate::math::stats::sample_sphere_unif::<4>(rng);
                     let q_ori =
                         Quaternion::new(ori[0] as f32, ori[1] as f32, ori[2] as f32, ori[3] as f32);
@@ -100,11 +99,11 @@ impl DomainSize {
         match self {
             DomainSize::Uniform(v) => v.upper_bound(),
             DomainSize::Ellipsoidal(inner) => match inner {
-                Exact { strength, .. } => *strength
+                Exact { main_sizes: strength, .. } => *strength
                     .iter_values()
                     .max_by(|&a, &b| a.partial_cmp(b).expect("not nan"))
                     .expect("three values in iterator"),
-                OrientationAndStrength { strength, .. } | StrengthRandomOri(strength) => strength
+                OrientationAndSizes { main_sizes: strength, .. } | SizesRandomOri(strength) => strength
                     .iter()
                     .map(|x| x.upper_bound())
                     .max_by(|a, b| a.partial_cmp(b).expect("not nan"))
@@ -152,7 +151,7 @@ mod test {
             DomainSize::Ellipsoidal(EllipsoidalInner::Exact {
                 q_ori: q_ori.clone(),
                 orientation: evecs.clone(),
-                strength: Vec3::from_col(evals),
+                main_sizes: Vec3::from_col(evals),
             }),
         )
         .unwrap();
@@ -162,7 +161,7 @@ mod test {
             DomainSize::Ellipsoidal(EllipsoidalInner::Exact {
                 q_ori,
                 orientation: evecs,
-                strength: Vec3::from_col(evals),
+                main_sizes: Vec3::from_col(evals),
             }),
         )
         .unwrap();
@@ -172,7 +171,7 @@ mod test {
     fn parse_ellipsoidal_uniform_direction() {
         parse_test(
             "[100, [100, 200], 300]",
-            DomainSize::Ellipsoidal(EllipsoidalInner::StrengthRandomOri([
+            DomainSize::Ellipsoidal(EllipsoidalInner::SizesRandomOri([
                 Parameter::Fixed(100.0),
                 Parameter::Range(100.0, 200.0),
                 Parameter::Fixed(300.0),
@@ -185,9 +184,9 @@ mod test {
     fn parse_ellipsoidal_selected_direction() {
         parse_test(
             "{orientation: [0, 1, 0, 0], strength: [100, [100, 200], 300]}",
-            DomainSize::Ellipsoidal(EllipsoidalInner::OrientationAndStrength {
+            DomainSize::Ellipsoidal(EllipsoidalInner::OrientationAndSizes {
                 orientation: Quaternion::new(0.0, 1.0, 0.0, 0.0),
-                strength: [
+                main_sizes: [
                     Parameter::Fixed(100.0),
                     Parameter::Range(100.0, 200.0),
                     Parameter::Fixed(300.0),
