@@ -1,7 +1,9 @@
 use log::{error, warn};
+use ordered_float::NotNan;
 use rand::Rng;
 use serde::Deserialize;
 
+use crate::math::linalg::Vec3;
 use crate::pattern::ImpurityPeak;
 use crate::util::deserialize_positive_parameter;
 
@@ -101,14 +103,14 @@ pub fn generate_impurities(
             let d_hkl = spec.d_hkl_ams.generate(rng);
             let i_hkl = spec.intensity.generate(rng);
             impurity_peaks.push(ImpurityPeak {
-                peak:  todo!("reimplement impurity peak"),
-                // Peak {
-                //     d_hkl,
-                //     i_hkl,
-                //     hkls: Vec::new(),
-                // },
                 eta: spec.eta.generate(rng),
                 mean_ds_nm: spec.mean_ds_nm.generate(rng),
+                peak: crate::structure::Peak {
+                    hkl: Vec3::zeros(),
+                    pos: Vec3::zeros(),
+                    i_hkl: NotNan::try_from(i_hkl).expect("valid intensity range"),
+                    d_hkl: NotNan::try_from(d_hkl).expect("valid d_hkl range"),
+                },
             })
         }
     }
