@@ -334,7 +334,8 @@ impl Structure {
             return;
         };
 
-        agg.sort_by_key(|p| -p.d_hkl); // negative because we want descending
+        agg.sort_by_key(|p| -p.i_hkl); // negative because we want descending
+
         let number_of_kept_peaks = agg
             .iter()
             .rposition(|p| p.i_hkl / vmax > SCALED_INTENSITY_TOL) // find smallest kept peak index
@@ -373,11 +374,10 @@ impl Structure {
 
         if let Some(alignment) = alignment {
             self.apply_alignment_to_peaks(&mut peaks, alignment);
-            self.finalize_peaks(&mut peaks);
-            peaks
-        } else {
-            peaks
         }
+
+        self.finalize_peaks(&mut peaks);
+        peaks
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
