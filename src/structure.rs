@@ -778,7 +778,7 @@ O2- -2.000";
         panic!()
     }
 
-    // #[test]
+    #[test]
     fn full_fe2o3_parse() {
         let cif_str = "
 #------------------------------------------------------------------------------
@@ -899,7 +899,7 @@ _cod_related_entry_code
         ];
 
         let calculated_peaks = s.get_adxrd_peaks(wavelength, &(5.0, 90.0), None, &params);
-        let render_params = calculated_peaks
+        let mut render_params = calculated_peaks
             .iter()
             .map(|peak| {
                 let theta_hkl_rad = peak.get_adxrd_theta_rad(wavelength);
@@ -911,21 +911,37 @@ _cod_related_entry_code
             })
             .collect_vec();
 
-        let imax = *render_params
+        render_params.sort_by(|a, b| a.partial_cmp(b).expect("not nan"));
+
+        let mut compressed = Vec::new();
+        for rp in render_params.drain(..) {
+            match compressed.last_mut() {
+                None => compressed.push((rp.0, rp.1)),
+                Some((pos, intens)) => {
+                    if (*pos - rp.0).abs() < 1e-5 {
+                        *intens += rp.1
+                    } else {
+                        compressed.push((rp.0, rp.1));
+                    }
+                }
+            }
+        }
+
+        let imax = *compressed
             .iter()
             .map(|p| NotNan::new(p.1).expect("peak i_hkl is not nan"))
             .max()
             .expect("at least one peak");
 
-        for (calc, expected) in render_params.iter().zip(expected_peaks) {
-            // println!("{:?}", calc);
-
-            assert_eq!(calc.0, expected.0);
+        for (calc, expected) in compressed.iter().zip(expected_peaks) {
             let i_percent = (calc.1 / imax) * 100.0;
-
-            println!("{:.2} {:8.4} {:8.4}", calc.0, i_percent, expected.1);
+            println!(
+                "{:.2} {:.2} | {:8.4} {:8.4}",
+                calc.0, expected.0, i_percent, expected.1
+            );
+            assert_eq!(calc.0, expected.0);
             // assert_eq!(i_percent, expected.1)
         }
-        panic!()
+        // panic!()
     }
 }

@@ -85,15 +85,15 @@ impl Lattice {
     }
 
     pub fn a(&self) -> Vec3<f64> {
-        self.mat.col(0)
+        self.mat.row(0)
     }
 
     pub fn b(&self) -> Vec3<f64> {
-        self.mat.col(1)
+        self.mat.row(1)
     }
 
     pub fn c(&self) -> Vec3<f64> {
-        self.mat.col(2)
+        self.mat.row(2)
     }
 
     pub fn from_abc_angles(a: f64, b: f64, c: f64, alpha: f64, beta: f64, gamma: f64) -> Lattice {
@@ -109,9 +109,10 @@ impl Lattice {
             b * alpha.sin() * gamma_star.sin(),
             b * alpha.cos(),
         ];
+
         let vc = [0.0, 0.0, c];
         Lattice {
-            mat: Mat3::from_cols([va, vb, vc]),
+            mat: Mat3::from_rows([va, vb, vc]),
         }
     }
 }
