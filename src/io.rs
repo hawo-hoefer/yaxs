@@ -3,10 +3,14 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::SystemTime;
 
-use cfg_if::cfg_if;
+use chrono::Datelike;
+use chrono::Timelike;
 use chrono::Utc;
 use clap::Args;
+use colog::format::CologStyle;
+use colored::Colorize;
 use log::warn;
 use log::{error, info};
 use ndarray::ArrayBase;
@@ -15,13 +19,12 @@ use ndarray::Dimension;
 use ndarray::RawData;
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::{NpzWriter, WritableElement};
+use pyo3::pyclass;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::cfg::SimulationKind;
 use crate::cfg::TextureMeasurement;
-use crate::pattern::DiscretizeJobGenerator;
-use crate::pattern::Discretizer;
 use crate::pattern::Intensities;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,7 @@ impl FromStr for HKLDisplayMode {
     }
 }
 
+#[pyclass(from_py_object)]
 #[derive(Args, Clone)]
 pub struct Opts {
     #[arg(long, short, default_value=None, help="Chunk size (in number of patterns) for computation and saving. Set to the entire dataset if not specified.")]
@@ -90,6 +94,65 @@ pub struct Opts {
     pub quiet: bool,
 }
 
+struct CustomPrefix;
+
+impl CologStyle for CustomPrefix {
+    fn prefix_token(&self, level: &log::Level) -> String {
+        let datetime: chrono::DateTime<Utc> = SystemTime::now().into();
+        let datetime = datetime.naive_local();
+        let date_str = format!(
+            "{y}-{m:02}-{d:02}",
+            y = datetime.year(),
+            m = datetime.month(),
+            d = datetime.day(),
+        );
+        let time_str = format!(
+            "{h:02}:{m:02}:{s:02}",
+            h = datetime.hour(),
+            m = datetime.minute(),
+            s = datetime.second(),
+        );
+
+        format!(
+            "{pref}{level} {date} {time}{post}",
+            pref = "[".blue().bold(),
+            post = "]".blue().bold(),
+            level = self.level_color(level, self.level_token(level)),
+            date = self.level_color(level, &date_str),
+            time = self.level_color(level, &time_str),
+        )
+    }
+
+    #[rustfmt::skip]
+    fn level_token(&self, level: &log::Level) -> &str {
+        match level {
+            log::Level::Error => "ERROR",
+            log::Level::Warn  => "WARN ",
+            log::Level::Info  => "INFO ",
+            log::Level::Debug => "DEBUG",
+            log::Level::Trace => "TRACE",
+        }
+    }
+
+    fn level_color(&self, level: &log::Level, msg: &str) -> String {
+        match level {
+            log::Level::Error => msg.red().bold().to_string(),
+            log::Level::Warn => msg.yellow().bold().to_string(),
+            log::Level::Info => msg.green().to_string(),
+            log::Level::Debug => msg.bright_purple().to_string(),
+            log::Level::Trace => msg.white().to_string(),
+        }
+    }
+}
+
+pub fn init_logging() {
+    colog::basic_builder()
+        .filter_level(log::LevelFilter::Info)
+        .format(colog::formatter(CustomPrefix))
+        .parse_env("LOG_LEVEL")
+        .init();
+}
+
 #[derive(PartialEq, Clone)]
 pub enum PatternMeta {
     Strains(Array3<f32>),
@@ -111,6 +174,11 @@ pub enum PatternMeta {
         // patterns, active phases, 4 ks
         ks: Array3<f32>,
     },
+}
+
+pub enum PatternMetaName {
+    Single(&'static str),
+    Two(&'static str, &'static str),
 }
 
 impl PatternMeta {
@@ -307,7 +375,7 @@ pub struct OutputNames {
     pub metadata_slot_names: Vec<String>,
 }
 
-fn io_thread_fn(
+pub fn io_thread_fn(
     rx: std::sync::mpsc::Receiver<WriteJob<PathBuf>>,
     compress: bool,
     n_chunks: usize,
@@ -355,9 +423,10 @@ fn io_thread_fn(
 #[cfg(feature = "use-gpu")]
 pub mod cuda {
     use std::path::PathBuf;
+    use std::sync::mpsc::Receiver;
     use std::sync::Arc;
 
-    use crossbeam_channel::{select, Select};
+    use crossbeam_channel::Select;
     use log::info;
 
     use crate::cuda_common::CUDA_DEVICE_INFO;
@@ -510,6 +579,10 @@ pub mod cuda {
     pub fn render_write_chunked<T>(
         mut gen: impl DiscretizeJobGenerator<Item = T>,
         io_opts: &crate::io::Opts,
+        io_fn: impl Fn(Receiver<WriteJob<PathBuf>>, bool, usize) -> Option<(Vec<String>, Vec<String>)>
+            + Sync
+            + Send
+            + 'static,
     ) -> Result<OutputNames, String>
     where
         T: Discretizer + Send + Sync + 'static,
@@ -528,7 +601,7 @@ pub mod cuda {
         let compress = io_opts.compress;
 
         let (io_tx, io_rx) = std::sync::mpsc::channel::<WriteJob<PathBuf>>();
-        let io_thread_handle = std::thread::spawn(move || io_thread_fn(io_rx, compress, n_chunks));
+        let io_thread_handle = std::thread::spawn(move || io_fn(io_rx, compress, n_chunks));
 
         let mut cuda_controller_threads = Vec::new();
         let mut cuda_txs = Vec::new();
@@ -788,21 +861,5 @@ mod cpu {
         };
 
         (intensities, metadata)
-    }
-}
-
-pub fn render_write_chunked<T>(
-    gen: impl DiscretizeJobGenerator<Item = T>,
-    opts: &Opts,
-) -> Result<OutputNames, String>
-where
-    T: Discretizer + Sync + Send + 'static,
-{
-    cfg_if! {
-        if #[cfg(feature = "use-gpu")] {
-            cuda::render_write_chunked(gen, opts)
-        } else {
-            cpu::render_write_chunked(gen, opts)
-        }
     }
 }

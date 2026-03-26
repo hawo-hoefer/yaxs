@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use itertools::Itertools;
-use log::{warn};
+use log::warn;
 use ndarray::{Array2, Array4};
 use rand::Rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::absorption::MACData;
 use crate::background::Background;
@@ -84,7 +84,7 @@ impl RenderCommon {
 pub struct CompositionGenerator {
     pub fraction_sum: f64,
     pub n_free: usize,
-    pub fractions: Vec<Option<CompositionPart>>,
+    pub fractions: Box<[Option<CompositionPart>]>,
     pub max_subset_dim: Option<CompositionSubset>,
 }
 
@@ -151,7 +151,7 @@ pub fn get_weight_fractions(
     mass_fractions.into()
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Serialize, PartialEq, Clone, Debug)]
 pub enum CompositionSubset {
     MaxDim(usize),
     Probabilities(Vec<f64>),
@@ -238,7 +238,7 @@ impl<'de> Deserialize<'de> for CompositionSubset {
 
 impl CompositionGenerator {
     pub fn try_new(
-        mut fractions: Vec<Option<CompositionPart>>,
+        fractions: &mut [Option<CompositionPart>],
         max_subset_dim: Option<CompositionSubset>,
     ) -> Result<Self, String> {
         if fractions.len() == 0 {
@@ -246,7 +246,7 @@ impl CompositionGenerator {
             return Ok(Self {
                 n_free: 0,
                 fraction_sum: 0.0,
-                fractions,
+                fractions: fractions.into(),
                 max_subset_dim: None, // no subsets if no fractions are specified
             });
         }
@@ -292,7 +292,7 @@ impl CompositionGenerator {
         Ok(Self {
             n_free,
             fraction_sum,
-            fractions,
+            fractions: fractions.into(),
             max_subset_dim,
         })
     }
@@ -802,8 +802,8 @@ mod test {
     #[test]
     fn vf_generation_basic() {
         let n = 5;
-        let vfs = (0..n).map(|_| None).collect_vec();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let mut vfs = (0..n).map(|_| None).collect_vec();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated.len(), n);
@@ -812,9 +812,9 @@ mod test {
 
     #[test]
     fn vf_generation_single_fixed() {
-        let vfs = vec![None, None, Some(CompositionPart(0.3))];
+        let mut vfs = vec![None, None, Some(CompositionPart(0.3))];
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[2], 0.3);
@@ -824,14 +824,14 @@ mod test {
 
     #[test]
     fn vf_generation_multiple_fixed() {
-        let vfs = vec![
+        let mut vfs = vec![
             Some(CompositionPart(0.2)),
             None,
             None,
             Some(CompositionPart(0.3)),
         ];
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -842,7 +842,7 @@ mod test {
 
     #[test]
     fn vf_generation_multiple_inbetween_fixed() {
-        let vfs = vec![
+        let mut vfs = vec![
             Some(CompositionPart(0.2)),
             None,
             Some(CompositionPart(0.1)),
@@ -851,7 +851,7 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -863,10 +863,10 @@ mod test {
 
     #[test]
     fn vf_generation_no_degrees_of_freedom() {
-        let vfs = vec![Some(CompositionPart(0.2)), Some(CompositionPart(0.1)), None];
+        let mut vfs = vec![Some(CompositionPart(0.2)), Some(CompositionPart(0.1)), None];
 
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.2);
@@ -878,10 +878,10 @@ mod test {
 
     #[test]
     fn vf_generation_no_degrees_of_freedom_two_phases() {
-        let vfs = vec![Some(CompositionPart(0.6)), Some(CompositionPart(0.4))];
+        let mut vfs = vec![Some(CompositionPart(0.6)), Some(CompositionPart(0.4))];
 
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, None).unwrap();
+        let gen = CompositionGenerator::try_new(&mut vfs, None).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let generated = gen.generate(&mut rng);
         assert_eq!(generated[0], 0.6);
@@ -892,7 +892,7 @@ mod test {
 
     #[test]
     fn vf_generation_allow_subsets() {
-        let vfs = vec![
+        let mut vfs = vec![
             None,
             Some(CompositionPart(0.3)),
             None,
@@ -901,7 +901,8 @@ mod test {
         ];
 
         let n = vfs.len();
-        let gen = CompositionGenerator::try_new(vfs, Some(CompositionSubset::MaxDim(2))).unwrap();
+        let gen =
+            CompositionGenerator::try_new(&mut vfs, Some(CompositionSubset::MaxDim(2))).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let mut n_zeroed = 0;
         for _ in 0..1000 {

@@ -44,13 +44,13 @@ pub fn apply_strain_cfg(
     }
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Mustrain {
     pub amplitude: Parameter<f64>,
     pub eta: Parameter<f64>,
 }
 
-#[derive(PartialEq, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StructureDef {
     pub path: String,

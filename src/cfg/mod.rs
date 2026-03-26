@@ -7,9 +7,12 @@ mod preferred_orientation;
 mod probability;
 mod structure;
 
+use std::io::{BufReader, Read};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::absorption::{compute_mixture_attenuation_coef, MACGenerator};
+use crate::cif::CifParser;
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -44,8 +47,9 @@ use crate::strain::Strain;
 use crate::structure::Structure;
 
 pub use self::texture::TextureMeasurement;
+pub use pyo3::pyclass;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub kind: SimulationKind,
@@ -57,6 +61,103 @@ pub struct Config {
 pub enum SimulationKind {
     AngleDispersive(AngleDispersive),
     EnergyDispersive(EnergyDispersive),
+}
+
+pub struct PreparedSimData {
+    pub structures: Box<[Structure]>,
+    pub pref_o: Box<[Option<POGenerator>]>,
+    pub strain_cfgs: Box<[Option<StrainCfg>]>,
+    pub structure_paths: Box<[String]>,
+    pub composition_constraints: Box<[Option<CompositionPart>]>,
+    pub b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+}
+
+pub fn prepare_peak_simulation(
+    cfg: &mut Config,
+    root_path: impl AsRef<Path>,
+    rng: &mut impl Rng,
+) -> Result<PreparedSimData, String> {
+    if let Some(ref mut imp) = cfg.sample_parameters.impurities {
+        // get upper and lower bound for d_hkl
+        let (lb, ub) = {
+            let (r_min, r_max) = cfg.kind.get_r_range();
+            (1.0 / r_max, 1.0 / r_min)
+        };
+        for spec in imp.iter_mut() {
+            spec.validate_d_hkl_or_adjust(lb, ub);
+        }
+    }
+
+    let mut structures = Vec::new();
+    let mut pref_o = Vec::new();
+    let mut strain_cfgs = Vec::new();
+    let mut structure_paths = Vec::new();
+    let mut composition_constraints = Vec::new();
+    let mut b_iso_params = Vec::new();
+
+    for StructureDef {
+        path,
+        preferred_orientation: po,
+        strain,
+        composition,
+        mean_ds_nm,
+        ds_eta: _,
+        mustrain: _,
+        b_iso,
+    } in cfg.sample_parameters.structures.iter()
+    {
+        let mut struct_path = root_path.as_ref().to_path_buf();
+        struct_path.push(path.clone());
+
+        let mut reader = std::fs::File::open(&struct_path)
+            .map(BufReader::new)
+            .map_err(|err| format!("Could not load cif at '{struct_path}': {err}", struct_path=struct_path.display()))?;
+
+        let mut cif = String::new();
+        let _ = reader
+            .read_to_string(&mut cif)
+            .map_err(|err| format!("Invalid UTF8 in cif {}: {}", struct_path.display(), err,))?;
+        let mut p = CifParser::new(&cif).with_file(struct_path.display().to_string());
+
+        let structure = p
+            .parse()
+            .map_err(|err| format!("Invalid CIF Syntax for '{path}': {err}"))
+            .and_then(|x| {
+                Structure::try_from(&x)
+                    .map_err(|err| format!("Invalid contents for CIF '{path}': {err}"))
+            })?;
+
+        if mean_ds_nm.upper_bound() > 200.0 {
+            return Err(format!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound()));
+        }
+
+        structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
+        composition_constraints.push(composition.clone());
+        strain_cfgs.push(strain.clone());
+        b_iso_params.push(b_iso.clone());
+        let po_gen = po
+            .as_ref()
+            .map(|x| {
+                x.try_into_generator(rng).map_err(|x| {
+                    format!(
+                        "Could not get preferred orientation generator for {p}: {x}",
+                        p = struct_path.display()
+                    )
+                })
+            })
+            .transpose()?;
+        pref_o.push(po_gen);
+        structures.push(structure);
+    }
+
+    Ok(PreparedSimData {
+        structures: structures.into(),
+        pref_o: pref_o.into(),
+        strain_cfgs: strain_cfgs.into(),
+        structure_paths: structure_paths.into(),
+        composition_constraints: composition_constraints.into(),
+        b_iso_ranges: b_iso_params.into(),
+    })
 }
 
 impl SimulationKind {
@@ -111,11 +212,12 @@ impl SimulationKind {
 
     pub fn simulate_peaks(
         &self,
-        structures: Box<[Structure]>,
-        pref_o: Box<[Option<POGenerator>]>,
-        strain_cfgs: Box<[Option<StrainCfg>]>,
-        structure_paths: Box<[String]>,
-        b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+        // structures: Box<[Structure]>,
+        // pref_o: Box<[Option<POGenerator>]>,
+        // strain_cfgs: Box<[Option<StrainCfg>]>,
+        // structure_paths: Box<[String]>,
+        // b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+        psd: PreparedSimData,
         sample_parameters: SampleParameters,
         texture_measurement: Option<TextureMeasurement>,
         rng: &mut impl Rng,
@@ -158,11 +260,7 @@ impl SimulationKind {
         crate::peak_sim::simulate_peaks(
             (min_r, max_r),
             sample_parameters,
-            structures,
-            pref_o,
-            strain_cfgs,
-            structure_paths,
-            b_iso_ranges,
+            psd,
             texture_measurement,
             rng,
         )
@@ -193,6 +291,7 @@ fn default_monochromator_angle() -> f64 {
     0.0
 }
 
+#[pyclass(from_py_object)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AngleDispersive {
@@ -302,7 +401,7 @@ pub struct EnergyDispersive {
     pub beamline: Beamline,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SimulationParameters {
     pub normalize: bool,
     pub seed: Option<u64>,
@@ -315,7 +414,7 @@ pub struct SimulationParameters {
     pub abstol: f32,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RandomlyScalePeaks {
     pub scale: Parameter<f64>,
     pub probability: Probability,
@@ -331,7 +430,7 @@ impl RandomlyScalePeaks {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum CompositionKind {
     ByMass,
     ByVolume,
@@ -343,7 +442,7 @@ impl Default for CompositionKind {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SampleParameters {
     #[serde(default)]

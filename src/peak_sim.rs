@@ -11,8 +11,8 @@ use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use crate::cfg::{
-    apply_strain_cfg, CompactSimResults, POGenerator, Parameter, SampleParameters, StrainCfg,
-    TextureMeasurement, ToDiscretize,
+    apply_strain_cfg, CompactSimResults, POGenerator, Parameter, PreparedSimData, SampleParameters,
+    StrainCfg, TextureMeasurement, ToDiscretize,
 };
 
 use crate::math::linalg::Vec3;
@@ -214,7 +214,7 @@ struct RunCtx {
     structs: Arc<[Structure]>,
     po_gens: Box<[Option<POGenerator>]>,
     strain_cfgs: Box<[Option<StrainCfg>]>,
-    structure_files: Box<[String]>,
+    structure_paths: Box<[String]>,
 }
 
 impl RunCtx {
@@ -229,7 +229,7 @@ impl RunCtx {
             &self.structs[job.structure],
             &mut rng,
         ) else {
-            return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_files[job.structure]));
+            return Err(format!("Could not apply strain to structure '{file}'. Strain matrix is not invertible. Please check the strain configuration.", file=self.structure_paths[job.structure]));
         };
         let po = self.po_gens[job.structure]
             .as_mut()
@@ -296,14 +296,19 @@ impl RunCtx {
 pub fn simulate_peaks(
     (min_r, max_r): (f64, f64),
     sample_parameters: SampleParameters,
-    structures: Box<[Structure]>,
-    structure_po_configs: Box<[Option<POGenerator>]>,
-    structure_strain_configs: Box<[Option<StrainCfg>]>,
-    structure_files: Box<[String]>,
-    b_iso_ranges: Box<[Option<Parameter<f64>>]>,
+    psd: PreparedSimData,
     texture_measurement: Option<TextureMeasurement>,
     rng: &mut impl Rng,
 ) -> Result<ToDiscretize, String> {
+    let PreparedSimData {
+        structures,
+        pref_o,
+        strain_cfgs,
+        structure_paths,
+        composition_constraints: _,
+        b_iso_ranges,
+    } = psd;
+
     let n_structs = structures.len();
     let n_permutations = sample_parameters.structure_permutations;
     let n_texture_measurements = texture_measurement.map(|t| t.stride()).unwrap_or(1);
@@ -324,9 +329,9 @@ pub fn simulate_peaks(
 
     let ctx = RunCtx {
         structs: structures.into(),
-        po_gens: structure_po_configs,
-        strain_cfgs: structure_strain_configs,
-        structure_files,
+        po_gens: pref_o,
+        strain_cfgs,
+        structure_paths,
     };
 
     let results = WriteCtx::new(
@@ -716,7 +721,7 @@ mod cuda {
                     min_r,
                     max_r,
                     &ctx.structs[struct_id],
-                    &ctx.structure_files[struct_id],
+                    &ctx.structure_paths[struct_id],
                     &ctx.strain_cfgs[struct_id],
                     &random_b_iso_ranges[struct_id],
                     &scattering_parameters,
@@ -725,12 +730,10 @@ mod cuda {
                 )?;
                 let (_, n_required_bytes_cuda) = batch.memory_stats();
 
-                if n_required_bytes_cuda
-                    >= CUDA_DEVICE_INFO[0].init_free_memory_bytes * 9 / 10
-                {
+                if n_required_bytes_cuda >= CUDA_DEVICE_INFO[0].init_free_memory_bytes * 9 / 10 {
                     batch.compute_chunk(
                         Arc::clone(&results),
-                        &ctx.structure_files[struct_id],
+                        &ctx.structure_paths[struct_id],
                         struct_id,
                     );
                 }
@@ -740,7 +743,7 @@ mod cuda {
             if batch.computations_left() {
                 batch.compute_chunk(
                     Arc::clone(&results),
-                    &ctx.structure_files[struct_id],
+                    &ctx.structure_paths[struct_id],
                     struct_id,
                 );
             }

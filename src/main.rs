@@ -5,23 +5,18 @@ use colored::Colorize;
 use itertools::Itertools;
 use rand::SeedableRng;
 use sha2::Digest;
-use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::absorption::MACGenerator;
-use yaxs::cif::CifParser;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak};
-use yaxs::structure::Structure;
 
 use log::{debug, error, info};
 
-use yaxs::cfg::{Config, SimulationKind, StructureDef, ToDiscretize};
-use yaxs::io::{
-    self, prepare_output_directory, render_write_chunked, HKLDisplayMode, SimulationMetadata,
-};
-use yaxs::pattern::{CompositionGenerator, DiscretizeJobGenerator, Discretizer};
+use yaxs::cfg::{prepare_peak_simulation, Config, SimulationKind, StructureDef, ToDiscretize};
+use yaxs::io::{self, prepare_output_directory, HKLDisplayMode};
+use yaxs::pattern::CompositionGenerator;
 
 const ARTWORK: &'static str = r#"Running YAXS (YAXS: an Accelerated XRD Simulator)
           
@@ -63,57 +58,6 @@ struct Cli {
 
     #[command(flatten)]
     io: io::Opts,
-}
-
-struct CustomPrefix;
-
-impl CologStyle for CustomPrefix {
-    fn prefix_token(&self, level: &log::Level) -> String {
-        let datetime: chrono::DateTime<Utc> = SystemTime::now().into();
-        let datetime = datetime.naive_local();
-        let date_str = format!(
-            "{y}-{m:02}-{d:02}",
-            y = datetime.year(),
-            m = datetime.month(),
-            d = datetime.day(),
-        );
-        let time_str = format!(
-            "{h:02}:{m:02}:{s:02}",
-            h = datetime.hour(),
-            m = datetime.minute(),
-            s = datetime.second(),
-        );
-
-        format!(
-            "{pref}{level} {date} {time}{post}",
-            pref = "[".blue().bold(),
-            post = "]".blue().bold(),
-            level = self.level_color(level, self.level_token(level)),
-            date = self.level_color(level, &date_str),
-            time = self.level_color(level, &time_str),
-        )
-    }
-
-    #[rustfmt::skip]
-    fn level_token(&self, level: &log::Level) -> &str {
-        match level {
-            log::Level::Error => "ERROR",
-            log::Level::Warn  => "WARN ",
-            log::Level::Info  => "INFO ",
-            log::Level::Debug => "DEBUG",
-            log::Level::Trace => "TRACE",
-        }
-    }
-
-    fn level_color(&self, level: &log::Level, msg: &str) -> String {
-        match level {
-            log::Level::Error => msg.red().bold().to_string(),
-            log::Level::Warn => msg.yellow().bold().to_string(),
-            log::Level::Info => msg.green().to_string(),
-            log::Level::Debug => msg.bright_purple().to_string(),
-            log::Level::Trace => msg.white().to_string(),
-        }
-    }
 }
 
 fn display_hkls(
@@ -260,19 +204,7 @@ fn display_hkls(
     Ok(())
 }
 
-fn main() {
-    colog::basic_builder()
-        .filter_level(log::LevelFilter::Info)
-        .format(colog::formatter(CustomPrefix))
-        .parse_env("LOG_LEVEL")
-        .init();
-
-    let args = Cli::parse();
-
-    if !args.io.quiet {
-        info!("{}", ARTWORK)
-    }
-
+fn load_cfg_and_check_sim_neeeded(args: &Cli) -> (Config, String) {
     let cfg_str = std::fs::read_to_string(&args.cfg).unwrap_or_else(|err| {
         error!(
             "Could not open File '{}': {}",
@@ -288,7 +220,7 @@ fn main() {
         f = args.cfg.to_str().expect("config is utf8")
     );
 
-    let mut cfg = serde_yaml::from_str::<Config>(&cfg_str).unwrap_or_else(|err| {
+    let cfg = serde_yaml::from_str::<Config>(&cfg_str).unwrap_or_else(|err| {
         error!(
             "Could not parse config: '{x}': {err}",
             x = args.cfg.to_str().unwrap()
@@ -308,134 +240,56 @@ fn main() {
         io::CheckedOutput::ContinueNormally => (),
     }
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "use-gpu")] {
-            use yaxs::cuda_common::CUDA_DEVICE_INFO;
-            info!("Enabled CUDA-Based Simulation. Devices:");
-            for d in CUDA_DEVICE_INFO.iter() {
-                info!("Device name: {}
-Available memory:    {:.3} GiB
-Initial free memory: {:.3} GiB
-Memory usage limit:  {:.3} GiB
-API version:         {}
-Runtime version:     {}
-Device ID:           {}", 
-                d.device_name,
-                d.available_memory_bytes as f32 / 1e9,
-                d.init_free_memory_bytes as f32 / 1e9,
-                d.mem_limit_bytes as f32 / 1e9,
-                d.api_version,
-                d.runtime_version,
-                d.device_id
-            );
-            }
-        }
+    (cfg, cfg_hash)
+}
+
+fn main() {
+    io::init_logging();
+
+    let args = Cli::parse();
+
+    if !args.io.quiet {
+        info!("{}", ARTWORK)
     }
+
+    let (mut cfg, cfg_hash) = load_cfg_and_check_sim_neeeded(&args);
+
+    yaxs::init_gpu_if_applicable();
+
+    let root_path = args
+        .cfg
+        .parent()
+        .expect("cfg is file, must have parent dir")
+        .to_owned();
+
+    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
         cfg.simulation_parameters.seed.unwrap_or(0),
     );
-    let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
 
-    if let Some(ref mut imp) = cfg.sample_parameters.impurities {
-        // get upper and lower bound for d_hkl
-        let (lb, ub) = {
-            let (r_min, r_max) = cfg.kind.get_r_range();
-            (1.0 / r_max, 1.0 / r_min)
-        };
-        for spec in imp.iter_mut() {
-            spec.validate_d_hkl_or_adjust(lb, ub);
-        }
-    }
-
-    let mut structures = Vec::new();
-    let mut pref_o = Vec::new();
-    let mut strain_cfgs = Vec::new();
-    let mut structure_paths = Vec::new();
-    let mut composition_constraints = Vec::new();
-    let mut b_iso_params = Vec::new();
-
-    for StructureDef {
-        path,
-        preferred_orientation: po,
-        strain,
-        composition,
-        mean_ds_nm,
-        ds_eta: _,
-        mustrain: _,
-        b_iso,
-    } in cfg.sample_parameters.structures.iter()
-    {
-        let mut struct_path = args
-            .cfg
-            .parent()
-            .expect("cfg is file, must have parent dir")
-            .to_owned();
-        struct_path.push(path.clone());
-        let mut reader = BufReader::new(
-            std::fs::File::open(&struct_path)
-                .map_err(|err| {
-                    error!("Could not load cif at '{path}': {err}");
-                    std::process::exit(1);
-                })
-                .expect("we exit if error"),
-        );
-
-        let mut cif = String::new();
-        let _ = reader.read_to_string(&mut cif).unwrap();
-        let mut p = CifParser::new(&cif).with_file(struct_path.display().to_string());
-
-        let structure = Structure::try_from(&p.parse().unwrap_or_else(|err| {
-            error!("Invalid CIF Syntax for '{path}': {err}");
-            std::process::exit(1)
-        }))
-        .unwrap_or_else(|err| {
-            error!("Invalid contents for CIF '{path}': {err}");
-            std::process::exit(1);
-        });
-
-        if mean_ds_nm.upper_bound() > 200.0 {
-            error!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound());
-            std::process::exit(1);
-        }
-
-        structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
-        composition_constraints.push(composition.clone());
-        strain_cfgs.push(strain.clone());
-        b_iso_params.push(b_iso.clone());
-        let po_gen = po.as_ref().map(|x| {
-            x.try_into_generator(&mut rng).unwrap_or_else(|x| {
-                error!(
-                    "Could not get preferred orientation generator for {p}: {x}",
-                    p = struct_path.display()
-                );
-                std::process::exit(1);
-            })
-        });
-        pref_o.push(po_gen);
-        structures.push(structure);
-    }
+    let mut psd = prepare_peak_simulation(&mut cfg, &root_path, &mut rng).unwrap_or_else(|err| {
+        error!("Could not simulate peaks: {err}");
+        std::process::exit(1);
+    });
+    let structures = psd.structures.clone();
+    let structure_paths = psd.structure_paths.clone();
 
     let vf_generator = CompositionGenerator::try_new(
-        composition_constraints,
+        &mut psd.composition_constraints,
         cfg.sample_parameters.concentration_subset.clone(),
     )
-    .map_err(|err| {
+    .unwrap_or_else(|err| {
         error!("Error: Could not generate volume fractions: '{err}'");
         std::process::exit(1);
-    })
-    .expect("error is handled inside");
+    });
 
     let begin = Instant::now();
 
     let mut to_discretize = cfg
         .kind
         .simulate_peaks(
-            structures.clone().into(),
-            pref_o.into(),
-            strain_cfgs.into(),
-            structure_paths.clone().into(),
-            b_iso_params.clone().into(),
+            psd,
             cfg.sample_parameters.clone(),
             cfg.simulation_parameters.texture_measurement,
             &mut rng,
@@ -469,19 +323,17 @@ Device ID:           {}",
     let cfg_file_name = args
         .cfg
         .file_name()
-        .expect("configuration file was hopefully not moved until now.");
+        .expect("configuration file was not moved until since starting simulation.");
     let mut copied_cfg_path = args.io.output_path.clone();
     copied_cfg_path.push(cfg_file_name);
-    let _ = std::fs::copy(&args.cfg, copied_cfg_path)
-        .map_err(|err| {
-            error!(
-                "Could not copy configuration file '{infile}' to output directory '{outdir}': {err}",
-                infile = args.cfg.display(),
-                outdir = args.io.output_path.display()
-            );
-            std::process::exit(1);
-        })
-        .expect("we deal with the error inside");
+    let _ = std::fs::copy(&args.cfg, copied_cfg_path).unwrap_or_else(|err| {
+        error!(
+            "Could not copy configuration file '{infile}' to output directory '{outdir}': {err}",
+            infile = args.cfg.display(),
+            outdir = args.io.output_path.display()
+        );
+        std::process::exit(1);
+    });
 
     let params = cfg.simulation_parameters;
     let extra = io::Extra {
@@ -518,7 +370,7 @@ Device ID:           {}",
                 absorption_factors,
                 rng,
             );
-            render_and_write_jobs(gen, args, timestamp_started, extra, cfg_hash)
+            yaxs::render_and_write_jobs(gen, args.io, timestamp_started, extra, cfg_hash)
         }
         SimulationKind::EnergyDispersive(energy_dispersive) => {
             let mac_generator = MACGenerator::from_structures_energy(
@@ -537,73 +389,11 @@ Device ID:           {}",
                 mac_generator,
                 rng,
             );
-            render_and_write_jobs(gen, args, timestamp_started, extra, cfg_hash)
+            yaxs::render_and_write_jobs(gen, args.io, timestamp_started, extra, cfg_hash)
         }
     }
     .unwrap_or_else(|err| {
         error!("Could not render peak shapes: {err}");
         std::process::exit(1);
     })
-}
-
-fn render_and_write_jobs<T, G>(
-    gen: G,
-    args: Cli,
-    timestamp_started: chrono::DateTime<Utc>,
-    extra: io::Extra,
-    cfg_hash: String,
-) -> Result<(), String>
-where
-    T: Discretizer + Send + Sync + 'static,
-    G: DiscretizeJobGenerator<Item = T>,
-{
-    let begin_render = Instant::now();
-    let output_names = render_write_chunked(gen, &args.io).unwrap_or_else(|err| {
-        error!("could not write data to disk: {err}");
-        std::process::exit(1)
-    });
-
-    let elapsed = begin_render.elapsed().as_secs_f64();
-
-    let timestamp_finished: chrono::DateTime<Utc> = SystemTime::now().into();
-
-    let meta = serde_json::to_string(&SimulationMetadata {
-        timestamp_started,
-        timestamp_finished,
-        yaxs_version: env!("YAXS_VERSION").to_string(),
-        chunked: args.io.chunk_size.is_some(),
-        datafiles: output_names.chunk_names,
-        input_names: output_names.data_slot_names,
-        target_names: output_names.metadata_slot_names,
-        extra,
-        cfg_hash,
-    })
-    .expect("SimulationMetadata is serializable");
-
-    let mut path = std::path::PathBuf::new();
-    path.push(args.io.output_path);
-    path.push("meta.json");
-    info!("Writing {}", path.display());
-    let f = std::fs::File::create_new(&path).unwrap_or_else(|err| {
-        if err.kind() == ErrorKind::AlreadyExists {
-            // TODO: time of check / time of use issue?
-            error!("Could not write meta.json. Since check at start of simulation, a file was written at '{}'. Printing contents to stderr just to be sure.", path.display());
-            error!("{}", meta);
-            std::process::exit(1);
-        } else {
-            // TODO: time of check / time of use issue?
-            error!("Could not create meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-            error!("{}", meta);
-            std::process::exit(1);
-        }
-    });
-    BufWriter::new(f).write_all(meta.as_bytes()).unwrap_or_else(|err| {
-        // TODO: time of check / time of use issue?
-        error!("Could not write meta.json (at '{}'): {err}. Printing contents to stderr just to be sure.", path.display());
-        error!("{}", meta);
-        std::process::exit(1);
-    });
-
-    info!("Done rendering patterns. Took {elapsed:.2}s");
-    Ok(())
 }

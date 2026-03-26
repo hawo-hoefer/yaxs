@@ -1,6 +1,6 @@
 use log::{error, warn};
 use rand::Rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::pattern::{ImpurityPeak, Peak};
 use crate::util::deserialize_positive_parameter;
@@ -11,7 +11,7 @@ fn default_imp_peaks() -> usize {
     1
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 /// Specification for a phenomenological impurity peak
 ///
