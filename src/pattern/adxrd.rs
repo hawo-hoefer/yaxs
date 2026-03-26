@@ -11,6 +11,7 @@ use crate::math::funcs;
 use crate::noise::Noise;
 use crate::structure::Structure;
 use itertools::Itertools;
+use pyo3::{pyclass, pymethods};
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,6 +31,7 @@ pub struct ADXRDMeta {
 #[repr(C)]
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone)]
 #[serde(deny_unknown_fields)]
+#[pyclass(from_py_object)]
 pub struct EmissionLine {
     // wavelength in amstrong
     pub wavelength_ams: f64,

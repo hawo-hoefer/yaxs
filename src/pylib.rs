@@ -6,17 +6,15 @@ pub mod yaxs {
     use std::path::PathBuf;
     use std::sync::mpsc::Receiver;
     use std::sync::{Arc, Mutex};
-    use std::time::SystemTime;
 
     use crate::cfg::{
-        prepare_peak_simulation, AngleDispersive, Config, Parameter, SampleParameters,
-        SimulationKind, SimulationParameters, StrainCfg, StructureDef,
+        prepare_peak_simulation, AngleDispersive, Config, InstrumentParameterCfg, Parameter,
+        SampleParameters, SimulationKind, SimulationParameters, StrainCfg, StructureDef,
     };
     use crate::io::{PatternMeta, WriteJob};
     use crate::pattern::adxrd::{self, EmissionLine, PrecomputedLACs};
     use crate::pattern::CompositionGenerator;
     use crate::{init_gpu_if_applicable, io};
-    use chrono::Utc;
     use itertools::Itertools;
     use log::{debug, error};
     use ndarray::ArrayD;
@@ -26,7 +24,7 @@ pub mod yaxs {
     use pyo3::{pyclass, pyfunction, pymethods, Bound, PyResult, Python};
     use rand::SeedableRng;
 
-    #[pyclass(from_py_object)]
+    #[pyclass(from_py_object, name = "Structure")]
     #[derive(Clone, Debug)]
     pub struct PyStructure {
         #[pyo3(get, set)]
@@ -53,7 +51,7 @@ pub mod yaxs {
         }
     }
 
-    #[pyclass(from_py_object)]
+    #[pyclass(from_py_object, name = "Sample")]
     #[derive(Clone, Debug)]
     pub struct PySample {
         #[pyo3(get, set)]
@@ -74,9 +72,115 @@ pub mod yaxs {
 
     #[pyclass(from_py_object)]
     #[derive(Clone, Debug)]
+    pub struct InstrumentParams {
+        #[pyo3(get, set)]
+        pub u: PyParameter,
+        #[pyo3(get, set)]
+        pub v: PyParameter,
+        #[pyo3(get, set)]
+        pub w: PyParameter,
+        #[pyo3(get, set)]
+        pub x: PyParameter,
+        #[pyo3(get, set)]
+        pub y: PyParameter,
+        #[pyo3(get, set)]
+        pub z: PyParameter,
+    }
+
+    #[pyclass(from_py_object, name = "EmissionLine")]
+    #[derive(Clone, Debug)]
+    pub struct PyEmissionLine {
+        #[pyo3(get, set)]
+        wavelength: f64,
+        #[pyo3(get, set)]
+        weight: f64,
+    }
+
+    #[pymethods]
+    impl PyEmissionLine {
+        #[new]
+        pub fn new(wavelength: f64, weight: f64) -> Self {
+            Self { wavelength, weight }
+        }
+
+        #[staticmethod]
+        pub fn mo_ka() -> (Self, Self) {
+            (Self::new(0.7093, 0.6533), Self::new(0.713574, 0.3467))
+        }
+
+        #[staticmethod]
+        pub fn cu_ka() -> (Self, Self) {
+            (Self::new(1.5406, 1.0), Self::new(1.5445, 0.5206))
+        }
+    }
+
+    #[pymethods]
+    impl InstrumentParams {
+        #[new]
+        pub fn new(
+            u: PyParameter,
+            v: PyParameter,
+            w: PyParameter,
+            x: PyParameter,
+            y: PyParameter,
+            z: PyParameter,
+        ) -> Self {
+            Self { u, v, w, x, y, z }
+        }
+
+        #[staticmethod]
+        pub fn zero() -> Self {
+            Self {
+                u: PyParameter::Fixed(0.0),
+                v: PyParameter::Fixed(0.0),
+                w: PyParameter::Fixed(0.0),
+                x: PyParameter::Fixed(0.0),
+                y: PyParameter::Fixed(0.0),
+                z: PyParameter::Fixed(0.0),
+            }
+        }
+    }
+
+    #[pyclass(from_py_object, name="Parameter")]
+    #[derive(Clone, Debug)]
+    pub enum PyParameter {
+        Fixed(f64),
+        Range(f64, f64),
+    }
+
+    #[pymethods]
+    impl PyParameter {
+        #[staticmethod]
+        pub fn fixed(v: f64) -> PyParameter {
+            return PyParameter::Fixed(v);
+        }
+
+        #[staticmethod]
+        pub fn range(lo: f64, hi: f64) -> PyResult<PyParameter> {
+            if lo >= hi {
+                return Err(PyValueError::new_err(format!(
+                    "lower bound must be smaller than upper bound. got {lo} >= {hi}"
+                )));
+            }
+
+            return Ok(PyParameter::Range(lo, hi));
+        }
+    }
+
+    impl Into<Parameter<f64>> for PyParameter {
+        fn into(self) -> Parameter<f64> {
+            match self {
+                PyParameter::Fixed(f) => Parameter::Fixed(f),
+                PyParameter::Range(lo, hi) => Parameter::Range(lo, hi),
+            }
+        }
+    }
+
+    #[pyclass(from_py_object, name = "Instrument")]
+    #[derive(Clone, Debug)]
     pub struct PyInstrument {
-        instprms: [f64; 6],              // GSAS-II u, v, w, x, y, z
-        emission_lines: Vec<(f64, f64)>, //
+        instprms: InstrumentParams,          // GSAS-II u, v, w, x, y, z
+        emission_lines: Vec<PyEmissionLine>, //
         goniometer_radius_mm: f64,
         two_theta_range_deg: (f64, f64),
         n_steps: usize,
@@ -86,8 +190,8 @@ pub mod yaxs {
     impl PyInstrument {
         #[new]
         fn new(
-            instprms: [f64; 6],
-            emission_lines: Vec<(f64, f64)>,
+            instprms: InstrumentParams,
+            emission_lines: Vec<PyEmissionLine>,
             goniometer_radius_mm: f64,
             two_theta_range_deg: (f64, f64),
             n_steps: usize,
@@ -122,8 +226,6 @@ pub mod yaxs {
         rx: Receiver<WriteJob<PathBuf>>,
         out: Arc<Mutex<HashMap<String, Vec<ArrayD<f32>>>>>,
     ) -> Option<(Vec<String>, Vec<String>)> {
-        let mut chunks_done = 0;
-
         let mut meta_names = Vec::new();
         let input_names = vec![String::from("intensities")];
 
@@ -243,8 +345,8 @@ pub mod yaxs {
             kind: SimulationKind::AngleDispersive(AngleDispersive {
                 emission_lines: emission_lines
                     .iter()
-                    .map(|(wavelength_ang, weight)| EmissionLine {
-                        wavelength_ams: *wavelength_ang,
+                    .map(|PyEmissionLine { wavelength, weight }| EmissionLine {
+                        wavelength_ams: *wavelength,
                         weight: *weight,
                     })
                     .collect(),
@@ -256,8 +358,16 @@ pub mod yaxs {
                     sample.displacement_mu_m.0,
                     sample.displacement_mu_m.1,
                 )),
-                instrument_parameters: None, // TODO: for now
-                background: None,            // TODO: for now
+                instrument_parameters: Some(InstrumentParameterCfg {
+                    kind: crate::cfg::InstprmKind::GSAS,
+                    u: instrument.instprms.u.into(),
+                    v: instrument.instprms.v.into(),
+                    w: instrument.instprms.w.into(),
+                    x: instrument.instprms.x.into(),
+                    y: instrument.instprms.y.into(),
+                    z: instrument.instprms.z.into(),
+                }),
+                background: None, // TODO: for now
             }),
             sample_parameters: SampleParameters {
                 composition_kind: crate::cfg::CompositionKind::ByMass,
@@ -278,9 +388,6 @@ pub mod yaxs {
         };
 
         init_gpu_if_applicable();
-
-        let timestamp_started: chrono::DateTime<Utc> = SystemTime::now().into();
-        let cfg_hash = serde_yaml::to_string(&cfg).expect("cfg is serializable");
 
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(
             cfg.simulation_parameters.seed.unwrap_or(0),
@@ -377,7 +484,7 @@ pub mod yaxs {
                         let output_names = crate::io::cpu::render_write_chunked(gen, &io_opts, io::io_thread_fn);
                     }
                 }
-                let output_names = output_names.map_err(|err| {
+                let _ = output_names.map_err(|err| {
                     PyRuntimeError::new_err(format!("Error writing data to disk: {err}"))
                 })?;
             }
