@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use rand::Rng;
 
+use super::brent::brent;
 use super::linalg::Vec4;
 use crate::math::linalg::{ColVec, Mat};
 
@@ -60,6 +61,7 @@ pub struct BinghamDistribution<const N: usize> {
     a: Mat<f64, N, N>,
     k: ColVec<f64, N>,
     acg_envelope: ACGDistribution<N>,
+    ln_mbstar: f64,
 }
 
 /// Angular Centered Gaussian Distribution
@@ -80,18 +82,19 @@ impl<const N: usize> ACGDistribution<N> {
     ///
     /// * `x`: point to compute pdf for. Is assumed to have length 1 (/ be on $S^{N-1}$)
     pub fn pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        x.transpose()
-            .matmul(&self.omega)
-            .matmul(x)
-            .item()
-            .powf(-(N as f64) / 2.0f64)
+        self.log_pdf_unnorm(x).exp()
     }
 
     /// compute the logarithm of the unnormalized probability density function
     ///
     /// * `x`: value n $S^{N-1}$, needs to have length 1
     pub fn log_pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        self.pdf_unnorm(x).ln()
+        // pdf = (x.T A x)^(-N / 2)
+        //
+        // log_pdf = log((x.T A x)^(-N / 2))
+        //         = -N / 2 * log(x.T A x)
+
+        (-(N as f64) / 2.0f64) * x.transpose().matmul(&self.omega).matmul(x).item()
     }
 
     /// Sample from Angular Centered Gaussian distribution
@@ -111,10 +114,11 @@ impl<const N: usize> ACGDistribution<N> {
         }
 
         // multivariate gaussian distributed
-        let x = self.l.matmul(&v);
+        let mut x = self.l.matmul(&v);
         // map onto sphere
 
-        x.normalize()
+        x.normalize_inplace();
+        x
     }
 }
 
@@ -131,11 +135,31 @@ impl<const N: usize> BinghamDistribution<N> {
     /// * `u`: orthonormal basis of eigenvectors of decomposition
     pub fn try_new(k: ColVec<f64, N>, u: Mat<f64, N, N>) -> Result<Self, String> {
         let u_t = u.transpose();
-        let a = u_t.matmul_diag(&k).matmul(&u);
-        let omega = Mat::<f64, N, N>::identity() + a.scale(2.0f64);
-        let acg_envelope = ACGDistribution::new(omega)?;
 
-        Ok(BinghamDistribution { a, acg_envelope, k })
+        // compute b through solving the equation defined in Kent 2013
+        // sum_i^q 1 / (b + 2 lambda_i) = 1
+        let f = |x: f64| k.iter_values().map(|b| (x + 2.0 * b).recip()).sum::<f64>() - 1.0;
+        let b = brent(f, 0.0, (2 * N) as f64, 1e-6, 200).map_err(|err| {
+            format!("Could not compute 'b'-Constant for bingham distribution sampling: {err}")
+        })?;
+
+        let a = u_t.matmul_diag(&k).matmul(&u);
+        let omega = Mat::<f64, N, N>::identity() + a.scale(2.0f64 / b);
+
+        let l = omega.cholesky_decompose().expect("is spd");
+        let lt_inv = l.transpose().tri_lo_inverse();
+        let l_inv = l.tri_lo_inverse();
+        let omega_inv = lt_inv.matmul(&l_inv);
+        let acg_envelope = ACGDistribution::new(omega_inv)?;
+
+        let dim = N as f64;
+        let ln_mbstar = (-(dim - b) / 2.0) + dim / 2.0 * (dim / b).ln();
+        Ok(BinghamDistribution {
+            a,
+            acg_envelope,
+            k,
+            ln_mbstar,
+        })
     }
 
     pub fn ks(&self) -> &ColVec<f64, N> {
@@ -146,7 +170,7 @@ impl<const N: usize> BinghamDistribution<N> {
     ///
     /// * `x`: value n $S^{N-1}$, needs to have length 1
     pub fn log_pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        x.transpose().matmul(&self.a).matmul(x).item()
+        -x.transpose().matmul(&self.a).matmul(x).item()
     }
 
     /// compute the unnormalized probability density function
@@ -167,17 +191,17 @@ impl<const N: usize> BinghamDistribution<N> {
             use std::f64::consts::{E, TAU};
             let s = self.acg_envelope.sample(rng);
             let w: f64 = rng.random_range(0.0..=1.0);
-            let m = (TAU * E) * (3.0 / (2.0 * E)).powf(1.5) / GAMMA_FN_THREE_HALFS;
 
             // from rejection sampling method
             // w < f_bingham / (m * f_acg)
-            // log(w) < log(f_bingham / (m * f_acg))
-            // log(w) < log(f_bingham) - log(m) - log(f_acg)
+            // w * m < f_bingham / f_acg
+            // log(w * m) < log(f_bingham / f_acg)
+            // log(w * m) < log(f_bingham) - log(f_acg)
             // log(w) + log(m) < log(f_bingham) - log(f_acg)
 
             let log_f_acg = self.acg_envelope.log_pdf_unnorm(&s);
             let log_f_bingham = self.log_pdf_unnorm(&s);
-            if w.ln() + m.ln() < log_f_bingham - log_f_acg {
+            if w.ln() + self.ln_mbstar < log_f_bingham - log_f_acg {
                 // accept sample
                 return s;
             }
@@ -458,4 +482,34 @@ pub fn uniform_sample_no_replacement_knuth(
         }
     }
     samples
+}
+
+#[cfg(test)]
+mod test {
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoshiro128PlusPlus;
+
+    use crate::math::linalg::{Mat4, Vec4};
+
+    use super::BinghamDistribution;
+
+    #[test]
+    fn bingham() {
+        let dist =
+            BinghamDistribution::try_new(Vec4::new(10000.0, 100.0, 10.0, 0.0), Mat4::identity())
+                .expect("valid parameters");
+
+        let mut rng = Xoshiro128PlusPlus::seed_from_u64(1234);
+
+        println!("[");
+        for _ in 0..512 {
+            let s = dist.sample(&mut rng);
+            println!(
+                "  [{:12.8}, {:12.8}, {:12.8}, {:12.8}],",
+                s[0], s[1], s[2], s[3]
+            );
+        }
+        println!("]");
+        panic!()
+    }
 }

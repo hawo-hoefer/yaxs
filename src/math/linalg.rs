@@ -7,7 +7,7 @@ use serde::de::{self, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 
-use num_traits::{Float, One, Zero};
+use num_traits::{Float, FloatConst, One, Zero};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 #[repr(C)]
@@ -313,6 +313,17 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         Self { v }
     }
 
+    pub fn from_fn(func: impl Fn(usize, usize) -> T) -> Self {
+        let mut res: Mat<T, ROWS, COLS> = unsafe { MaybeUninit::uninit().assume_init() };
+        for i in 0..ROWS {
+            for j in 0..COLS {
+                res[(i, j)] = func(i, j);
+            }
+        }
+
+        res
+    }
+
     /// Get a copy of a row
     ///
     /// * `idx`: row index
@@ -575,6 +586,15 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// Perform Matrix Multiplication with diagonal matrix
     ///
     /// * `other`: diagonal matrix entries represented as a column vector
+    ///
+    /// ```
+    /// use yaxs::math::linalg::{Mat, ColVec};
+    /// let m = Mat::from_cols([[1, 2], [3, 4]]);
+    /// let v = ColVec::from_col([1, 2]);
+    ///
+    /// let mul = m.matmul_diag(&v);
+    /// assert_eq!(mul, Mat::from_cols([[1, 2], [6, 8]]))
+    /// ```
     pub fn matmul_diag(&self, other: &ColVec<T, ROWS>) -> Self
     where
         T: MulAssign<T> + Clone + Copy,
@@ -586,7 +606,7 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         let mut ret = self.clone();
         for row in 0..ROWS {
             for col in 0..COLS {
-                ret[(row, col)] *= other[row]
+                ret[(row, col)] *= other[col]
             }
         }
         ret
@@ -738,6 +758,53 @@ impl<T, const N: usize> Mat<T, N, N> {
             }
         }
         Ok(ret)
+    }
+
+    /// assuming that self is lower triangular
+    /// calculate the inverse
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m: Mat<f64, _, _> = Mat::from_cols([[1.0, 2.0, 3.0], [0.0, 0.3, 0.8], [0.0, 0.0, 1.0]]);
+    /// let m_inv = m.tri_lo_inverse();
+    /// let ident = m.matmul(&m_inv);
+    ///
+    /// println!("{}", ident);
+    ///
+    /// for i in 0..3 {
+    ///     for j in 0..3 {
+    ///         if i != j {
+    ///             assert!(ident[(i, j)].abs() < 1e-3);
+    ///         } else {
+    ///             assert!((ident[(i, j)] - 1.0).abs() < 1e-3);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    pub fn tri_lo_inverse(&self) -> Mat<T, N, N>
+    where
+        T: One + Zero + Copy + Float + AddAssign<T> + MulAssign<T>,
+    {
+        let mut pows = Mat::from_fn(|row, col| {
+            if row <= col {
+                return T::zero();
+            }
+
+            self[(row, col)] / self[(row, row)]
+        });
+
+        let diag: ColVec<T, N> = ColVec::from_fn(|idx, _| self[(idx, idx)].recip());
+
+        let mut q_inv = &Self::identity() - &pows;
+
+        for k in 2..N {
+            pows = pows.matmul(&pows);
+            q_inv = &q_inv + &(&pows * (-T::one()).powi(k as i32));
+        }
+
+        q_inv.matmul_diag(&diag)
     }
 }
 
@@ -939,9 +1006,9 @@ where
     }
 }
 
-impl<T, V, const N: usize, const M: usize> Sub<Self> for Mat<T, M, N>
+impl<T, V, const N: usize, const M: usize> Sub for Mat<T, M, N>
 where
-    for<'a> &'a T: Sub<Output = V>,
+    T: Sub<Output = V> + Clone + Copy,
 {
     type Output = Mat<V, M, N>;
 
@@ -954,16 +1021,16 @@ where
             .zip(self.iter_values())
             .zip(rhs.iter_values())
         {
-            *retv = sv - rhsv;
+            *retv = *sv - *rhsv;
         }
 
         ret
     }
 }
 
-impl<T, V, const N: usize, const M: usize> Sub<Self> for &Mat<T, M, N>
+impl<T, V, const N: usize, const M: usize> Sub for &Mat<T, M, N>
 where
-    for<'a> &'a T: Sub<Output = V>,
+    T: Sub<Output = V> + Clone + Copy,
 {
     type Output = Mat<V, M, N>;
 
@@ -976,7 +1043,7 @@ where
             .zip(self.iter_values())
             .zip(rhs.iter_values())
         {
-            *retv = sv - rhsv;
+            *retv = *sv - *rhsv;
         }
 
         ret
