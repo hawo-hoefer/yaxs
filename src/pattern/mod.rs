@@ -1,21 +1,22 @@
 use std::sync::Arc;
 
 use itertools::Itertools;
-use log::{warn};
+use log::warn;
 use ndarray::{Array2, Array4};
 use rand::Rng;
 use serde::Deserialize;
 
 use crate::absorption::MACData;
 use crate::background::Background;
+use crate::domain_size::DomainSize;
 use crate::io::PatternMeta;
-use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
-    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
-    scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
+    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, C_M_S, H_EV_S,
+    SQRT_8_LN_2,
 };
 use crate::noise::Noise;
+use crate::structure::Peak;
 
 use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
@@ -495,19 +496,6 @@ pub trait Discretizer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-#[repr(C)]
-/// A diffraction peak with d_hkl in amstrong and i_hkl in arbitrary units
-///
-/// * `d_hkl`: crystal lattice distance in amstrong
-/// * `i_hkl`: intensity in arbitrary units
-/// * `hkls`: miller indices corresponding to peak
-pub struct Peak {
-    pub d_hkl: f64,
-    pub i_hkl: f64,
-    pub hkls: Vec<Vec3<i16>>,
-}
-
 pub struct Peaks {
     pub peaks: Box<[Peak]>,
     pub struct_idx: usize,
@@ -628,8 +616,9 @@ fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
 
 impl Peak {
     pub fn get_adxrd_theta_rad(&self, wavelength_ang: f64) -> f64 {
-        (wavelength_ang / (2.0 * self.d_hkl)).asin()
+        (wavelength_ang / (2.0 * *self.d_hkl)).asin()
     }
+
     /// Get ADXRD Peak location, intensity and fwhm
     ///
     /// * `wavelength_nm`: X-ray wavelength
@@ -644,7 +633,7 @@ impl Peak {
         wavelength_nm: f64,
         instrument_parameters: &InstrumentParameters,
         absorption_coefficient: f64,
-        mean_ds_nm: f64,
+        domain_size: &DomainSize,
         ds_eta: f64,
         mustrain: f64,
         mustrain_eta: f64,
@@ -673,7 +662,7 @@ impl Peak {
 
         // use names from GSAS for now
         // size and microstrain broadening fwhms
-        let sgam = scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
+        let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, &self.hkl);
         let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
 
         // FWHM = sqrt(8 ln 2) sigma
@@ -697,7 +686,7 @@ impl Peak {
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
         let peak_weight =
-            (absorption_coefficient * self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
+            (absorption_coefficient * *self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
                 as f32;
 
         PeakRenderParams {
@@ -718,7 +707,7 @@ impl Peak {
         &self,
         theta_rad: f64,
         f_lorentz: f64,
-        mean_ds_nm: f64,
+        domain_size: &DomainSize,
         ds_eta: f64,
         mustrain: f64,
         mustrain_eta: f64,
@@ -740,7 +729,7 @@ where {
         // eV * m * (m^-10)
         // ev * e-10
         // g_hkl in ams = m^-10
-        let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+        let e_kev = hc / (2.0 * *self.d_hkl * theta_rad.sin());
 
         let absorption = mac_data
             .interpolate(e_kev)
@@ -756,12 +745,7 @@ where {
             * weight
             / (2.0 * *absorption);
 
-        let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
-        // Gerward, Leif, S. Mo/rup, and H. Topso/e.
-        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns."
-        // Journal of Applied Physics 47.3 (1976): 822-825.
-        //
-        // DOI: <https://doi.org/10.1063/1.322714>
+        let size_broad = domain_size.edxrd_broadening(theta_rad, &self.hkl);
         let mustrain_broad = mustrain * e_kev * 2.0;
 
         let g_fwhm = ((1.0 - ds_eta) * size_broad * size_broad

@@ -366,7 +366,11 @@ __global__ void compute_beam_to_domain(Quaternion *beam_to_bingham, Quaternion *
  */
 bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations, float *i_hkls, float kappa,
                                       float norm_const) {
+  cu_lerr(cudaSetDevice(0), "setting cuda device");
+  device_id = 0;
+
   infof("Beginning CUDA texture weight computation");
+
 
   size_t stride = ffidata.n_chis * ffidata.n_phis;
 

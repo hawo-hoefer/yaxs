@@ -1,6 +1,5 @@
 use std::ffi::{c_char, c_int, CStr};
 use std::slice;
-use std::sync::{Arc, Condvar, Mutex};
 
 use lazy_static::lazy_static;
 use log::{debug, error, info};
