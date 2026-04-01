@@ -820,6 +820,23 @@ where
     }
 }
 
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul<T> for &Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        let mut ret = self.clone();
+
+        for r in ret.iter_values_mut() {
+            *r = *r * rhs
+        }
+
+        ret
+    }
+}
+
 impl<T, const ROWS: usize, const COLS: usize> Div for Mat<T, ROWS, COLS>
 where
     T: Div<T, Output = T> + Clone + Copy,
