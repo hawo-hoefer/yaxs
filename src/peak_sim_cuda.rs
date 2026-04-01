@@ -94,7 +94,7 @@ pub fn single_phase_weight_hkls(
         .collect_vec();
 
     let n_weights = hkls.len() * alignments_per_measurement;
-    let required_allocation = (n_weights as isize - i_hkls.capacity() as isize).max(0) as usize;
+    let required_allocation = (n_weights as isize - i_hkls.len() as isize).max(0) as usize;
     i_hkls.reserve_exact(required_allocation);
 
     unsafe { i_hkls.set_len(n_weights) };
