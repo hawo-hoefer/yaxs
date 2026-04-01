@@ -167,6 +167,7 @@ pub struct Extra {
     pub max_phases: usize,
     pub texture: Option<TextureMeasurement>,
     pub encoding: Vec<String>,
+    pub n_patterns: usize,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -486,6 +486,7 @@ Device ID:           {}",
 
     let params = cfg.simulation_parameters;
     let extra = io::Extra {
+        n_patterns: params.n_patterns,
         max_phases: cfg.sample_parameters.structures.len(),
         texture: params.texture_measurement,
         encoding: cfg
