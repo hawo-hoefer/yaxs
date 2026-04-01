@@ -483,33 +483,4 @@ pub fn uniform_sample_no_replacement_knuth(
     }
     samples
 }
-
-#[cfg(test)]
-mod test {
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoshiro128PlusPlus;
-
-    use crate::math::linalg::{Mat4, Vec4};
-
-    use super::BinghamDistribution;
-
-    #[test]
-    fn bingham() {
-        let dist =
-            BinghamDistribution::try_new(Vec4::new(10000.0, 100.0, 10.0, 0.0), Mat4::identity())
-                .expect("valid parameters");
-
-        let mut rng = Xoshiro128PlusPlus::seed_from_u64(1234);
-
-        println!("[");
-        for _ in 0..512 {
-            let s = dist.sample(&mut rng);
-            println!(
-                "  [{:12.8}, {:12.8}, {:12.8}, {:12.8}],",
-                s[0], s[1], s[2], s[3]
-            );
-        }
-        println!("]");
-        panic!()
-    }
-}
+// TODO: figure out a way to test the bingham distribution etc
