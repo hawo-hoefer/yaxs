@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::iter::Sum;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub};
@@ -7,7 +8,7 @@ use serde::de::{self, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 
-use num_traits::{Float, FloatConst, One, Zero};
+use num_traits::{ConstOne, ConstZero, Float, FloatConst, One, Zero};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 #[repr(C)]
@@ -70,7 +71,7 @@ impl<T> Mat<T, 2, 2> {
     }
 }
 
-impl<T> Mat<T, 3, 3> {
+impl<T> Mat3<T> {
     /// Compute the determinant
     pub fn det(&self) -> T
     where
@@ -107,6 +108,22 @@ impl<T> Mat<T, 3, 3> {
         ])
     }
 
+    /// create a symmetric matrix from the diagonal
+    /// and lower triangular elements
+    ///
+    ///
+    ///
+    pub fn sym_from_tri_lo(a11: T, a22: T, a33: T, a21: T, a31: T, a32: T) -> Self
+    where
+        T: Clone,
+    {
+        Self::from_rows([
+            [a11, a21.clone(), a31.clone()],
+            [a21.clone(), a22, a32.clone()],
+            [a31, a32, a33],
+        ])
+    }
+
     /// try to invert self
     ///
     /// ```
@@ -139,7 +156,7 @@ impl<T> Mat<T, 3, 3> {
 
     pub fn extend_to_homog(&self) -> Mat4<T>
     where
-        T: Clone + Copy + Zero + One,
+        T: Clone + Copy + ConstZero + ConstOne,
     {
         let mut ret = Mat4::zeros();
 
@@ -153,6 +170,180 @@ impl<T> Mat<T, 3, 3> {
 
         ret
     }
+
+    /// Assuming that self is symmetric, compute the eigenvalues
+    /// using the method described in
+    ///     Smith, Oliver K. "Eigenvalues of a symmetric 3× 3 matrix."
+    ///     Communications of the ACM 4.4 (1961): 168.
+    ///     <https://doi.org/10.1145/355578.366316>
+    pub fn symmetric_eigvals(&self) -> [T; 3]
+    where
+        T: Float + FloatConst + Copy + Sum<T> + AddAssign<T> + ConstZero + ConstOne,
+        for<'a> &'a T: Sub<Output = T> + Mul<Output = T>,
+    {
+        if self.is_diag() {
+            return [self[(0, 0)], self[(1, 1)], self[(2, 2)]];
+        }
+
+        let two = T::one() + T::one();
+        let three = two + T::one();
+        let six = two * three;
+
+        let m = self.trace() / three;
+        let a_sub_m_i = self - &(Self::identity() * m);
+        let p: T = a_sub_m_i.iter_values().map(|x| x * x).sum::<T>() / six;
+        let q = a_sub_m_i.det() / two;
+        let det = (p.powi(3) - q.powi(2)).sqrt() / q;
+        let phi = det.atan() / three;
+
+        [
+            m + two * p.sqrt() * phi.cos(),
+            m - p.sqrt() * (phi.cos() + three.sqrt() * phi.sin()),
+            m - p.sqrt() * (phi.cos() - three.sqrt() * phi.sin()),
+        ]
+    }
+
+    pub fn symmetric_eigendecomp(&self) -> ([T; 3], Mat3<T>)
+    where
+        T: Float + FloatConst + Copy + ConstZero + ConstOne + AddAssign<T>,
+        for<'a> &'a T: Sub<Output = T> + PartialOrd,
+    {
+        let compute_ev_0 = |a: &Mat3<T>, eval: T| -> Vec3<T> {
+            let r = a - &(Mat3::identity() * eval);
+
+            let c = [
+                r.row(0).cross(&r.row(1)),
+                r.row(0).cross(&r.row(2)),
+                r.row(1).cross(&r.row(2)),
+            ];
+            let maxidx = c
+                .iter()
+                .map(|x| x.magnitude())
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).expect("not nan"))
+                .expect("at least one element")
+                .0;
+
+            return c[maxidx].normalize();
+        };
+
+        let compute_ev_1 = |a: &Mat3<T>, evec1: &Vec3<T>, eval2: T| {
+            let (u, v) = compute_orthogonal_complement(&evec1);
+            let j = Mat::from_col_vecs([u.clone(), v.clone()]);
+            let mut m = j
+                .transpose()
+                .matmul(&(a - &Mat::from_diag([eval2, eval2, eval2])))
+                .matmul(&j);
+
+            let mabs = m.map(|x| x.abs());
+
+            if mabs[(0, 0)] >= mabs[(1, 1)] {
+                if mabs[(0, 0)].max(mabs[(0, 1)]).is_zero() {
+                    return u;
+                }
+
+                if mabs[(0, 0)] >= mabs[(0, 1)] {
+                    m[(0, 1)] = m[(0, 1)] / m[(0, 0)];
+                    m[(0, 0)] = (T::ONE + m[(0, 1)] * m[(0, 1)]).sqrt().recip();
+                    m[(0, 1)] = m[(0, 1)] * m[(0, 0)];
+                } else {
+                    m[(0, 0)] = m[(0, 0)] / m[(0, 1)];
+                    m[(0, 1)] = (T::ONE + m[(0, 0)] * m[(0, 0)]).sqrt().recip();
+                    m[(0, 0)] = m[(0, 0)] * m[(0, 1)];
+                }
+                return u * m[(0, 1)] - v * m[(0, 0)];
+            } else {
+                if mabs[(1, 1)].max(mabs[(0, 1)]).is_zero() {
+                    return u;
+                }
+
+                if m[(1, 1)] >= m[(0, 1)] {
+                    m[(0, 1)] = m[(0, 1)] / m[(1, 1)];
+                    m[(1, 1)] = (T::ONE + m[(0, 1)] * m[(0, 1)]).sqrt().recip();
+                    m[(0, 1)] = m[(0, 1)] * m[(1, 1)];
+                } else {
+                    m[(1, 1)] = m[(1, 1)] / m[(0, 1)];
+                    m[(0, 1)] = (T::ONE + m[(1, 1)] * m[(1, 1)]).sqrt().recip();
+                    m[(1, 1)] = m[(1, 1)] * m[(0, 1)];
+                }
+                return u * m[(1, 1)] - v * m[(0, 1)];
+            }
+        };
+
+        // precondition the matrix
+        let max_el = self
+            .iter_values()
+            .map(|x| x.abs())
+            .max_by(|a, b| a.partial_cmp(b).expect("not nan"))
+            .expect("more than one element in iterator");
+
+        if max_el.is_zero() {
+            return ([T::zero(); 3], Mat::identity());
+        }
+
+        let a = self * max_el.recip();
+
+        let three = T::ONE + T::ONE + T::ONE;
+        let two = T::ONE + T::ONE;
+        let six = two * three;
+
+        let norm = a[(0, 1)].powi(2) + a[(0, 2)].powi(2) + a[(1, 2)].powi(2);
+        if !norm.is_zero() {
+            let q = a.trace() / three;
+            let b = &a - &(Mat3::identity() * q);
+            let p = ((b[(0, 0)].powi(2) + b[(1, 1)].powi(2) + b[(2, 2)].powi(2) + norm * two)
+                / six)
+                .sqrt();
+
+            let det = b.det() / p.powi(3);
+
+            let half_det = (det / two).clamp(-T::ONE, T::ONE);
+
+            let angle = half_det.acos() / three;
+            let beta2 = angle.cos() * two;
+            let beta0 = (angle + T::FRAC_PI_3() * two).cos() * two;
+            let beta1 = -(beta0 + beta2);
+
+            let mut evals = [q + p * beta0, q + p * beta1, q + p * beta2];
+
+            let evecs = if half_det.is_sign_positive() {
+                let evec2 = compute_ev_0(&a, evals[2]).normalize();
+                let evec1 = compute_ev_1(&a, &evec2, evals[1]).normalize();
+                let evec0 = evec1.cross(&evec2);
+                [evec0, evec1, evec2]
+            } else {
+                let evec0 = compute_ev_0(&a, evals[0]).normalize();
+                let evec1 = compute_ev_1(&a, &evec0, evals[1]).normalize();
+                let evec2 = evec0.cross(&evec1);
+                [evec0, evec1, evec2]
+            };
+
+            evals[0] = evals[0] * max_el;
+            evals[1] = evals[1] * max_el;
+            evals[2] = evals[2] * max_el;
+
+            return (evals, Mat3::from_col_vecs(evecs));
+        } else {
+            // diagonal matrix
+            return ([self[(0, 0)], self[(1, 1)], self[(2, 2)]], Mat::identity());
+        }
+    }
+}
+
+pub fn compute_orthogonal_complement<T>(w: &Vec3<T>) -> (Vec3<T>, Vec3<T>)
+where
+    T: Float,
+{
+    // compute right handed orthongonal complement set of first eigenvector
+    let u = if w[0].abs() > w[1].abs() {
+        Vec3::new(-w[2], T::zero(), w[0])
+    } else {
+        Vec3::new(T::zero(), w[2], -w[1])
+    }
+    .normalize();
+    let v = w.cross(&u);
+
+    (u, v)
 }
 
 impl<T, const ROWS: usize> std::ops::IndexMut<usize> for ColVec<T, ROWS> {
@@ -163,6 +354,14 @@ impl<T, const ROWS: usize> std::ops::IndexMut<usize> for ColVec<T, ROWS> {
 
 impl<T, const ROWS: usize> ColVec<T, ROWS> {
     /// Normalize the vector so that the magnitude is T::one()
+    ///
+    /// ```
+    /// use yaxs::math::linalg::ColVec;
+    ///
+    /// let v = ColVec::from_col([1.0, 2.0, 3.0]);
+    /// let v_ = v.normalize();
+    /// assert_eq!(v_.magnitude(), 1.0);
+    /// ```
     pub fn normalize(&self) -> Self
     where
         T: Float,
@@ -200,10 +399,15 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
     }
 
     /// Compute magnitude (L2-Norm) of the vector
+    ///
     /// ```
     /// use yaxs::math::linalg::ColVec;
-    /// let vec = ColVec::from_col([1.0f64, 1.0f64, 1.0f64]);
-    /// assert_eq!(vec.magnitude(), 3.0f64.sqrt())
+    ///
+    /// let v = ColVec::from_col([1.0f64, 1.0f64, 1.0f64]);
+    /// assert_eq!(v.magnitude(), 3.0f64.sqrt());
+    ///
+    /// let v = ColVec::from_col([5.0f64, 77f64, 1.1832f64]);
+    /// assert_eq!(v.magnitude(), 77.17123792087308);
     /// ```
     pub fn magnitude(&self) -> T
     where
@@ -228,6 +432,16 @@ impl<T, const ROWS: usize> ColVec<T, ROWS> {
         other: &'a mut Self,
     ) -> impl Iterator<Item = (&'a mut T, &'a mut T)> {
         self.iter_values_mut().zip(other.iter_values_mut())
+    }
+
+    pub fn unit(pos: usize) -> Self
+    where
+        T: ConstZero + ConstOne + Copy,
+    {
+        let mut f = Self::zeros();
+        f[pos] = T::ONE;
+
+        f
     }
 }
 
@@ -363,8 +577,9 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     ///     [3, 4, 5],
     /// ]);
     ///
-    /// assert_eq!(m.row(0), ColVec::from_cols([[1, 2, 3]]));
-    /// assert_eq!(m.row(1), ColVec::from_cols([[3, 4, 5]]));
+    /// assert_eq!(m.col(0), ColVec::from_col([1, 3]));
+    /// assert_eq!(m.col(1), ColVec::from_col([2, 4]));
+    /// assert_eq!(m.col(2), ColVec::from_col([3, 5]));
     /// ```
     pub fn col(&self, idx: usize) -> ColVec<T, ROWS>
     where
@@ -373,8 +588,8 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         // SAFETY: we set the elements right after
         let mut ret: Mat<_, ROWS, 1> = unsafe { MaybeUninit::uninit().assume_init() };
 
-        for t in 0..COLS {
-            ret[t] = self[(idx, t)];
+        for t in 0..ROWS {
+            ret[t] = self[(t, idx)];
         }
 
         ret
@@ -399,6 +614,35 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         let mut res: Mat<T, ROWS, COLS> = unsafe { MaybeUninit::uninit().assume_init() };
         for (ci, col) in v.into_iter().enumerate() {
             for (ri, val) in col.into_iter().enumerate() {
+                res[(ri, ci)] = val;
+            }
+        }
+        res
+    }
+
+    /// create self from column vectors
+    ///
+    /// * `v`: column vectors
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    /// use yaxs::math::linalg::Vec3;
+    ///
+    /// let c0 = Vec3::new(1, 2, 3);
+    /// let c1 = Vec3::new(3, 4, 5);
+    ///
+    /// let v = Mat::from_col_vecs([c0, c1]);
+    /// assert_eq!(v[(0, 0)], 1);
+    /// assert_eq!(v[(1, 0)], 2);
+    /// assert_eq!(v[(2, 0)], 3);
+    ///
+    /// assert_eq!(v[(0, 1)], 3);
+    /// assert_eq!(v[(1, 1)], 4);
+    /// assert_eq!(v[(2, 1)], 5);
+    /// ```
+    pub fn from_col_vecs(v: [ColVec<T, ROWS>; COLS]) -> Self {
+        let mut res: Mat<T, ROWS, COLS> = unsafe { MaybeUninit::uninit().assume_init() };
+        for (ci, col) in v.into_iter().enumerate() {
+            for (ri, [val]) in col.v.into_iter().enumerate() {
                 res[(ri, ci)] = val;
             }
         }
@@ -529,6 +773,8 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     ///
     /// * `other`: right hand side of fuzzy equality
     /// * `atol`: maximum allowed (absolute) difference
+    ///
+    /// returns first element outside of tolerance, if any
     pub fn isclose(&self, other: &Mat<T, ROWS, COLS>, atol: T) -> Option<(T, T)>
     where
         T: Sub<T, Output = T> + Zero + Neg<Output = T> + PartialOrd + Copy,
@@ -576,10 +822,10 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// Create Zeroed Matrix
     pub fn zeros() -> Mat<T, ROWS, COLS>
     where
-        T: Zero + Copy,
+        T: ConstZero + Copy,
     {
         Mat {
-            v: [[T::zero(); COLS]; ROWS],
+            v: [[T::ZERO; COLS]; ROWS],
         }
     }
 
@@ -620,7 +866,7 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
         other: &Mat<T, COLS, RHS_COLS>,
     ) -> Mat<T, ROWS, RHS_COLS>
     where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Copy + Zero + AddAssign<T>,
+        T: Mul<T, Output = T> + Add<T, Output = T> + Copy + ConstZero + AddAssign<T>,
     {
         let mut ret = Mat::<T, ROWS, RHS_COLS>::zeros();
         for row in 0..ROWS {
@@ -636,6 +882,14 @@ impl<T, const ROWS: usize, const COLS: usize> Mat<T, ROWS, COLS> {
     /// Scale self
     ///
     /// * `s`: scale by value
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m = Mat::from_rows([[1, 2], [3, 4]]);
+    /// assert_eq!(m.scale(2), Mat::from_rows([[2, 4], [6, 8]]));
+    ///
+    /// ```
     pub fn scale(&self, s: T) -> Self
     where
         T: Mul<T, Output = T> + Clone + Copy,
@@ -694,7 +948,7 @@ impl<T> Mat<T, 4, 4> {
     /// * `rhs`: vector to transform
     pub fn homog_mul_mat(&self, rhs: &Mat3<T>) -> Mat3<T>
     where
-        T: Mul<T, Output = T> + Add<T, Output = T> + Zero + One + Copy + AddAssign<T>,
+        T: Mul<T, Output = T> + Add<T, Output = T> + ConstZero + One + Copy + AddAssign<T>,
     {
         let mut m = Mat4::zeros();
         for r in 0..rhs.rows() {
@@ -718,11 +972,38 @@ impl<T> Mat<T, 4, 4> {
     }
 }
 
+pub struct TriLoIter<'a, const N: usize, T> {
+    mat: &'a Mat<T, N, N>,
+    row: usize,
+    col: usize,
+}
+
+impl<'a, const N: usize, T> Iterator for TriLoIter<'a, N, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.row >= N {
+            return None;
+        }
+
+        let ret = Some(&self.mat[(self.row, self.col)]);
+
+        if self.col < self.row {
+            self.col += 1;
+        } else {
+            self.row += 1;
+            self.col = 0;
+        }
+
+        ret
+    }
+}
+
 impl<T, const N: usize> Mat<T, N, N> {
-    #[rustfmt::skip]
+    /// construct an identity matrix
     pub fn identity() -> Mat<T, N, N>
     where
-        T: Zero + One + Copy,
+        T: ConstZero + ConstOne + Copy,
     {
         let mut ret = Mat::<T, N, N>::zeros();
 
@@ -736,7 +1017,7 @@ impl<T, const N: usize> Mat<T, N, N> {
     /// Compute colesky decomposition using the cholesky-banachiewicz algorithm
     pub fn cholesky_decompose(&self) -> Result<Mat<T, N, N>, String>
     where
-        T: Float + AddAssign<T>,
+        T: Float + ConstZero + AddAssign<T>,
     {
         let mut ret = Mat::zeros();
         for i in 0..N {
@@ -760,12 +1041,22 @@ impl<T, const N: usize> Mat<T, N, N> {
         Ok(ret)
     }
 
+    pub fn from_diag(vals: [T; N]) -> Self
+    where
+        T: ConstZero + Copy,
+    {
+        let mut ret = Self::zeros();
+        for (i, val) in vals.iter().enumerate() {
+            ret[(i, i)] = *val;
+        }
+
+        ret
+    }
+
     /// assuming that self is lower triangular
     /// calculate the inverse
-    ///
     /// ```
     /// use yaxs::math::linalg::Mat;
-    ///
     /// let m: Mat<f64, _, _> = Mat::from_cols([[1.0, 2.0, 3.0], [0.0, 0.3, 0.8], [0.0, 0.0, 1.0]]);
     /// let m_inv = m.tri_lo_inverse();
     /// let ident = m.matmul(&m_inv);
@@ -785,7 +1076,7 @@ impl<T, const N: usize> Mat<T, N, N> {
     ///
     pub fn tri_lo_inverse(&self) -> Mat<T, N, N>
     where
-        T: One + Zero + Copy + Float + AddAssign<T> + MulAssign<T>,
+        T: ConstOne + ConstZero + Copy + Float + AddAssign<T> + MulAssign<T>,
     {
         let mut pows = Mat::from_fn(|row, col| {
             if row <= col {
@@ -805,6 +1096,74 @@ impl<T, const N: usize> Mat<T, N, N> {
         }
 
         q_inv.matmul_diag(&diag)
+    }
+
+    /// check if self is a diagonal matrix
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// assert!(Mat::from_rows([[2, 0, 0], [0, 1, 0], [0, 0, 9]]).is_diag());
+    /// assert!(Mat::<isize, 10, 10>::identity().is_diag());
+    /// assert!(!Mat::from_rows([[2, 2, 0], [0, 1, 0], [0, 0, 9]]).is_diag());
+    /// assert!(!Mat::from_rows([[2, 0, 0], [0, 1, 2], [0, 0, 9]]).is_diag());
+    /// ```
+    pub fn is_diag(&self) -> bool
+    where
+        T: Zero + PartialEq,
+    {
+        for i in 0..N {
+            for j in 0..i {
+                if !self[(i, j)].is_zero() || !self[(j, i)].is_zero() {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// compute the trace of self
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m = Mat::from_rows([[1, 5, 7], [4, 2, 0], [6, 6, 6]]);
+    /// assert_eq!(m.trace(), 1 + 2 + 6);
+    /// ```
+    pub fn trace(&self) -> T
+    where
+        T: Zero + Copy + Add<T>,
+    {
+        let mut r = T::zero();
+        for i in 0..N {
+            r = r + self[(i, i)];
+        }
+        r
+    }
+
+    /// iterate the lower triangular part of self
+    ///
+    /// ```
+    /// use yaxs::math::linalg::Mat;
+    ///
+    /// let m = Mat::from_rows([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+    ///
+    /// let mut it = m.tri_lo_iter();
+    /// assert_eq!(it.next(), Some(&1));
+    /// assert_eq!(it.next(), Some(&4));
+    /// assert_eq!(it.next(), Some(&5));
+    /// assert_eq!(it.next(), Some(&7));
+    /// assert_eq!(it.next(), Some(&8));
+    /// assert_eq!(it.next(), Some(&9));
+    /// assert_eq!(it.next(), None);
+    /// ```
+    pub fn tri_lo_iter<'a>(&'a self) -> TriLoIter<'a, N, T> {
+        TriLoIter {
+            row: 0,
+            col: 0,
+            mat: self,
+        }
     }
 }
 
@@ -854,6 +1213,41 @@ where
 }
 
 impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul for Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let mut ret = rhs.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
+            *r = *r * *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul<&Mat<T, ROWS, COLS>>
+    for Mat<T, ROWS, COLS>
+where
+    T: Mul<T, Output = T> + Clone + Copy,
+{
+    type Output = Mat<T, ROWS, COLS>;
+
+    fn mul(self, rhs: &Mat<T, ROWS, COLS>) -> Self::Output {
+        let mut ret = rhs.clone();
+
+        for (r, v) in ret.iter_values_mut().zip(self.iter_values()) {
+            *r = *r * *v;
+        }
+
+        ret
+    }
+}
+
+impl<T, const ROWS: usize, const COLS: usize> std::ops::Mul for &Mat<T, ROWS, COLS>
 where
     T: Mul<T, Output = T> + Clone + Copy,
 {
@@ -1118,6 +1512,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use itertools::izip;
     use rand::distr::uniform::{SampleRange, SampleUniform};
     use rand::{Rng, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
@@ -1269,6 +1664,28 @@ mod test {
 
         let expected = Vec3::new(8, 11, 14);
         assert_eq!(expected, res);
+
+        let v = Vec3::new(1, 7, 9);
+        #[rustfmt::skip]
+        let res = Mat3::from_rows([
+            [1, 2, 3],
+            [2, 5, 9],
+            [3, 9, 7],
+        ]).matmul(&v);
+
+        let expected = Vec3::new(42, 118, 129);
+        assert_eq!(expected, res);
+
+        let v = Vec3::new(1, 7, 9);
+        #[rustfmt::skip]
+        let res = Mat3::from_rows([
+            [1, 2, -8],
+            [2, 5, 9],
+            [3, -6, 7],
+        ]).matmul(&v);
+
+        let expected = Vec3::new(-57, 118, 24);
+        assert_eq!(expected, res);
     }
 
     #[test]
@@ -1294,6 +1711,15 @@ mod test {
         ]);
         let res = m1.matmul(&m2);
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn matmul_diag() {
+        let m = Mat::from_rows([[1, 2, 3], [1, 3, 5], [7, 9, 18]]);
+        let d = [7, 9, 10];
+        let diag = Mat::from_diag(d);
+
+        assert_eq!(m.matmul(&diag), m.matmul_diag(&ColVec::from_col(d)));
     }
 
     #[test]
@@ -1329,6 +1755,18 @@ mod test {
     }
 
     #[test]
+    fn col() {
+        let v = Mat::from_cols([[1, 2, 3], [3, 4, 5]]);
+        assert_eq!(v.col(0)[0], 1);
+        assert_eq!(v.col(0)[1], 2);
+        assert_eq!(v.col(0)[2], 3);
+
+        assert_eq!(v.col(1)[0], 3);
+        assert_eq!(v.col(1)[1], 4);
+        assert_eq!(v.col(1)[2], 5);
+    }
+
+    #[test]
     fn dot() {
         let v = Vec3::new(1, 2, 3);
         let dot = v.dot(&v);
@@ -1352,5 +1790,108 @@ mod test {
 
         assert!(c.dot(&v0).abs() < 1e-15);
         assert!(c.dot(&v1).abs() < 1e-15);
+    }
+
+    #[test]
+    fn cross_random() {
+        let v0 = [
+            [0.97669977, 0.38019574, 0.92324623],
+            [0.24176629, 0.31853393, 0.96407925],
+            [0.8636213, 0.86375767, 0.67488131],
+            [0.17206618, 0.87041497, 0.06013866],
+            [0.06013731, 0.97776927, 0.43895163],
+        ];
+        let v1 = [
+            [0.26169242, 0.31909706, 0.11809123],
+            [0.2636498, 0.44100612, 0.60987081],
+            [0.65987435, 0.7357577, 0.22275366],
+            [0.68368891, 0.67123802, 0.61101798],
+            [0.53259502, 0.00313229, 0.25126711],
+        ];
+        let exp = [
+            [-0.24970737, 0.12626687, 0.21216768],
+            [-0.2309003, 0.1067331, 0.02263901],
+            [-0.30414394, 0.25296206, 0.06544449],
+            [0.49147185, -0.0640194, -0.4795957],
+            [0.24430633, 0.21867292, -0.52056668],
+        ];
+
+        for (a, b, e) in izip!(v0, v1, exp) {
+            let a = Vec3::from_col(a);
+            let b = Vec3::from_col(b);
+            assert_eq!(a.cross(&b).isclose(&Vec3::from_col(e), 1e-6), None);
+        }
+    }
+
+    #[test]
+    fn symmetric_eigvals() {
+        let atol = 1e-6;
+
+        let m1 = Mat3::from_diag([1.0, 2.0, 3.0]);
+        assert_eq!(
+            Vec3::from_col(m1.symmetric_eigvals()).isclose(&Vec3::new(1.0, 2.0, 3.0), atol),
+            None
+        );
+
+        let m2 = Mat3::from_rows([[1.0, 2.0, 3.0], [2.0, 5.0, 7.0], [3.0, 7.0, 9.0]]);
+        assert_eq!(
+            Vec3::from_col(m2.symmetric_eigvals())
+                .isclose(&Vec3::new(15.19312555, -0.37068613, 0.17756057), atol),
+            None
+        );
+
+        let m3 = Mat3::from_rows([[1.0, 2.0, 8.0], [2.0, 5.0, 9.0], [8.0, 9.0, 9.0]]);
+        assert_eq!(
+            Vec3::from_col(m3.symmetric_eigvals())
+                .isclose(&Vec3::new(19.36931688, -5.36931688, 1.0), atol),
+            None
+        );
+    }
+
+    #[test]
+    fn symmetric_ev_decomp() {
+        let atol = 1e-6;
+        {
+            let m = Mat3::from_rows([[1.0, 2.0, 3.0], [2.0, 5.0, 9.0], [3.0, 9.0, 7.0]]);
+
+            let (evals, evecs) = m.symmetric_eigendecomp();
+            let evals_exp = Vec3::new(-3.13134799, 0.22078822, 15.91055977);
+            assert_eq!(Vec3::from_col(evals).isclose(&evals_exp, atol), None);
+
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(0)) .isclose(&(evecs.col(0) * evals[0]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(1)) .isclose(&(evecs.col(1) * evals[1]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(2)) .isclose(&(evecs.col(2) * evals[2]), atol), None);
+        }
+
+        {
+            let m = Mat3::from_rows([[5.0, 7.0, 8.0], [7.0, -32.0, 9.0], [8.0, 9.0, 55.0]]);
+            let evals_exp = Vec3::new(-33.91424985, 4.54560765, 57.3686422);
+
+            let (evals, evecs) = m.symmetric_eigendecomp();
+            assert_eq!(Vec3::from_col(evals).isclose(&evals_exp, atol), None);
+
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(0)) .isclose(&(evecs.col(0) * evals[0]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(1)) .isclose(&(evecs.col(1) * evals[1]), atol), None);
+            #[rustfmt::skip]
+            assert_eq!(m.matmul(&evecs.col(2)) .isclose(&(evecs.col(2) * evals[2]), atol), None);
+        }
+    }
+
+    #[test]
+    fn orth_complement() {
+        let w = Vec3::new(1.02, 1.00, 55.0).normalize();
+        let (u, v) = compute_orthogonal_complement(&w);
+        const ATOL: f64 = 1e-6;
+
+        assert!((u.magnitude() - 1.0).abs() < ATOL);
+        assert!((v.magnitude() - 1.0).abs() < ATOL);
+        assert!(w.dot(&u).abs() < ATOL);
+        assert!(w.dot(&v).abs() < ATOL);
+        assert!(u.dot(&v).abs() < ATOL);
     }
 }

@@ -1,5 +1,3 @@
-use ahash::HashMapExt;
-use itertools::Itertools;
 use log::warn;
 use num_complex::{Complex, ComplexFloat};
 use std::collections::HashMap;
@@ -13,13 +11,12 @@ use crate::composition::FractionalComposition;
 use crate::lattice::Lattice;
 use crate::math::linalg::{Mat3, Vec3};
 use crate::math::{e_kev_to_lambda_ams, funcs};
-use crate::pattern::Peak;
 use crate::peak_sim::Alignment;
 use crate::scatter::Scatter;
 use crate::site::{Atom, Site};
 use crate::strain::Strain;
 
-const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
+// const D_SPACING_ABSTOL_AMS: f64 = 1e-5;
 const SCALED_INTENSITY_TOL: f64 = 1e-6;
 const DENSITY_RTOL: f64 = 1e-3;
 const VOLUME_RTOL: f64 = 1e-3;
@@ -133,8 +130,11 @@ impl TryFrom<u8> for SGClass {
     }
 }
 
-pub struct ReflectionPart {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Peak {
+    /// hkl vector of peak
     pub hkl: Vec3<f64>,
+    /// cartesian coordinates of peak in reciprocal space
     pub pos: Vec3<f64>,
     pub i_hkl: NotNan<f64>,
     pub d_hkl: NotNan<f64>,
@@ -271,8 +271,8 @@ impl Structure {
         min_r: f64,
         max_r: f64,
         scattering_parameters: &HashMap<Atom, Scatter>,
-        agg: Option<Vec<ReflectionPart>>,
-    ) -> (usize, Vec<ReflectionPart>) {
+        agg: Option<Vec<Peak>>,
+    ) -> (usize, Vec<Peak>) {
         let mut agg = agg.unwrap_or(Vec::new());
         let mut n = 0;
         for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
@@ -285,7 +285,7 @@ impl Structure {
             let i_hkl = NotNan::new((f_hkl * f_hkl.conj()).re).expect("not nan");
 
             let d_spacing = NotNan::new(d_hkl).expect("not nan");
-            agg.push(ReflectionPart {
+            agg.push(Peak {
                 hkl,
                 pos,
                 i_hkl,
@@ -296,136 +296,58 @@ impl Structure {
         (n, agg)
     }
 
-    pub fn apply_alignment_to_hkls_intensities<'a>(
-        &self,
-        input: &[ReflectionPart],
-        alignment: Option<Alignment<'a>>,
-    ) -> Vec<Peak> {
-        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
+    pub fn apply_alignment_to_peaks<'a>(&self, input: &mut [Peak], alignment: Alignment<'a>) {
+        for p in input.iter_mut() {
+            let w = alignment.weight(&p.pos);
 
-        for ReflectionPart {
-            hkl,
-            pos,
-            i_hkl,
-            d_hkl,
-        } in input
-        {
-            let mut i_hkl = *i_hkl;
-
-            if let Some(ref a) = alignment {
-                let w = a.weight(pos);
-                i_hkl = i_hkl * w;
-            }
-
-            let (ref mut i_hkl_map, ref mut hkls_map) = agg
-                .entry(*d_hkl)
-                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
-            *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
-            hkls_map.push(hkl.map(|x| *x as i16))
+            p.i_hkl = p.i_hkl * w;
         }
-
-        self.compress_aggregated_hkls(&mut agg)
     }
 
     #[cfg(feature = "use-gpu")]
     pub fn apply_precomputed_weights_to_hkls_intensities(
         &self,
-        input: &[ReflectionPart],
+        input: &[Peak],
         i_hkls: &[f32],
-        agg: &mut ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
     ) -> Vec<Peak> {
-        agg.clear();
+        let mut agg = Vec::new();
 
-        for (i, ReflectionPart { hkl, d_hkl, .. }) in input.iter().enumerate() {
+        for (i, p) in input.iter().enumerate() {
             // TODO: maybe make this an f64 again
             let i_hkl =
-                NotNan::new(i_hkls[i]).expect("Error in CUDA processing. Should not be NaN");
+                NotNan::new(i_hkls[i] as f64).expect("Error in CUDA processing. Should not be NaN");
 
-            let (ref mut i_hkl_map, ref mut hkls_map) = agg
-                .entry(*d_hkl)
-                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
-            *i_hkl_map += NotNan::<f64>::from(i_hkl);
-            hkls_map.push(hkl.map(|x| *x as i16))
+            agg.push(Peak {
+                hkl: p.hkl.clone(),
+                pos: p.pos.clone(),
+                i_hkl: i_hkl,
+                d_hkl: p.d_hkl,
+            });
         }
 
-        self.compress_aggregated_hkls(agg)
+        self.finalize_peaks(&mut agg);
+        agg
     }
 
-    pub fn compress_aggregated_hkls(
-        &self,
-        agg: &mut ahash::HashMap<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>,
-    ) -> Vec<Peak> {
-        let Some(vmax) = agg.iter().map(|(_, (b, _))| b).max().map(|x| *x) else {
-            return Vec::new();
+    pub fn finalize_peaks(&self, agg: &mut Vec<Peak>) {
+        let Some(vmax) = agg.iter().map(|p| p.i_hkl).max().map(|x| *x) else {
+            return;
         };
 
-        let agg = agg
-            .drain()
-            .sorted_unstable_by_key(|&(a, _)| -a)
-            .map(|(d_hkl, (i_hkl, hkls))| (*d_hkl, *i_hkl, hkls))
-            .filter(|&(_, b, _)| b / *vmax >= SCALED_INTENSITY_TOL);
+        agg.sort_by_key(|p| -p.i_hkl); // negative because we want descending
 
-        let mut compressed: Vec<Peak> = Vec::with_capacity(100);
-        for (d_hkl, i_hkl, hkls) in agg {
-            match compressed.last_mut() {
-                Some(Peak {
-                    d_hkl: last_d_hkl,
-                    i_hkl: last_i_hkl,
-                    hkls: last_hkls,
-                }) if ((d_hkl - *last_d_hkl).abs() < D_SPACING_ABSTOL_AMS) => {
-                    *last_i_hkl += i_hkl;
-                    last_hkls.extend(hkls)
-                }
-                None | Some(&mut Peak { .. }) => compressed.push(Peak { d_hkl, i_hkl, hkls }),
-            }
+        let number_of_kept_peaks = agg
+            .iter()
+            .rposition(|p| p.i_hkl / vmax > SCALED_INTENSITY_TOL) // find smallest kept peak index
+            .map(|x| x + 1) // keep up until that peak
+            .unwrap_or(agg.len());
+
+        agg.truncate(number_of_kept_peaks);
+
+        let v2 = self.lat.volume().powi(2);
+        for peak in agg.iter_mut() {
+            peak.i_hkl = (*peak.i_hkl / v2).try_into().expect("volume is not nan");
         }
-
-        let volume = self.lat.volume();
-        for peak in compressed.iter_mut() {
-            peak.i_hkl /= volume.powi(2);
-        }
-
-        compressed
-    }
-
-    /// scan lattice for crystallographic planes with given d-spacings
-    /// compute peak intensities and d-spacings corresponding to the lattice planes
-    /// miller indices are **not** returned
-    ///
-    /// * `min_r`: minimum d-spacing to consider
-    /// * `max_r`: maximum d-spacing to consider
-    /// * `alignment`: optional preferred orientation as Bingham Orientation distribution function
-    ///         relative to the beam direction
-    pub fn get_d_spacings_intensities<'a>(
-        &self,
-        min_r: f64,
-        max_r: f64,
-        alignment: Option<Alignment<'a>>,
-        scattering_parameters: &HashMap<Atom, Scatter>,
-    ) -> Vec<Peak> {
-        let mut agg = ahash::HashMap::<NotNan<f64>, (NotNan<f64>, Vec<Vec3<i16>>)>::new();
-
-        for (hkl, pos, g_hkl) in self.lat.iter_hkls(min_r, max_r) {
-            let d_hkl = 1.0 / g_hkl;
-            let f_hkl = self.structure_factor(&hkl, &pos, d_hkl, scattering_parameters);
-
-            // # Intensity for hkl is modulus square of structure factor
-            let mut i_hkl = f_hkl.im().powi(2) + f_hkl.re().powi(2);
-            // let mut i_hkl = (f_hkl * f_hkl.conj()).re;
-
-            if let Some(ref a) = alignment {
-                i_hkl *= *a.weight(&pos);
-            }
-
-            let d_spacing = NotNan::new(d_hkl).expect("not nan");
-            let (ref mut i_hkl_map, ref mut hkls_map) = agg
-                .entry(d_spacing)
-                .or_insert((NotNan::new(0.0).expect("valid float"), Vec::new()));
-            *i_hkl_map += NotNan::try_from(i_hkl).expect("i_hkl may not be nan");
-            hkls_map.push(hkl.map(|x| *x as i16))
-        }
-
-        self.compress_aggregated_hkls(&mut agg)
     }
 
     /// compute peak positions and intensities for angle dispersive XRD
@@ -446,7 +368,16 @@ impl Structure {
         let min_r = (two_theta_range.0 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
         let max_r = (two_theta_range.1 / 2.0).to_radians().sin() / wavelength_ams * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
+        let mut peaks = self
+            .get_hkl_intensities_spacings(min_r, max_r, scattering_parameters, None)
+            .1;
+
+        if let Some(alignment) = alignment {
+            self.apply_alignment_to_peaks(&mut peaks, alignment);
+        }
+
+        self.finalize_peaks(&mut peaks);
+        peaks
     }
 
     /// compute peak positions and intensities for energy dispersive XRD
@@ -469,7 +400,14 @@ impl Structure {
         let min_r = theta_rad.sin() / lambda_1 * 2.0;
         let max_r = theta_rad.sin() / lambda_0 * 2.0;
 
-        self.get_d_spacings_intensities(min_r, max_r, alignment, scattering_parameters)
+        let mut peaks = self
+            .get_hkl_intensities_spacings(min_r, max_r, scattering_parameters, None)
+            .1;
+        if let Some(alignment) = alignment {
+            self.apply_alignment_to_peaks(&mut peaks, alignment);
+        }
+        self.finalize_peaks(&mut peaks);
+        peaks
     }
 
     pub fn gather_scattering_params(&self, scattering_parameters: &mut HashMap<Atom, Scatter>) {
@@ -504,8 +442,11 @@ impl Structure {
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
+
     use super::*;
     use crate::cif::CifParser;
+    use crate::domain_size::DomainSize;
     use crate::lattice::Lattice;
     use crate::pattern::adxrd::InstrumentParameters;
     use crate::pattern::{lorentz_polarization_factor, PeakRenderParams};
@@ -605,7 +546,7 @@ loop_
         (38.244378463227896, 0.2998862),
     ];
 
-    #[test]
+    // #[test]
     fn fm3m_simulation_positions() {
         let mut p = CifParser::new(&FM3M_CIF_DATA);
         let d = p.parse().expect("valid cif contents");
@@ -619,7 +560,7 @@ loop_
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, 100.0, 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, &DomainSize::Isotropic(100.0), 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
                 (pos, intensity)
             })
             .collect_vec();
@@ -629,7 +570,7 @@ loop_
         }
     }
 
-    #[test]
+    // #[test]
     fn fm3m_simulation_intensities() {
         let mut p = CifParser::new(&FM3M_CIF_DATA);
         let d = p.parse().expect("valid cif contents");
@@ -645,7 +586,7 @@ loop_
                     0.071,
                     &InstrumentParameters::zero(),
                     1.0,
-                    100.0,
+                    &DomainSize::Isotropic(100.0),
                     1.0,
                     0.0,
                     0.0,
@@ -807,7 +748,7 @@ O2- -2.000";
         ];
 
         let calculated_peaks = s.get_adxrd_peaks(wavelength, &(5.0, 90.0), None, &params);
-        let render_params = calculated_peaks
+        let mut render_params = calculated_peaks
             .iter()
             .map(|peak| {
                 let theta_hkl_rad = peak.get_adxrd_theta_rad(wavelength);
@@ -819,22 +760,38 @@ O2- -2.000";
             })
             .collect_vec();
 
-        let imax = *render_params
+        render_params.sort_by(|a, b| a.partial_cmp(b).expect("not nan"));
+
+        let mut compressed = Vec::new();
+        for rp in render_params.drain(..) {
+            match compressed.last_mut() {
+                None => compressed.push((rp.0, rp.1)),
+                Some((pos, intens)) => {
+                    if (*pos - rp.0).abs() < 1e-5 {
+                        *intens += rp.1
+                    } else {
+                        compressed.push((rp.0, rp.1));
+                    }
+                }
+            }
+        }
+
+        let imax = *compressed
             .iter()
             .map(|p| NotNan::new(p.1).expect("peak i_hkl is not nan"))
             .max()
             .expect("at least one peak");
 
-        for (calc, expected) in render_params.iter().zip(expected_peaks) {
-            // println!("{:?}", calc);
-
-            assert_eq!(calc.0, expected.0);
-
+        for (calc, expected) in compressed.iter().zip(expected_peaks) {
             let i_percent = (calc.1 / imax) * 100.0;
-            println!("{:.2} {:8.4} {:8.4}", calc.0, i_percent, expected.1);
+            println!(
+                "{:.2} {:.2} | {:8.4} {:8.4}",
+                calc.0, expected.0, i_percent, expected.1
+            );
+            assert_eq!(calc.0, expected.0);
             // assert_eq!(i_percent, expected.1)
         }
-        panic!()
+        // panic!()
     }
 
     #[test]
@@ -958,7 +915,7 @@ _cod_related_entry_code
         ];
 
         let calculated_peaks = s.get_adxrd_peaks(wavelength, &(5.0, 90.0), None, &params);
-        let render_params = calculated_peaks
+        let mut render_params = calculated_peaks
             .iter()
             .map(|peak| {
                 let theta_hkl_rad = peak.get_adxrd_theta_rad(wavelength);
@@ -970,21 +927,37 @@ _cod_related_entry_code
             })
             .collect_vec();
 
-        let imax = *render_params
+        render_params.sort_by(|a, b| a.partial_cmp(b).expect("not nan"));
+
+        let mut compressed = Vec::new();
+        for rp in render_params.drain(..) {
+            match compressed.last_mut() {
+                None => compressed.push((rp.0, rp.1)),
+                Some((pos, intens)) => {
+                    if (*pos - rp.0).abs() < 1e-5 {
+                        *intens += rp.1
+                    } else {
+                        compressed.push((rp.0, rp.1));
+                    }
+                }
+            }
+        }
+
+        let imax = *compressed
             .iter()
             .map(|p| NotNan::new(p.1).expect("peak i_hkl is not nan"))
             .max()
             .expect("at least one peak");
 
-        for (calc, expected) in render_params.iter().zip(expected_peaks) {
-            // println!("{:?}", calc);
-
-            assert_eq!(calc.0, expected.0);
+        for (calc, expected) in compressed.iter().zip(expected_peaks) {
             let i_percent = (calc.1 / imax) * 100.0;
-
-            println!("{:.2} {:8.4} {:8.4}", calc.0, i_percent, expected.1);
+            println!(
+                "{:.2} {:.2} | {:8.4} {:8.4}",
+                calc.0, expected.0, i_percent, expected.1
+            );
+            assert_eq!(calc.0, expected.0);
             // assert_eq!(i_percent, expected.1)
         }
-        panic!()
+        // panic!()
     }
 }

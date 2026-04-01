@@ -123,9 +123,19 @@ __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info, float *intensit
 
   float delta_intens = 0.0;
   for (size_t peak_index = pat.start_idx; peak_index < pat.n_peaks + pat.start_idx; ++peak_index) {
-    float dx = pat_pos - soa.pos[peak_index];
-    float pv = pseudo_voigt(dx, soa.eta[peak_index], soa.fwhm[peak_index]);
-    delta_intens += soa.intensity[peak_index] * pv;
+    float peak_pos = soa.pos[peak_index];
+    float eta = soa.eta[peak_index];
+    float fwhm = soa.fwhm[peak_index];
+    float intensity = soa.intensity[peak_index];
+
+    assert(!isnan(fwhm));
+    assert(!isnan(intensity));
+    assert(!isnan(eta));
+    assert(!isnan(peak_pos));
+
+    float dx = pat_pos - peak_pos;
+    float pv = pseudo_voigt(dx, eta, fwhm);
+    delta_intens += intensity * pv;
   }
 
   intensities[tid] += delta_intens;

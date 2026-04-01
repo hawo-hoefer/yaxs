@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::absorption::{MACData, MACGenerator};
 use crate::background::Background;
 use crate::cfg::{EnergyDispersive, SimulationParameters, ToDiscretize};
+use crate::domain_size::DomainSize;
 use crate::io::PatternMeta;
 use crate::math::{C_M_S, ELECTRON_MASS_KG, EV_TO_JOULE, H_EV_S};
 use crate::noise::Noise;
@@ -192,7 +193,7 @@ impl Beamline {
 pub struct EDXRDMeta {
     pub vol_fractions: Box<[f64]>,
     pub weight_fractions: Box<[f64]>,
-    pub mean_ds_nm: Box<[f64]>,
+    pub domain_sizes: Box<[DomainSize]>,
     pub ds_eta: Box<[f64]>,
     pub mustrain: Box<[f64]>,
     pub mustrain_eta: Box<[f64]>,
@@ -215,7 +216,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
 
         let EDXRDMeta {
             vol_fractions,
-            mean_ds_nm,
+            domain_sizes,
             ds_eta,
             theta_rad,
             weight_fractions: _,
@@ -227,7 +228,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         itertools::izip!(
             0..self.common.n_phases(),
             vol_fractions,
-            mean_ds_nm,
+            domain_sizes,
             ds_eta,
             mustrain,
             mustrain_eta
@@ -243,7 +244,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                         peak.get_edxrd_render_params(
                             *theta_rad,
                             f_lorentz,
-                            *phase_mean_ds_nm,
+                            phase_mean_ds_nm,
                             *phase_ds_eta,
                             *mus_phase,
                             *mus_eta_phase,
@@ -259,7 +260,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             ip.peak.get_edxrd_render_params(
                 *theta_rad,
                 f_lorentz,
-                ip.mean_ds_nm,
+                &DomainSize::Isotropic(ip.mean_ds_nm),
                 ip.eta,
                 0.0,
                 0.0,
@@ -315,8 +316,26 @@ impl Discretizer for DiscretizeEnergyDispersive {
                 }
             }
             MeanDsNm(dst) => {
+                use DomainSize::*;
                 for i in 0..n_phases {
-                    dst[(pat_id, i)] = self.meta.mean_ds_nm[i] as f32;
+                    for j in 0..6 {
+                        dst[(pat_id, i, j)] = -1.0; // sentinel value -1
+                    }
+                    #[rustfmt::skip]
+                    match &self.meta.domain_sizes[i] {
+                        Isotropic(v) => {
+                            dst[(pat_id, i, 0)] = *v as f32;
+                        }
+                        Ellipsoidal { orientation: _, main_sizes: strength, q_ori } => {
+                            dst[(pat_id, i, 0)] = strength[0] as f32;
+                            dst[(pat_id, i, 1)] = strength[1] as f32;
+                            dst[(pat_id, i, 2)] = strength[2] as f32;
+                            dst[(pat_id, i, 3)] = q_ori.w as f32;
+                            dst[(pat_id, i, 4)] = q_ori.x as f32;
+                            dst[(pat_id, i, 5)] = q_ori.y as f32;
+                            dst[(pat_id, i, 6)] = q_ori.z as f32;
+                        }
+                    };
                 }
             }
             ImpuritySum(dst) => {
@@ -324,7 +343,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     .common
                     .impurity_peaks
                     .iter()
-                    .map(|x| x.peak.i_hkl as f32)
+                    .map(|x| *x.peak.i_hkl as f32)
                     .sum();
             }
             ImpurityMax(dst) => {
@@ -332,7 +351,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
                     .common
                     .impurity_peaks
                     .iter()
-                    .map(|x| x.peak.i_hkl as f32)
+                    .map(|x| *x.peak.i_hkl as f32)
                     .max_by(|a, b| a.partial_cmp(&b).expect("no NaNs in peak intensities"))
                     .unwrap_or(0.0);
             }
@@ -397,7 +416,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
             VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
-            MeanDsNm(Array2::<f32>::zeros((n_samples, p.n_phases))),
+            MeanDsNm(Array3::<f32>::zeros((n_samples, p.n_phases, 7))),
             DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
             Mustrains(Array2::<f32>::zeros((n_samples, p.n_phases))),
             MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),

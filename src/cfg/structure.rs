@@ -1,6 +1,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::cfg::domain_size::DomainSize;
 use crate::strain::Strain;
 use crate::structure::Structure;
 
@@ -58,7 +59,7 @@ pub struct StructureDef {
     pub strain: Option<StrainCfg>,
     pub composition: Option<CompositionPart>,
     pub mustrain: Option<Mustrain>,
-    pub mean_ds_nm: Parameter<f64>,
+    pub domain_size: DomainSize,
     pub ds_eta: Parameter<f64>,
     pub b_iso: Option<Parameter<f64>>,
 }

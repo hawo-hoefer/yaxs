@@ -102,8 +102,9 @@ impl<const N: usize> ACGDistribution<N> {
     /// we first sample a vector of standard normally distributed values using
     /// the Box-Muller Transform. They are mapped to a multivariate gaussian using
     /// the method described on page 315 (PDF page 328) in
-    /// Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
-    /// https://doi.org/10.1007/978-0-387-98144-4
+    ///     Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
+    ///     https://doi.org/10.1007/978-0-387-98144-4
+    ///     Section: Transformations Based on the Variance-Covariance Matrix
     ///
     ///
     /// * `rng`: Random number generator
@@ -112,8 +113,8 @@ impl<const N: usize> ACGDistribution<N> {
         for i in v.iter_values_mut() {
             *i = std_normal_box_muller_tf(rng);
         }
-
         // multivariate gaussian distributed
+
         let mut x = self.l.matmul(&v);
         // map onto sphere
 
@@ -211,10 +212,10 @@ impl<const N: usize> BinghamDistribution<N> {
 }
 
 #[derive(Clone)]
-pub struct HitAndRunPolytopeSampler<const N: usize, const M: usize> {
-    a: Mat<f64, N, M>,
-    b: ColVec<f64, N>,
-    x: ColVec<f64, M>,
+pub struct HitAndRunPolytopeSampler<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize> {
+    a: Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+    b: ColVec<f64, NUM_CONSTRAINTS>,
+    x: ColVec<f64, POINT_DIM>,
     n_thinning: usize,
 }
 
@@ -240,22 +241,22 @@ fn highs_model_status_to_str(status: highs::HighsModelStatus) -> &'static str {
     }
 }
 
-fn find_interior_point<const N: usize, const M: usize>(
-    a: &Mat<f64, N, M>,
-    b: &ColVec<f64, N>,
-) -> Result<ColVec<f64, M>, String> {
+fn find_interior_point<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize>(
+    a: &Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+    b: &ColVec<f64, NUM_CONSTRAINTS>,
+) -> Result<ColVec<f64, POINT_DIM>, String> {
     use highs::{RowProblem, Sense};
 
     let create_problem = || {
         let mut pb = RowProblem::new();
-        let variables = (0..M)
+        let variables = (0..POINT_DIM)
             .map(|_| pb.add_column::<f64, _>(0.0, ..))
             .collect_vec();
         let slack = pb.add_column::<f64, _>(-1.0, ..);
-        for i in 0..N {
+        for i in 0..NUM_CONSTRAINTS {
             pb.add_row(
                 ..=b[i],
-                a.col(i)
+                a.row(i)
                     .iter_values()
                     .zip(&variables)
                     .chain([(&2.0, &slack)])
@@ -309,7 +310,7 @@ fn find_interior_point<const N: usize, const M: usize>(
         }
     };
 
-    let mut res = ColVec::<_, M>::zeros();
+    let mut res = ColVec::<_, POINT_DIM>::zeros();
     // this automatically truncates the slack value which we want to ignore anyway
     for (v, r) in sol_model
         .get_solution()
@@ -323,10 +324,12 @@ fn find_interior_point<const N: usize, const M: usize>(
     Ok(res)
 }
 
-impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
+impl<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize>
+    HitAndRunPolytopeSampler<NUM_CONSTRAINTS, POINT_DIM>
+{
     pub fn try_new(
-        a: Mat<f64, N, M>,
-        b: ColVec<f64, N>,
+        a: Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+        b: ColVec<f64, NUM_CONSTRAINTS>,
         n_warmup: usize,
         n_thinning: usize,
         rng: &mut impl Rng,
@@ -348,7 +351,7 @@ impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
         Ok(ret)
     }
 
-    pub fn sample(&mut self, rng: &mut impl Rng) -> ColVec<f64, M> {
+    pub fn sample(&mut self, rng: &mut impl Rng) -> ColVec<f64, POINT_DIM> {
         for _ in 0..self.n_thinning - 1 {
             _ = self.update_mcmc_position(rng);
         }
@@ -358,11 +361,11 @@ impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
     /// return the next position of the markov chain
     ///
     /// * `rng`:
-    pub fn update_mcmc_position(&mut self, rng: &mut impl Rng) -> ColVec<f64, M> {
+    pub fn update_mcmc_position(&mut self, rng: &mut impl Rng) -> ColVec<f64, POINT_DIM> {
         let mut w = &self.b - &self.a.matmul(&self.x);
         assert!(w.iter_values().all(|x| *x >= 0.0), "{}", w);
 
-        let dk = sample_sphere_unif::<M>(rng);
+        let dk = sample_sphere_unif::<POINT_DIM>(rng);
         let ar = self.a.matmul(&dk);
 
         // from BoTorch code:

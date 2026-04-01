@@ -99,7 +99,7 @@ pub enum PatternMeta {
     DsEtas(Array2<f32>),
     Mustrains(Array2<f32>),
     MustrainEtas(Array2<f32>),
-    MeanDsNm(Array2<f32>),
+    MeanDsNm(Array3<f32>),
     InstrumentParameters(Array2<f32>),
     ImpuritySum(Array1<f32>),
     ImpurityMax(Array1<f32>),
@@ -167,6 +167,7 @@ pub struct Extra {
     pub max_phases: usize,
     pub texture: Option<TextureMeasurement>,
     pub encoding: Vec<String>,
+    pub n_patterns: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -357,7 +358,7 @@ pub mod cuda {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use crossbeam_channel::{select, Select};
+    use crossbeam_channel::Select;
     use log::info;
 
     use crate::cuda_common::CUDA_DEVICE_INFO;
