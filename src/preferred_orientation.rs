@@ -127,7 +127,7 @@ impl KDEBinghamODF {
             weight += (self.kappa * dot_with_beam_z as f64).exp();
         }
 
-        weight as f64 * self.norm_const
+        weight * self.norm_const
     }
 
     /// compute the weight scaling of a hkl peak according to the domain orientation

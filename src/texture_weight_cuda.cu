@@ -24,6 +24,7 @@ struct Quaternion {
 };
 
 __device__ Vec3 vec3_new(float x, float y, float z) { return (Vec3){.x = x, .y = y, .z = z}; }
+__device__ float vec3_mag(Vec3 *const v) { return sqrtf(v->x * v->x + v->y * v->y + v->z * v->z); };
 
 __device__ Vec3 vec3_cross(Vec3 a, Vec3 b) {
   return (Vec3){
@@ -50,19 +51,12 @@ __device__ Vec3 vec3_add(Vec3 a, Vec3 b) {
 }
 
 __device__ void vec3_normalize(Vec3 *v) {
-  float mag = v->x * v->x + v->y * v->y + v->z * v->z;
+  float mag = vec3_mag(v);
   assert(mag != 0);
-  float fac = 1.0 / sqrt(mag);
+  float fac = 1.0 / mag;
   v->x *= fac;
   v->y *= fac;
   v->z *= fac;
-}
-
-__device__ Vec3 unit_quat_tf_unchecked(Quaternion q, Vec3 v) {
-  Vec3 qxyz = (Vec3){q.x, q.y, q.z};
-  Vec3 t = vec3_cross(qxyz, v);
-  Vec3 v_ = vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qxyz, t));
-  return v_;
 }
 
 __device__ Quaternion q_hamilton(Quaternion q0, Quaternion q1) {
@@ -82,6 +76,18 @@ __device__ Quaternion q_unit_recip(Quaternion q) {
   // let mag = conjug.magnitude();
   // conjug.scale_inplace(1.0 / (mag * mag));
   return conjug;
+}
+
+__device__ Vec3 unit_quat_tf_unchecked(Quaternion q, Vec3 v) {
+  // Vec3 qxyz = (Vec3){q.x, q.y, q.z};
+  // Vec3 t = vec3_cross(qxyz, v);
+  // Vec3 v_ = vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qxyz, t));
+  Quaternion p = (Quaternion){.w = 0.0, .x = v.x, .y = v.y, .z = v.z};
+  Quaternion q_recip = q_unit_recip(q);
+
+  Quaternion qt = q_hamilton(q, q_hamilton(p, q_recip));
+
+  return vec3_new(qt.x, qt.y, qt.z);
 }
 
 __device__ Quaternion q_from_angle_axis(float alpha, float x, float y, float z) {
@@ -104,22 +110,6 @@ __device__ float quat_mag(Quaternion q) { return sqrtf(q.w * q.w + q.x * q.x + q
 #define vec_fmt "%6.3f %6.3f %6.3f"
 #define quat_expand(q) (q).w, (q).x, (q).y, (q).z
 #define vec_expand(v) (v).x, (v).y, (v).z
-
-__global__ void reduce_weights_per_hkl_kde(float *w, float *results, float norm_const, size_t n_hkls,
-                                           size_t n_ori_samples) {
-  size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
-  if (tid >= n_hkls)
-    return;
-
-  size_t hkl_index = tid % n_hkls;
-
-  // iterate across orientation samples
-  float weight = 0;
-  for (size_t i = tid * n_ori_samples; i < (tid + 1) * n_ori_samples; ++i) {
-    weight += w[n_ori_samples * hkl_index + i];
-  }
-  results[tid] = results[tid] * weight * norm_const;
-}
 
 struct Permutations {
   size_t *hkl_sizes;
@@ -232,15 +222,14 @@ __global__ void compute_hkl_weight(Quaternion *beam_to_domain, Vec3 *h, float *w
   size_t orientation_idx_start =
       permutation_idx * stride_in_alignments * n_ori_per_alignment + alignment_idx * n_ori_per_alignment;
 
-
   float w_sum = 0.0;
   for (size_t orientation_index = 0; orientation_index < n_ori_per_alignment; ++orientation_index) {
     size_t global_orientation_idx = orientation_idx_start + orientation_index;
-
     Quaternion beam2domain = beam_to_domain[global_orientation_idx];
 
-    Vec3 hkl_in_beam_coords = unit_quat_tf_unchecked(q_unit_recip(beam2domain), hkl_in_domain_coords);
+    Vec3 hkl_in_beam_coords = unit_quat_tf_unchecked(beam2domain, hkl_in_domain_coords);
     float dot_with_beam_z = hkl_in_beam_coords.z;
+    assert(fabsf(vec3_mag(&hkl_in_beam_coords) - 1.0) < 1e-3);
 
     // kernel density estimation using the von Mises-Fisher distribution
     // normalization is applied below
@@ -370,7 +359,6 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   device_id = 0;
 
   infof("Beginning CUDA texture weight computation");
-
 
   size_t stride = ffidata.n_chis * ffidata.n_phis;
 

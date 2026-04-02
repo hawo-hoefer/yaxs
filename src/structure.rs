@@ -312,17 +312,16 @@ impl Structure {
     ) -> Vec<Peak> {
         let mut agg = Vec::new();
 
-        for (i, p) in input.iter().enumerate() {
+        assert_eq!(input.len(), i_hkls.len());
+
+        for (p, i_hkl) in input.iter().zip(i_hkls) {
             // TODO: maybe make this an f64 again
             let i_hkl =
-                NotNan::new(i_hkls[i] as f64).expect("Error in CUDA processing. Should not be NaN");
+                NotNan::new(*i_hkl as f64).expect("Error in CUDA processing. Should not be NaN");
 
-            agg.push(Peak {
-                hkl: p.hkl.clone(),
-                pos: p.pos.clone(),
-                i_hkl: i_hkl,
-                d_hkl: p.d_hkl,
-            });
+            let mut peak = p.clone();
+            peak.i_hkl = i_hkl;
+            agg.push(peak);
         }
 
         self.finalize_peaks(&mut agg);

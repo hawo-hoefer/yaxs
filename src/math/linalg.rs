@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use num_traits::{ConstOne, ConstZero, Float, FloatConst, One, Zero};
 
+use super::quaternion::Quaternion;
+
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 #[repr(C)]
 pub struct Mat<T, const ROWS: usize, const COLS: usize> {
@@ -519,6 +521,17 @@ impl<T> Vec3<T> {
 impl<T> Vec4<T> {
     pub fn new(x: T, y: T, z: T, w: T) -> Self {
         Mat::from_cols([[x, y, z, w]])
+    }
+}
+
+impl From<&Quaternion> for Vec4<f64> {
+    fn from(value: &Quaternion) -> Self {
+        Vec4::new(
+            value.x as f64,
+            value.y as f64,
+            value.z as f64,
+            value.w as f64,
+        )
     }
 }
 
@@ -1060,8 +1073,6 @@ impl<T, const N: usize> Mat<T, N, N> {
     /// let m: Mat<f64, _, _> = Mat::from_cols([[1.0, 2.0, 3.0], [0.0, 0.3, 0.8], [0.0, 0.0, 1.0]]);
     /// let m_inv = m.tri_lo_inverse();
     /// let ident = m.matmul(&m_inv);
-    ///
-    /// println!("{}", ident);
     ///
     /// for i in 0..3 {
     ///     for j in 0..3 {

@@ -28,7 +28,7 @@ char tmp_str_buf[1024] = {0};
     return false;                                                                                                      \
   }
 
-#define DEG2RAD(x) ((x) / 180.0 * PI);
+#define DEG2RAD(x) ((x) / 180.0 * PI)
 
 #define launch_kernel_sensibly_no_shmem(kernel, description, array_count, ...)                                         \
   do {                                                                                                                 \

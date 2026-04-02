@@ -188,9 +188,6 @@ __global__ void render_uniform_noise(float *intensities_d, UniformBounds bounds,
 
   for (size_t i = tid * pat_len; i < (tid + 1) * pat_len; ++i) {
     float noise = (float)(xoshiro256_plus_plus_next_double01(rng) * (hi - lo) + lo);
-    if (tid == 0) {
-      printf("%.2f\n", noise);
-    }
     intensities_d[i] += noise;
   }
 }
