@@ -47,7 +47,7 @@ impl<'a> Alignment<'a> {
                 NotNan::new(po.weight(&pos, *chi, *phi)).expect("weight is not nan")
             }
             Alignment::Precomputed { po } => {
-                NotNan::new(po.weight_aligned(&pos)).expect("weight is not NaN")
+                NotNan::new(po.weight_precomputed(&pos)).expect("weight is not NaN")
             }
         }
     }
@@ -250,7 +250,7 @@ impl RunCtx {
                 .enumerate()
             {
                 let mut p = peaks.clone();
-                if let Some(a) = po.as_ref().map(|x| x.with_orientation(chi, phi)) {
+                if let Some(a) = po.as_ref().map(|x| x.precompute_orientation(chi, phi)) {
                     perm_s.apply_alignment_to_peaks(&mut p, Alignment::Precomputed { po: &a });
                 }
                 perm_s.finalize_peaks(&mut p);

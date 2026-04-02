@@ -16,14 +16,13 @@ impl Quaternion {
         Self { w, x, y, z }
     }
 
-    pub fn from_axis_angle(x: f32, y: f32, z: f32, alpha: f32) -> Self
-where {
+    pub fn from_axis_angle(x: f32, y: f32, z: f32, alpha: f32) -> Self {
         let v = Vec3::new(x, y, z).normalize();
 
         let alpha_half_sin = (0.5 * alpha).sin();
 
         Self::new(
-            (alpha / 2.0).cos(),
+            (0.5 * alpha).cos(),
             v[0] * alpha_half_sin,
             v[1] * alpha_half_sin,
             v[2] * alpha_half_sin,

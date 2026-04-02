@@ -82,25 +82,20 @@ impl KDEBinghamODF {
         // transform bingham distribution's orientation from sample to beam coords
         let beam_to_sample = get_beam_to_sample_tf(chi, phi);
         let sample_to_bingham = &self.params.orientation;
-        let beam_to_bingham = beam_to_sample.hamilton_product(&sample_to_bingham);
+        let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        for beam_to_domain in
-            self.axis_aligned_bingham_dist_samples
-                .iter()
-                .map(|bingham_to_domain| {
-                    beam_to_bingham
-                        .hamilton_product(bingham_to_domain)
-                        .unit_recip_unchecked()
-                })
-        {
-            dst.push(beam_to_domain)
+        for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
+            let domain_to_beam = beam_to_bingham
+                .hamilton_product(bingham_to_domain)
+                .unit_recip_unchecked();
+            dst.push(domain_to_beam)
         }
     }
 
     /// create a copy of self with rotated coordinates according to goniometer chi and phi
     ///
     /// this may be useful if weight needs to be called many times for different phi and chi
-    pub fn with_orientation(&self, chi: f64, phi: f64) -> KDEBinghamODF {
+    pub fn precompute_orientation(&self, chi: f64, phi: f64) -> KDEBinghamODF {
         let mut samples = Vec::with_capacity(self.axis_aligned_bingham_dist_samples.len());
         self.push_transformed_samples_into(chi, phi, &mut samples);
 
@@ -113,10 +108,15 @@ impl KDEBinghamODF {
         )
     }
 
-    pub fn weight_aligned(&self, hkl_in_domain_coords: &Vec3<f64>) -> f64 {
+    /// compute the weight assuming that the orientation of the distribution approximation
+    /// is the Quaternion 1 + 0i + 0j + 0k
+    ///
+    /// used after transforming a bingham approximation with with_orientation
+    ///
+    /// * `hkl_in_domain_coords`:
+    pub fn weight_precomputed(&self, hkl_in_domain_coords: &Vec3<f64>) -> f64 {
         let hkl_in_domain_coords = hkl_in_domain_coords.map(|x| *x as f32).normalize();
         let mut weight = 0.0;
-        let kappa = self.kappa as f32;
 
         for domain_to_beam in self.axis_aligned_bingham_dist_samples.iter() {
             let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
@@ -124,7 +124,7 @@ impl KDEBinghamODF {
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
-            weight += (kappa * dot_with_beam_z).exp();
+            weight += (self.kappa * dot_with_beam_z as f64).exp();
         }
 
         weight as f64 * self.norm_const
@@ -138,7 +138,7 @@ impl KDEBinghamODF {
     /// * `chi`: goniometer chi in degrees
     /// * `phi`: goniometer phi in degrees
     /// * `rng`: random number generator
-    pub fn weight(&self, pos: &Vec3<f64>, chi: f64, phi: f64) -> f64 {
+    pub fn weight(&self, hkl_in_domain_coords: &Vec3<f64>, chi: f64, phi: f64) -> f64 {
         // bingham distribution describes orientations of domains relative to sample
         //
         // transform bingham distribution's orientation from sample to beam coords
@@ -146,7 +146,7 @@ impl KDEBinghamODF {
         let sample_to_bingham = &self.params.orientation;
         let beam_to_bingham = beam_to_sample.hamilton_product(sample_to_bingham);
 
-        let hkl_in_domain_coords = pos.map(|x| *x as f32).normalize();
+        let hkl_in_domain_coords = hkl_in_domain_coords.map(|x| *x as f32).normalize();
         // now, we need to compute how well the distribution over physical hkl
         // directions aligns with the direction (beam z unit vector)
         //
@@ -154,20 +154,20 @@ impl KDEBinghamODF {
         // the dot product of beam direction (beam coords z axis) with the hkl
         // vector in that orientation
 
-        // Von Mises-Fisher distribution normalization constant
         let mut weight = 0.0;
 
         for bingham_to_domain in self.axis_aligned_bingham_dist_samples.iter() {
-            let beam_to_domain = beam_to_bingham
-                .hamilton_product(&bingham_to_domain)
+            let domain_to_beam = beam_to_bingham
+                .hamilton_product(bingham_to_domain)
                 .unit_recip_unchecked();
-            let hkl_in_beam_coords = beam_to_domain.unit_transform_unchecked(&hkl_in_domain_coords);
+
+            let hkl_in_beam_coords = domain_to_beam.unit_transform_unchecked(&hkl_in_domain_coords);
 
             let dot_with_beam_z = hkl_in_beam_coords[2];
 
             // kernel density estimation using the von Mises-Fisher distribution
             // normalization is applied below
-            weight += (self.kappa as f32 * dot_with_beam_z).exp();
+            weight += (self.kappa * dot_with_beam_z as f64).exp();
         }
 
         weight as f64 * self.norm_const
@@ -183,17 +183,22 @@ mod test {
     use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
 
+    use super::{get_beam_to_sample_tf, KDEBinghamODF};
+
     const ATOL: f64 = 1e-5;
 
-    #[test]
-    fn test_transformed_ori() {
-        let v = Vec3::new(1.0, 7.0, 3.0).normalize();
-        let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
+    fn get_bing_and_rot(
+        chi: f64,
+        phi: f64,
+        axis: Vec3<f32>,
+        angle: f32,
+    ) -> (KDEBinghamODF, KDEBinghamODF) {
+        let ori = Quaternion::from_axis_angle(axis[0], axis[1], axis[2], angle.to_radians());
         let input = format!(
             "!DirectBingham
 k: [1000, 0.5, 0.5]
 orientation: [{}, {}, {}, {}]
-sampling: {{n: 30, kappa: 20}}
+sampling: {{n: 100000, kappa: 5.0}}
 ",
             ori.w, ori.x, ori.y, ori.z
         );
@@ -206,45 +211,28 @@ sampling: {{n: 30, kappa: 20}}
             .expect("Valid parameters")
             .sample(&mut rng);
 
-        let chi = 15.0f64;
-        let phi = -20.0f64;
-        let rotated = bing.with_orientation(chi, phi);
+        let rotated = bing.precompute_orientation(chi, phi);
 
-        let pos = Vec3::new(1.0, 3.0, 2.0);
-        let w0 = rotated.weight(&pos, 0.0, 0.0);
-        let w1 = bing.weight(&pos, phi, chi);
-
-        assert!((w0 - w1).abs() < ATOL);
+        (bing, rotated)
     }
 
     #[test]
-    fn test_transformed_ori_aligned() {
-        let v = Vec3::new(1.0, 3.0, 3.0).normalize();
-        let ori = Quaternion::from_axis_angle(v[0], v[1], v[2], 32.0f32.to_radians());
-        let input = format!(
-            "!DirectBingham
-k: [1000, 0.5, 0.5]
-orientation: [{}, {}, {}, {}]
-sampling: {{n: 1024, kappa: 20}}
-",
-            ori.w, ori.x, ori.y, ori.z
-        );
-        let pocfg: POCfg = serde_yaml::from_str(&input).expect("valid PO cfg");
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(1128123);
-
-        let bing = pocfg
-            .try_into_generator(&mut rng)
-            .expect("Valid parameters")
-            .sample(&mut rng);
-
+    fn test_transformed_ori() {
         let chi = 15.0f64;
         let phi = -20.0f64;
-        let rotated = bing.with_orientation(chi, phi);
+        let axis = Vec3::new(1.0, 3.0, 7.0);
+        let (bing, rotated) = get_bing_and_rot(chi, phi, axis, 32.0);
 
         let pos = Vec3::new(1.0, 3.0, 2.0);
-        let w0 = rotated.weight_aligned(&pos);
+        let w0 = rotated.weight_precomputed(&pos);
         let w1 = bing.weight(&pos, chi, phi);
 
-        assert!((w0 - w1).abs() < ATOL);
+        assert!((w0 - w1).abs() < ATOL, "({w0} - {w1}).abs() < {ATOL}");
+    }
+
+    #[test]
+    fn beam_to_sample_tf_zero() {
+        let tf = get_beam_to_sample_tf(0.0, 0.0);
+        assert_eq!(tf, Quaternion::new(1.0, 0.0, 0.0, 0.0));
     }
 }
