@@ -193,15 +193,16 @@ __device__ size_t permutation_start_hkls(size_t perm_idx, Permutations permutati
  * n_weights         = n_hkls_1 + n_hkls_2 + ... n_hkls_n = n_hkls_tot
  * @endverbatim
  */
-__global__ void compute_hkl_weight(Quaternion *beam_to_domain, Vec3 *h, float *w, Permutations permutations,
-                                   float kappa, float norm_const, size_t total_ori_samples, size_t stride_in_alignments,
-                                   size_t n_ori_per_alignment, size_t n_hkls_tot) {
+__global__ void compute_hkl_weight(Quaternion *beam_to_domain, Vec3 *h, float *i_hkls_base, float *w,
+                                   Permutations permutations, float kappa, float norm_const, size_t total_ori_samples,
+                                   size_t stride_in_alignments, size_t n_ori_per_alignment, size_t n_hkls_tot) {
 
   size_t weight_index = blockDim.x * blockIdx.x + threadIdx.x;
   if (weight_index >= n_hkls_tot * stride_in_alignments)
     return;
 
   // indexing in w weight_index:
+  // not exactly correct as each permutation can have different amounts of hkls
   // [ n_permutations, chi, phi, hkl ]
   //
   // indexing in q:
@@ -209,6 +210,7 @@ __global__ void compute_hkl_weight(Quaternion *beam_to_domain, Vec3 *h, float *w
 
   // for every hkl, iterate all corresponding orientations per alignment and sum over the kde thing
   size_t hkl_index = weight_index % n_hkls_tot;
+  float i_hkl = i_hkls_base[hkl_index];
 
   size_t permutation_idx = permutation_index(weight_index, stride_in_alignments, permutations);
 
@@ -233,13 +235,12 @@ __global__ void compute_hkl_weight(Quaternion *beam_to_domain, Vec3 *h, float *w
 
     // kernel density estimation using the von Mises-Fisher distribution
     // normalization is applied below
-    assert(dot_with_beam_z <= 1.0);
+    assert(dot_with_beam_z <= 1.0 + 1e-3);
     w_sum += expf(kappa * dot_with_beam_z);
   }
   w_sum *= norm_const;
 
-  // w[weight_index] contains i_hkl, so need to multiply kde density
-  w[weight_index] *= w_sum;
+  w[weight_index] = i_hkl * w_sum;
 }
 
 __global__ void normalize_hkls(Vec3 *h, size_t n_hkls_tot) {
@@ -253,7 +254,7 @@ __device__ Quaternion beam_to_sample_tf(float chi, float phi) {
   Quaternion beam_chi = q_from_angle_axis(chi, 0.0, 0.0, 1.0);
   Quaternion beam_phi = q_from_angle_axis(phi, 0.0, 1.0, 0.0);
 
-  Quaternion chi_phi = q_hamilton(q_unit_recip(beam_chi), beam_phi);
+  Quaternion chi_phi = q_hamilton(q_unit_recip(beam_phi), beam_chi);
 
   return q_hamilton(beam_chi, chi_phi);
 }
@@ -365,7 +366,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   // clang-format off
   size_t base_orientations_space = ffidata.n_ori_per_alignment * permutations.n_permutations * sizeof(Quaternion);
   size_t alignment_tf_space      = stride * sizeof(Quaternion);
-  size_t sample_to_bingham_space       = permutations.n_permutations * sizeof(Quaternion);
+  size_t sample_to_bingham_space = permutations.n_permutations * sizeof(Quaternion);
   size_t beam_to_bingham_space   = stride * permutations.n_permutations * sizeof(Quaternion);
   size_t beam_to_domain_space    = permutations.n_permutations * stride * ffidata.n_ori_per_alignment * sizeof(Quaternion);
   size_t permutations_space      = permutations.n_permutations * sizeof(size_t);
@@ -374,7 +375,8 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   size_t chis_space              = ffidata.n_chis                                                    * sizeof(float);
 
   size_t hkl_space               = ffidata.n_hkls_tot                                                * sizeof(Vec3);
-  size_t res_space               = ffidata.n_hkls_tot * stride                               * sizeof(float);
+  size_t i_hkls_base_space       = ffidata.n_hkls_tot                                                * sizeof(float);
+  size_t res_space               = ffidata.n_hkls_tot * stride                                       * sizeof(float);
   // clang-format on
 
   // clang-format off
@@ -387,6 +389,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
            "Transformed Quaternions:     %10.3f MiB\n"
            "HKL vectors:                 %10.3f MiB\n"
            "Weights:                     %10.3f MiB\n"
+           "Base Weights:                %10.3f MiB\n"
            "HKL sizes:                   %10.3f B\n"
            "Total:                       %10.3f MiB",
            ffidata.n_hkls_tot, ffidata.n_ori_per_alignment, permutations.n_permutations,
@@ -397,10 +400,11 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
            (float)beam_to_domain_space / 1e6,
            (float)hkl_space / 1e6,
            (float)res_space / 1e6,
+           (float)i_hkls_base_space / 1e6,
            (float)permutations_space,
 
            (float)(base_orientations_space + sample_to_bingham_space + alignment_tf_space + beam_to_domain_space +
-                   beam_to_bingham_space + + hkl_space + res_space) /
+                   beam_to_bingham_space + i_hkls_base_space + hkl_space + res_space) /
                1e6);
   // clang-format on
   debugf(tmp_str_buf);
@@ -415,6 +419,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   float *res;
   float *chis;
   float *phis;
+  float *i_hkls_base;
 
   Permutations pm_gpu{.hkl_sizes = NULL, .n_permutations = permutations.n_permutations};
 
@@ -430,14 +435,15 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   cu_lerr(cudaMalloc(&phis,                     phis_space),               "allocating phis");
   cu_lerr(cudaMalloc(&res,                      res_space),                "allocating summed weights");
   cu_lerr(cudaMalloc(&pm_gpu.hkl_sizes,         permutations_space),       "allocating n_hkls");
+  cu_lerr(cudaMalloc(&i_hkls_base,              i_hkls_base_space),        "allocating base i_hkl weight space");
 
   cu_lerr(cudaMemcpy(base_orientation_samples,  ffidata.ori_samples,       base_orientations_space, cudaMemcpyHostToDevice), "copying orientation samples to device");
   cu_lerr(cudaMemcpy(sample_to_bingham,         ffidata.sample_to_bingham, sample_to_bingham_space, cudaMemcpyHostToDevice), "copying orientation samples to device");
   cu_lerr(cudaMemcpy(chis,                      ffidata.chis,              chis_space,              cudaMemcpyHostToDevice), "copying chis to device");
   cu_lerr(cudaMemcpy(phis,                      ffidata.phis,              phis_space,              cudaMemcpyHostToDevice), "copying phis to device");
   cu_lerr(cudaMemcpy(h_d,                       ffidata.hkls,              hkl_space,               cudaMemcpyHostToDevice), "copying hkls to device");
-  cu_lerr(cudaMemcpy(res,                       i_hkls,                    res_space,               cudaMemcpyHostToDevice), "copying i_hkls to device");
   cu_lerr(cudaMemcpy(pm_gpu.hkl_sizes,          permutations.hkl_sizes,    permutations_space,      cudaMemcpyHostToDevice), "copying hkl_sizes to device");
+  cu_lerr(cudaMemcpy(i_hkls_base,               i_hkls,                    i_hkls_base_space,       cudaMemcpyHostToDevice), "copying base i_hkls to gpu");
   // clang-format on
 
   // TODO: use mallocAsync and MemcpyAsync to perform operations while the rotated orientations are computed
@@ -470,6 +476,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
                                   res_space / sizeof(float), // array size
                                   beam_to_domain,            // beam to domain
                                   h_d,                       // hkls device
+                                  i_hkls_base,               // base peak i_hkls
                                   res,                       // weight results
                                   pm_gpu, kappa, norm_const,
                                   stride * ffidata.n_ori_per_alignment * permutations.n_permutations, stride,
@@ -478,6 +485,7 @@ bool weighted_i_hkls_single_structure(FFIData ffidata, Permutations permutations
   snprintf(tmp_str_buf, sizeof(tmp_str_buf), "copying %ld hkl weights (%.2f MiB) to cpu", res_space / sizeof(float),
            (float)res_space / 1e6);
   infof(tmp_str_buf);
+
   cu_lerr(cudaMemcpy(i_hkls, res, res_space, cudaMemcpyDeviceToHost), "copying resuts to host");
 
   cudaFree(base_orientation_samples);

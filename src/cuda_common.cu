@@ -1,6 +1,8 @@
 #ifndef CUDA_COMMON
 #define CUDA_COMMON
 
+#include <stdio.h>
+
 thread_local size_t n_chunks = 0;
 thread_local size_t chunk_id = 0;
 thread_local int device_id = -1;

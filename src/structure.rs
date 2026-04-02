@@ -316,8 +316,7 @@ impl Structure {
 
         for (p, i_hkl) in input.iter().zip(i_hkls) {
             // TODO: maybe make this an f64 again
-            let i_hkl =
-                NotNan::new(*i_hkl as f64).expect("Error in CUDA processing. Should not be NaN");
+            let i_hkl = NotNan::new(*i_hkl as f64).expect("Error in CUDA processing. Should not be NaN");
 
             let mut peak = p.clone();
             peak.i_hkl = i_hkl;

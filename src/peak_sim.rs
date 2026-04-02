@@ -579,6 +579,9 @@ mod cuda {
                 mib_cuda = n_required_bytes_cuda as f64 / 1e6,
                 mib_host = n_allocated_bytes_host as f64 / 1e6
             );
+
+            let stride = self.texture_measurement.stride();
+
             single_phase_weight_hkls(
                 &self.peaks,
                 &self.orientation_samples,
@@ -595,12 +598,17 @@ mod cuda {
 
             let batch_size_permutations = self.n_hkls.len();
 
-            assert!(self.permuted_structures.len() == batch_size_permutations);
-            assert!(self.n_hkls.len() == batch_size_permutations);
-            assert!(self.strains.len() == batch_size_permutations);
-            assert!(self.bingham_params.len() == batch_size_permutations);
+            assert_eq!(self.permuted_structures.len(), batch_size_permutations);
+            assert_eq!(self.n_hkls.len(), batch_size_permutations);
+            assert_eq!(self.strains.len(), batch_size_permutations);
+            assert_eq!(self.bingham_params.len(), batch_size_permutations);
+            assert_eq!(
+                self.peaks.len() * self.texture_measurement.stride(),
+                self.weights.len()
+            );
 
             // TODO: multithread this maybe
+            let mut base_hkl_pos = 0;
             let mut hkl_pos = 0;
             for (local_perm_id, (perm_s, n_hkl, strain, bingham_params)) in itertools::izip!(
                 self.permuted_structures.drain(..),
@@ -617,9 +625,10 @@ mod cuda {
                 // [i_chi, i_phi, n_hkl]
                 for _ in 0..self.texture_measurement.stride() {
                     let p = perm_s.apply_precomputed_weights_to_hkls_intensities(
-                        &self.peaks[hkl_pos..hkl_pos + n_hkl],
+                        &self.peaks[base_hkl_pos..base_hkl_pos + n_hkl],
                         &self.weights[hkl_pos..hkl_pos + n_hkl],
                     );
+                    hkl_pos += n_hkl;
                     peaks.push(Peaks::new(p, structure_id));
                 }
 
@@ -628,7 +637,7 @@ mod cuda {
                     .as_ref()
                     .map(|b_isos| b_isos[local_perm_id]);
 
-                hkl_pos += n_hkl;
+                base_hkl_pos += n_hkl;
                 unsafe {
                     results.add(PeakSimResult {
                         strain,
@@ -641,6 +650,7 @@ mod cuda {
                 }
             }
 
+            assert_eq!(hkl_pos, self.weights.len());
             self.reset(self.permutation_start + batch_size_permutations);
         }
     }
@@ -702,15 +712,21 @@ mod cuda {
 
             batch.init_struct(sp, struct_id);
 
+            let structure = &ctx.structs[struct_id];
+            let struct_file = &ctx.structure_files[struct_id];
+            let strain_cfg = &ctx.strain_cfgs[struct_id];
+            let b_iso_range = &random_b_iso_ranges[struct_id];
+
             for _ in 0..n_permutations {
                 let seed = rng.random();
+
                 batch.update(
                     min_r,
                     max_r,
-                    &ctx.structs[struct_id],
-                    &ctx.structure_files[struct_id],
-                    &ctx.strain_cfgs[struct_id],
-                    &random_b_iso_ranges[struct_id],
+                    structure,
+                    struct_file,
+                    strain_cfg,
+                    b_iso_range,
                     &scattering_parameters,
                     po,
                     seed,

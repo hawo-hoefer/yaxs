@@ -54,7 +54,7 @@ fn get_beam_to_sample_tf(chi: f64, phi: f64) -> Quaternion {
     let beam_phi = Quaternion::from_axis_angle(0.0, 1.0, 0.0, phi.to_radians() as f32);
 
     // transform rotation of phi around global y to coordinates after chi rotation
-    let chi_phi = beam_chi.recip().hamilton_product(&beam_phi);
+    let chi_phi = beam_phi.recip().hamilton_product(&beam_chi);
 
     beam_chi.hamilton_product(&chi_phi)
 }
@@ -234,5 +234,19 @@ sampling: {{n: 100000, kappa: 5.0}}
     fn beam_to_sample_tf_zero() {
         let tf = get_beam_to_sample_tf(0.0, 0.0);
         assert_eq!(tf, Quaternion::new(1.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn beam_to_sample_tf_variation_phi() {
+        let tf1 = get_beam_to_sample_tf(0.0, 0.0);
+        let tf2 = get_beam_to_sample_tf(0.0, 10.0);
+        assert_ne!(tf1, tf2);
+    }
+
+    #[test]
+    fn beam_to_sample_tf_variation_chi() {
+        let tf1 = get_beam_to_sample_tf(0.0, 0.0);
+        let tf2 = get_beam_to_sample_tf(10.0, 0.0);
+        assert_ne!(tf1, tf2);
     }
 }

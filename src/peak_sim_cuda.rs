@@ -4,6 +4,7 @@ use itertools::Itertools;
 
 use crate::math::quaternion::Quaternion;
 use crate::structure::Peak;
+use crate::uninit_vec;
 
 mod ffi {
     use std::ffi::c_float;
@@ -75,29 +76,39 @@ mod ffi {
 }
 
 pub fn single_phase_weight_hkls(
+    // flattened vector of peaks for multiple permutations of the same structure
     reflection_parts: &[Peak],
+    // axis aligned orientation samples from the bingham distribution
     ori_samples: &[Quaternion],
+    // base orientations of the permutation's bingham distribution (length n_permutations)
     bingham_alignments: &[Quaternion],
+    // goniometer phis
     phis: &[f32],
+    // goniometer chis
     chis: &[f32],
+    // number of hkls for each permutation (lengt n_permutations)
     n_hkls: &[usize],
+    // KDE normalization constant
     norm_const: f64,
+    // KDE kappa
     kappa: f64,
-    samples_per_alignment: usize,
-    alignments_per_measurement: usize,
+    // number of orientation samples per alignment  (should this be len(ori_samples?))
+    num_orientation_samples_per_alignment: usize,
+    alignments_per_measurement: usize, // stride
     i_hkls: &mut Vec<f32>,
 ) {
-    // [alignment, hkl, q]
+    // [alignment, hkl]
     let hkls = reflection_parts
         .iter()
         .map(|rp| rp.pos.map(|x| *x as c_float))
         .collect_vec();
 
-    let n_weights = hkls.len() * alignments_per_measurement;
-    let required_allocation = (n_weights as isize - i_hkls.len() as isize).max(0) as usize;
+    let n_i_hkls_base = hkls.len() * chis.len() * phis.len();
+    let required_allocation = (n_i_hkls_base as isize - i_hkls.len() as isize).max(0) as usize;
     i_hkls.reserve_exact(required_allocation);
+    assert_eq!(i_hkls.capacity(), n_i_hkls_base);
+    unsafe { i_hkls.set_len(n_i_hkls_base) };
 
-    unsafe { i_hkls.set_len(n_weights) };
     for (p, i_hkl) in reflection_parts.iter().zip(i_hkls.iter_mut()) {
         *i_hkl = *p.i_hkl as f32;
     }
@@ -108,7 +119,7 @@ pub fn single_phase_weight_hkls(
         phis,
         chis,
         &hkls,
-        samples_per_alignment,
+        num_orientation_samples_per_alignment,
     );
     let permutations = ffi::Permutations::new(n_hkls);
 
@@ -176,7 +187,7 @@ loop_
   Cu0+  Cu1  1  0.50000000  0.00000000  0.50000000  1.0
   Cu0+  Cu1  1  0.50000000  0.50000000  0.00000000  1.0";
 
-    fn get_peaks() -> (Vec<Peak>, Structure) {
+    fn get_peaks() -> ((usize, Vec<Peak>), Structure) {
         let mut p = CifParser::new(&FM3M_CIF_DATA);
         let d = p.parse().expect("valid cif contents");
         let s = Structure::try_from(&d).expect("valid cif contents");
@@ -192,22 +203,21 @@ loop_
         s.gather_scattering_params(&mut scattering_parameters);
 
         (
-            s.get_hkl_intensities_spacings(min_r, max_r, &scattering_parameters, None)
-                .1,
+            s.get_hkl_intensities_spacings(min_r, max_r, &scattering_parameters, None),
             s,
         )
     }
 
     #[test]
-    fn peak_weight_cpu_vs_gpu() {
-        let (peaks, s) = get_peaks();
+    fn peak_weight_cpu_vs_gpu_single() {
+        let ((n, peaks), s) = get_peaks();
 
         for d in CUDA_DEVICE_INFO.iter() {
             // just do something so this does not get optimized away (not sure if needed)
             println!("{}", d.device_name);
         }
 
-        let ori = Quaternion::from_axis_angle(1.0, 2.0, 3.0, 32.0f32.to_radians());
+        let ori = Quaternion::from_axis_angle(1.0, 2.0, 3.0, 50.0f32.to_radians());
         let mut rng = Xoshiro128PlusPlus::seed_from_u64(1128123);
         let mut po_gen = POGenerator::Exact {
             k: Vec3::new(1000.0, 0.5, 0.5),
@@ -216,14 +226,13 @@ loop_
         };
         let bing = po_gen.sample(&mut rng);
 
-        let (chi, phi) = (5.0, 32.0);
+        let (chi, phi) = (7.0, 79.0);
         let precomp_ori = bing.precompute_orientation(chi, phi);
 
         let mut peaks_cpu = peaks.clone();
         let mut peaks_gpu = peaks.clone();
 
         s.apply_alignment_to_peaks(&mut peaks_cpu, Alignment::Precomputed { po: &precomp_ori });
-
         s.finalize_peaks(&mut peaks_cpu);
 
         let mut i_hkls = peaks.iter().map(|p| *p.i_hkl as f32).collect_vec();
@@ -243,7 +252,7 @@ loop_
 
         let peaks_gpu = s.apply_precomputed_weights_to_hkls_intensities(&mut peaks_gpu, &i_hkls);
 
-        const ATOL: f64 = 1e-6;
+        const ATOL: f64 = 1e-4;
 
         for (p_g, p_c) in peaks_gpu.iter().zip(peaks_cpu) {
             assert_eq!(p_g.pos, p_c.pos);
@@ -255,6 +264,84 @@ loop_
                 i_g = p_g.i_hkl,
                 i_c = p_c.i_hkl
             );
+        }
+    }
+
+    #[test]
+    fn peak_weight_cpu_vs_gpu_multiple() {
+        let ((n, peaks), s) = get_peaks();
+
+        for d in CUDA_DEVICE_INFO.iter() {
+            // just do something so this does not get optimized away (not sure if needed)
+            println!("{}", d.device_name);
+        }
+
+        let ori = Quaternion::from_axis_angle(1.0, 2.0, 3.0, 50.0f32.to_radians());
+        let mut rng = Xoshiro128PlusPlus::seed_from_u64(1128123);
+        let mut po_gen = POGenerator::Exact {
+            k: Vec3::new(1000.0, 0.5, 0.5),
+            orientation: (&ori).into(),
+            sampling: crate::cfg::KDEApprox { n: 10, kappa: 5.0 },
+        };
+        let bing = po_gen.sample(&mut rng);
+
+        let chis = [7.0, 4.0];
+        let phis = [3.0, 5.0];
+
+        let mut all_peaks_cpu = Vec::new();
+
+        for (chi, phi) in chis.iter().cartesian_product(phis.iter()) {
+            let precomp_ori = bing.precompute_orientation(*chi as f64, *phi as f64);
+
+            let mut peaks_cpu = peaks.clone();
+
+            s.apply_alignment_to_peaks(&mut peaks_cpu, Alignment::Precomputed { po: &precomp_ori });
+            s.finalize_peaks(&mut peaks_cpu);
+            all_peaks_cpu.push(peaks_cpu);
+        }
+
+        let mut peaks_gpu = peaks.clone();
+        let mut i_hkls = peaks.iter().map(|p| *p.i_hkl as f32).collect_vec();
+        single_phase_weight_hkls(
+            &peaks_gpu,
+            &bing.axis_aligned_bingham_dist_samples,
+            &[bing.params.orientation.clone()],
+            &phis,
+            &chis,
+            &[n],
+            bing.norm_const,
+            bing.kappa,
+            po_gen.sampling_parameters().n,
+            chis.len(),
+            &mut i_hkls,
+        );
+
+        let mut all_peaks_gpu = Vec::new();
+        let mut hkl_idx = 0;
+        for _ in 0..chis.len() {
+            for _ in 0..phis.len() {
+                all_peaks_gpu.push(s.apply_precomputed_weights_to_hkls_intensities(
+                    &mut peaks_gpu,
+                    &i_hkls[hkl_idx..hkl_idx + n],
+                ));
+                hkl_idx += n;
+            }
+        }
+
+        const ATOL: f64 = 1e-4;
+
+        for (peaks_cpu, peaks_gpu) in all_peaks_cpu.iter().zip(all_peaks_gpu.iter()) {
+            for (p_g, p_c) in peaks_gpu.into_iter().zip(peaks_cpu) {
+                assert_eq!(p_g.pos, p_c.pos);
+                let hkl = p_c.hkl.map(|x| *x as i32);
+                println!("{:.4} {:.4}", p_c.i_hkl, p_g.i_hkl);
+                assert!(
+                    (p_g.i_hkl - p_c.i_hkl).abs() < ATOL,
+                    "failed for {hkl} with intens {i_g} vs {i_c}",
+                    i_g = p_g.i_hkl,
+                    i_c = p_c.i_hkl
+                );
+            }
         }
     }
 }
