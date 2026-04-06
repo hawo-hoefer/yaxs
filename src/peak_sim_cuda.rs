@@ -106,7 +106,7 @@ pub fn single_phase_weight_hkls(
     let n_i_hkls_base = hkls.len() * chis.len() * phis.len();
     let required_allocation = (n_i_hkls_base as isize - i_hkls.len() as isize).max(0) as usize;
     i_hkls.reserve_exact(required_allocation);
-    assert_eq!(i_hkls.capacity(), n_i_hkls_base);
+    assert!(i_hkls.capacity() >= n_i_hkls_base);
     unsafe { i_hkls.set_len(n_i_hkls_base) };
 
     for (p, i_hkl) in reflection_parts.iter().zip(i_hkls.iter_mut()) {
