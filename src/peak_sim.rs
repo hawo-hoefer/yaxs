@@ -580,8 +580,6 @@ mod cuda {
                 mib_host = n_allocated_bytes_host as f64 / 1e6
             );
 
-            let stride = self.texture_measurement.stride();
-
             single_phase_weight_hkls(
                 &self.peaks,
                 &self.orientation_samples,

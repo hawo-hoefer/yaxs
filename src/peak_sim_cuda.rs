@@ -4,7 +4,6 @@ use itertools::Itertools;
 
 use crate::math::quaternion::Quaternion;
 use crate::structure::Peak;
-use crate::uninit_vec;
 
 mod ffi {
     use std::ffi::c_float;
@@ -143,9 +142,9 @@ pub mod test {
     use rand_xoshiro::Xoshiro128PlusPlus;
     use std::collections::HashMap;
 
-    use crate::cfg::{POCfg, POGenerator, TextureMeasurement};
+    use crate::cfg::POGenerator;
     use crate::cif::CifParser;
-    use crate::cuda_common::{self, CUDA_DEVICE_INFO};
+    use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::math::linalg::Vec3;
     use crate::math::quaternion::Quaternion;
     use crate::peak_sim::Alignment;
@@ -210,7 +209,7 @@ loop_
 
     #[test]
     fn peak_weight_cpu_vs_gpu_single() {
-        let ((n, peaks), s) = get_peaks();
+        let ((_, peaks), s) = get_peaks();
 
         for d in CUDA_DEVICE_INFO.iter() {
             // just do something so this does not get optimized away (not sure if needed)
