@@ -699,7 +699,7 @@ mod cuda {
                             min_r,
                             max_r,
                             randomize_b_iso: random_b_iso_ranges[struct_id].clone(),
-                            t: None,
+                            t: Some(texture_measurement.clone()),
                         },
                         &scattering_parameters,
                     )?;
