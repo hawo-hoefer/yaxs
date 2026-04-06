@@ -357,7 +357,7 @@ where
     // need to move things around after compression
 
     // let mut handles = Vec::new();
-    let finish_compression = std::sync::Barrier::new(n_threads + 1);
+    let finish_computation = std::sync::Barrier::new(n_threads + 1);
     let start_ctx_write = std::sync::Barrier::new(n_threads + 1);
     std::thread::scope(|s| {
         for thread_idx in 0..n_threads {
@@ -368,21 +368,23 @@ where
             let ctx = Arc::clone(&ctx);
             let jobs = Arc::clone(&jobs);
 
-            let finish_compression = &finish_compression;
+            let finish_computation = &finish_computation;
             let start_ctx_write = &start_ctx_write;
 
+            debug!("spawning prep thread {}", thread_idx + 1);
             s.spawn(move || {
                 let mut compress = ahash::HashMap::with_capacity(end - start);
                 let mut n = 0;
-                for idx in start..end {
+                for job_idx in start..end {
                     let mut peak_idx_in_pattern = 0;
-                    for p in jobs[idx].peak_info_iterator() {
+                    for p in jobs[job_idx].peak_info_iterator() {
                         n += 1;
                         let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
                         let fwhm = NotNan::try_from(p.fwhm).expect("peak position is not nan");
                         let eta = NotNan::try_from(p.eta).expect("peak position is not nan");
+
                         use std::collections::hash_map::Entry;
-                        match compress.entry((idx, pos, fwhm, eta)) {
+                        match compress.entry((job_idx, pos, fwhm, eta)) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert((p.intensity, peak_idx_in_pattern));
                                 peak_idx_in_pattern += 1;
@@ -398,7 +400,8 @@ where
                     unsafe {(&mut *patterns.0.get())[*idx].n_peaks += 1};
                 }
 
-                finish_compression.wait();
+                debug!("PREP {}: waiting for computation to finish", thread_idx + 1);
+                finish_computation.wait();
 
                 // main thread fixes pattern starts here
 
@@ -406,8 +409,8 @@ where
 
                 let n_compressed = compress.len();
 
-                for ((pattern_idx, pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compress.drain() {
-                    let pat = unsafe {&(&*patterns.0.get())[pattern_idx]};
+                for ((job_idx, pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compress.drain() {
+                    let pat = unsafe {&(&*patterns.0.get())[job_idx]};
                     let peak_idx = pat.start_idx + peak_idx_in_pattern;
                     unsafe {
                         ctx.set_at(
@@ -431,13 +434,16 @@ where
             });
 
             if end >= n_jobs {
+                debug!("finished starting up all prep threads");
                 break;
             }
         }
 
         {
             // fix up pattern starts
-            finish_compression.wait();
+            debug!("main thread: waiting for processing in peak info gen threads to finish");
+            finish_computation.wait();
+            debug!("fixing pattern starts");
             let mut peaks_total = 0;
             for p in unsafe { &mut *patterns.0.get() }.iter_mut() {
                 p.start_idx = peaks_total;
@@ -446,6 +452,7 @@ where
 
             ctx.initialize(peaks_total);
             start_ctx_write.wait();
+            debug!("done fixing pattern starts");
         }
     });
 
@@ -454,6 +461,8 @@ where
         .expect("only reference left")
         .0
         .into_inner();
+
+    info!("Prepared {} patterns", patterns.len());
 
     Ok(PreparedCudaBatch {
         ctx,

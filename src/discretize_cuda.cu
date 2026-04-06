@@ -8,7 +8,7 @@
 #include <math.h>
 
 extern "C" {
-#include <cassert>
+#include <assert.h>
 #include <stdio.h>
 
 typedef struct {
