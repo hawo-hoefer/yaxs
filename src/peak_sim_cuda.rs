@@ -91,8 +91,6 @@ pub fn single_phase_weight_hkls(
     norm_const: f64,
     // KDE kappa
     kappa: f64,
-    // number of orientation samples per alignment  (should this be len(ori_samples?))
-    num_orientation_samples_per_alignment: usize,
     i_hkls: &mut Vec<f32>,
 ) {
     // [alignment, hkl]
@@ -117,7 +115,7 @@ pub fn single_phase_weight_hkls(
         phis,
         chis,
         &hkls,
-        num_orientation_samples_per_alignment,
+        ori_samples.len(),
     );
     let permutations = ffi::Permutations::new(n_hkls);
 
@@ -243,7 +241,6 @@ loop_
             &[peaks_gpu.len()],
             bing.norm_const,
             bing.kappa,
-            1,
             &mut i_hkls,
         );
 
@@ -308,7 +305,6 @@ loop_
             &[n],
             bing.norm_const,
             bing.kappa,
-            chis.len(),
             &mut i_hkls,
         );
 

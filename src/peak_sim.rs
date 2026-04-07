@@ -585,7 +585,6 @@ mod cuda {
                 &self.n_hkls,
                 self.sampling_parameters.normalization_constant(),
                 self.sampling_parameters.kappa,
-                self.sampling_parameters.n,
                 &mut self.weights,
             );
 
