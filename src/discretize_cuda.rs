@@ -372,10 +372,13 @@ where
             let start_ctx_write = &start_ctx_write;
 
             s.spawn(move || {
-                let mut compress = ahash::HashMap::with_capacity(end - start);
+                debug!("PREP {}: starting peak compression", thread_idx + 1);
+                let mut compressed_by_job = Vec::new();
                 let mut n = 0;
                 for job_idx in start..end {
                     let mut peak_idx_in_pattern = 0;
+
+                    let mut compressed = ahash::HashMap::with_capacity(jobs[job_idx].n_peaks_tot() / 2);
                     for (p, _) in jobs[job_idx].peak_info_iterator() {
                         n += 1;
                         let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
@@ -383,7 +386,7 @@ where
                         let eta = NotNan::try_from(p.eta).expect("peak position is not nan");
 
                         use std::collections::hash_map::Entry;
-                        match compress.entry((job_idx, pos, fwhm, eta)) {
+                        match compressed.entry((pos, fwhm, eta)) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert((p.intensity, peak_idx_in_pattern));
                                 peak_idx_in_pattern += 1;
@@ -393,10 +396,15 @@ where
                             },
                         }
                     }
+
+                    compressed_by_job.push(compressed);
                 }
 
-                for ((job_idx, ..), _) in compress.iter() {
-                    unsafe {(&mut *patterns.0.get())[*job_idx].n_peaks += 1};
+                let mut n_compressed = 0;
+                for (i, c) in compressed_by_job.iter().enumerate() {
+                    let job_idx = start + i;
+                    unsafe {(&mut *patterns.0.get())[job_idx].n_peaks = c.len()};
+                    n_compressed += c.len();
                 }
 
                 debug!("PREP {}: waiting for computation to finish", thread_idx + 1);
@@ -406,23 +414,23 @@ where
 
                 start_ctx_write.wait();
 
-                let n_compressed = compress.len();
-
-                for ((job_idx, pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compress.drain() {
-                    let pat = unsafe {&(&*patterns.0.get())[job_idx]};
-                    assert!(peak_idx_in_pattern < n_compressed);
-                    let peak_idx = pat.start_idx + peak_idx_in_pattern;
-                    unsafe {
-                        ctx.set_at(
-                            peak_idx,
-                            PeakRenderParams {
-                                pos: *pos,
-                                intensity: intensity,
-                                fwhm: *fwhm,
-                                eta: *eta,
-                            },
-                        )
-                    };
+                for (i, mut compressed) in compressed_by_job.drain(..).enumerate() {
+                    let job_idx = i + start;
+                    for ((pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compressed.drain() {
+                        let pat = unsafe {&(&*patterns.0.get())[job_idx]};
+                        let peak_idx = pat.start_idx + peak_idx_in_pattern;
+                        unsafe {
+                            ctx.set_at(
+                                peak_idx,
+                                PeakRenderParams {
+                                    pos: *pos,
+                                    intensity: intensity,
+                                    fwhm: *fwhm,
+                                    eta: *eta,
+                                },
+                            )
+                        };
+                    }
                 }
 
                 debug!(
