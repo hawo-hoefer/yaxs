@@ -710,13 +710,7 @@ mod cuda {
             let strain_cfg = &ctx.strain_cfgs[struct_id];
             let b_iso_range = &random_b_iso_ranges[struct_id];
 
-            for p_id in 0..n_permutations {
-                println!(
-                    "computing for structure {struct_id} ({}) {} / {n_permutations}",
-                    ctx.structure_files[struct_id],
-                    p_id + 1,
-                );
-
+            for _ in 0..n_permutations {
                 let seed = rng.random();
 
                 batch.update(
@@ -743,7 +737,6 @@ mod cuda {
 
             // dispatch remaining chunk
             if batch.computations_left() {
-                println!("computing rest");
                 batch.compute_chunk(
                     Arc::clone(&results),
                     &ctx.structure_files[struct_id],

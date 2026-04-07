@@ -376,14 +376,14 @@ where
                 let mut n = 0;
                 for job_idx in start..end {
                     let mut peak_idx_in_pattern = 0;
-                    for (p, struct_id) in jobs[job_idx].peak_info_iterator() {
+                    for (p, _) in jobs[job_idx].peak_info_iterator() {
                         n += 1;
                         let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
                         let fwhm = NotNan::try_from(p.fwhm).expect("peak position is not nan");
                         let eta = NotNan::try_from(p.eta).expect("peak position is not nan");
 
                         use std::collections::hash_map::Entry;
-                        match compress.entry((job_idx, pos, fwhm, eta, struct_id)) {
+                        match compress.entry((job_idx, pos, fwhm, eta)) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert((p.intensity, peak_idx_in_pattern));
                                 peak_idx_in_pattern += 1;
@@ -395,13 +395,7 @@ where
                     }
                 }
 
-                use ahash::HashMapExt;
-                use ahash::HashMap;
-                let mut by_struct = HashMap::new();
-                for ((job_idx, .., struct_id), _) in compress.iter() {
-                    if let Some(struct_id) = struct_id {
-                        *by_struct.entry((struct_id, job_idx)).or_insert(0) += 1;
-                    }
+                for ((job_idx, ..), _) in compress.iter() {
                     unsafe {(&mut *patterns.0.get())[*job_idx].n_peaks += 1};
                 }
 
@@ -414,7 +408,7 @@ where
 
                 let n_compressed = compress.len();
 
-                for ((job_idx, pos, fwhm, eta, struct_id), (intensity, peak_idx_in_pattern)) in compress.drain() {
+                for ((job_idx, pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compress.drain() {
                     let pat = unsafe {&(&*patterns.0.get())[job_idx]};
                     assert!(peak_idx_in_pattern < n_compressed);
                     let peak_idx = pat.start_idx + peak_idx_in_pattern;

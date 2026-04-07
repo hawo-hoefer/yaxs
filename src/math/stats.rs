@@ -81,6 +81,7 @@ impl<const N: usize> ACGDistribution<N> {
     /// Compute the unnormalized probability density function
     ///
     /// * `x`: point to compute pdf for. Is assumed to have length 1 (/ be on $S^{N-1}$)
+    #[allow(unused)]
     pub fn pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
         self.log_pdf_unnorm(x).exp()
     }
@@ -185,11 +186,9 @@ impl<const N: usize> BinghamDistribution<N> {
     ///
     /// * `rng`: underlying rng
     pub fn sample(&self, rng: &mut impl Rng) -> ColVec<f64, N> {
-        const GAMMA_FN_THREE_HALFS: f64 = 0.8862269254527579;
         const MAXITER: usize = 100_000;
 
         for _ in 0..MAXITER {
-            use std::f64::consts::{E, TAU};
             let s = self.acg_envelope.sample(rng);
             let w: f64 = rng.random_range(0.0..=1.0);
 
