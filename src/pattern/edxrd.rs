@@ -324,18 +324,19 @@ impl Discretizer for DiscretizeEnergyDispersive {
             MeanDsNm(dst) => {
                 use DomainSize::*;
                 for i in 0..n_phases {
-                    for j in 0..6 {
+                    for j in 0..7 {
                         dst[(pat_id, i, j)] = -1.0; // sentinel value -1
                     }
+
                     #[rustfmt::skip]
                     match &self.meta.domain_sizes[i] {
                         Isotropic(v) => {
                             dst[(pat_id, i, 0)] = *v as f32;
                         }
-                        Ellipsoidal { orientation: _, main_sizes: strength, q_ori } => {
-                            dst[(pat_id, i, 0)] = strength[0] as f32;
-                            dst[(pat_id, i, 1)] = strength[1] as f32;
-                            dst[(pat_id, i, 2)] = strength[2] as f32;
+                        Ellipsoidal { main_sizes, q_ori, .. } => {
+                            dst[(pat_id, i, 0)] = main_sizes[0] as f32;
+                            dst[(pat_id, i, 1)] = main_sizes[1] as f32;
+                            dst[(pat_id, i, 2)] = main_sizes[2] as f32;
                             dst[(pat_id, i, 3)] = q_ori.w as f32;
                             dst[(pat_id, i, 4)] = q_ori.x as f32;
                             dst[(pat_id, i, 5)] = q_ori.y as f32;

@@ -237,7 +237,7 @@ impl std::fmt::Display for Quaternion {
 
 #[cfg(test)]
 mod test {
-    use crate::math::linalg::Vec3;
+    use crate::math::linalg::{Mat3, Vec3};
 
     use super::Quaternion;
 
@@ -292,5 +292,17 @@ mod test {
         assert!((rot[0] - 4.77016).abs() < atol, "{}, {}", rot[0], 4.77016);
         assert!((rot[1] - 7.0).abs() < atol, "{}, {}", rot[1], 7.0);
         assert!((rot[2] - -1.801548).abs() < atol, "{}, {}", rot[2], -1.8015);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix() {
+        let q = Quaternion::from_axis_angle(1.0, 1.0, 1.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.89869873, -0.2552984, 0.35659966],
+            [0.35659966, 0.89869873, -0.2552984],
+            [-0.2552984, 0.35659966, 0.89869873],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
     }
 }

@@ -482,7 +482,7 @@ impl ToDiscretize {
         } = angle_dispersive;
 
         let Sample {
-            mean_ds_nm,
+            mean_ds_nm: domain_sizes,
             impurity_peaks,
             permutation_ids,
             ds_eta,
@@ -533,7 +533,7 @@ impl ToDiscretize {
                 vol_fractions,
                 weight_fractions,
 
-                domain_sizes: mean_ds_nm,
+                domain_sizes,
                 ds_eta,
                 mustrain,
                 mustrain_eta,

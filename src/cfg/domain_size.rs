@@ -77,27 +77,22 @@ impl DomainSize {
                     }
                 }
                 EllipsoidalInner::SizesRandomOri([a, b, c]) => {
-                    let ori = crate::math::stats::sample_sphere_unif::<4>(rng);
-                    let q_ori =
-                        Quaternion::new(ori[0] as f32, ori[1] as f32, ori[2] as f32, ori[3] as f32);
+                    let q_ori = Quaternion::from(crate::math::stats::sample_sphere_unif::<4>(rng));
                     let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
-                    let strength = Vec3::new(a.generate(rng), b.generate(rng), c.generate(rng));
+                    let main_sizes = Vec3::new(a.generate(rng), b.generate(rng), c.generate(rng));
                     DS::Ellipsoidal {
                         orientation,
-                        main_sizes: strength,
+                        main_sizes,
                         q_ori,
                     }
                 }
-                EllipsoidalInner::SingleSizeRandomOri { ani } => {
-                    let ori = crate::math::stats::sample_sphere_unif::<4>(rng);
-                    let q_ori =
-                        Quaternion::new(ori[0] as f32, ori[1] as f32, ori[2] as f32, ori[3] as f32);
+                EllipsoidalInner::SingleSizeRandomOri { ani: a } => {
+                    let q_ori = Quaternion::from(crate::math::stats::sample_sphere_unif::<4>(rng));
                     let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
-                    let strength =
-                        Vec3::new(ani.generate(rng), ani.generate(rng), ani.generate(rng));
+                    let main_sizes = Vec3::new(a.generate(rng), a.generate(rng), a.generate(rng));
                     DS::Ellipsoidal {
                         orientation,
-                        main_sizes: strength,
+                        main_sizes,
                         q_ori,
                     }
                 }
