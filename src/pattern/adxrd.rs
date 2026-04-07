@@ -95,7 +95,7 @@ pub struct DiscretizeAngleDispersive {
 }
 
 impl Discretizer for DiscretizeAngleDispersive {
-    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
+    fn peak_info_iterator(&self) -> impl Iterator<Item = (PeakRenderParams, Option<usize>)> {
         let ADXRDMeta {
             vol_fractions,
             instrument_parameters,
@@ -135,21 +135,26 @@ impl Discretizer for DiscretizeAngleDispersive {
                 let idx = self.common.idx(phase_idx);
                 let peaks = &self.common.sim_res.all_simulated_peaks[idx];
 
+                assert_eq!(phase_idx, peaks.struct_idx, "indexing error");
+
                 let abs = 1.0 / (2.0 * self.attenuation_coefs[line_idx]);
 
                 peaks.iter_peaks().map(move |peak| {
-                    peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        instrument_parameters,
-                        abs,
-                        phase_domain_size,
-                        *phase_ds_eta,
-                        *phase_mustrain,
-                        *phase_mustrain_eta,
-                        vf * emission_line.weight,
-                        *sample_displacement_mu_m,
-                        self.goniometer_radius_mm,
-                        self.monochromator_angle_rad,
+                    (
+                        peak.get_adxrd_render_params(
+                            wavelength_nm,
+                            instrument_parameters,
+                            abs,
+                            phase_domain_size,
+                            *phase_ds_eta,
+                            *phase_mustrain,
+                            *phase_mustrain_eta,
+                            vf * emission_line.weight,
+                            *sample_displacement_mu_m,
+                            self.goniometer_radius_mm,
+                            self.monochromator_angle_rad,
+                        ),
+                        Some(phase_idx),
                     )
                 })
             },
@@ -161,18 +166,21 @@ impl Discretizer for DiscretizeAngleDispersive {
                 .cartesian_product(&self.emission_lines)
                 .map(move |(ip, emission_line)| {
                     let wavelength_nm = emission_line.wavelength_ams / 10.0;
-                    ip.peak.get_adxrd_render_params(
-                        wavelength_nm,
-                        instrument_parameters,
-                        1.0, // impurity peaks don't have absorption
-                        &DomainSize::Isotropic(ip.mean_ds_nm),
-                        ip.eta,
-                        0.0, // impurity peaks only have one source of
-                        0.0, // peak broadening for now.
-                        emission_line.weight,
-                        *sample_displacement_mu_m,
-                        self.goniometer_radius_mm,
-                        self.monochromator_angle_rad,
+                    (
+                        ip.peak.get_adxrd_render_params(
+                            wavelength_nm,
+                            instrument_parameters,
+                            1.0, // impurity peaks don't have absorption
+                            &DomainSize::Isotropic(ip.mean_ds_nm),
+                            ip.eta,
+                            0.0, // impurity peaks only have one source of
+                            0.0, // peak broadening for now.
+                            emission_line.weight,
+                            *sample_displacement_mu_m,
+                            self.goniometer_radius_mm,
+                            self.monochromator_angle_rad,
+                        ),
+                        None,
                     )
                 }),
         )
@@ -206,7 +214,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let flat_idx = self.common.idx(i);
+                    let flat_idx = self.common.phase_idx(i);
                     let strain = &self.common.sim_res.all_strains[flat_idx];
 
                     for j in 0..6 {
@@ -270,7 +278,7 @@ impl Discretizer for DiscretizeAngleDispersive {
             BinghamODFParams { orientations, ks } => {
                 for (i, bingham_odf) in (0..n_phases)
                     .filter_map(|i| {
-                        let flat_idx = self.common.idx(i);
+                        let flat_idx = self.common.phase_idx(i);
                         self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
                     })
                     .enumerate()
@@ -459,7 +467,7 @@ where
             return None;
         }
 
-        let mut job = self.discretize_info.generate_adxrd_job(
+        let job = self.discretize_info.generate_adxrd_job(
             &self.vf_generator,
             &self.cfg,
             &self.sim_params,
@@ -470,11 +478,10 @@ where
         let ret = match self.sim_params.texture_measurement {
             Some(t) => {
                 let mut ret = Vec::new();
-                for _ in 0..t.stride() {
-                    for idx in job.common.indices.iter_mut() {
-                        *idx += 1;
-                    }
-                    ret.push(job.clone());
+                for tx_idx in 0..t.stride() {
+                    let mut job = job.clone();
+                    job.common.texture_measurement_idx = Some(tx_idx);
+                    ret.push(job);
                 }
                 DiscretizeSample::TextureMeasurement(ret)
             }

@@ -93,7 +93,6 @@ pub fn single_phase_weight_hkls(
     kappa: f64,
     // number of orientation samples per alignment  (should this be len(ori_samples?))
     num_orientation_samples_per_alignment: usize,
-    alignments_per_measurement: usize, // stride
     i_hkls: &mut Vec<f32>,
 ) {
     // [alignment, hkl]
@@ -244,7 +243,6 @@ loop_
             &[peaks_gpu.len()],
             bing.norm_const,
             bing.kappa,
-            po_gen.sampling_parameters().n,
             1,
             &mut i_hkls,
         );
@@ -310,7 +308,6 @@ loop_
             &[n],
             bing.norm_const,
             bing.kappa,
-            po_gen.sampling_parameters().n,
             chis.len(),
             &mut i_hkls,
         );

@@ -211,7 +211,7 @@ pub struct DiscretizeEnergyDispersive {
 }
 
 impl Discretizer for DiscretizeEnergyDispersive {
-    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams> {
+    fn peak_info_iterator(&self) -> impl Iterator<Item = (PeakRenderParams, Option<usize>)> {
         let f_lorentz = lorentz_polarization_factor_edxrd(self.meta.theta_rad);
 
         let EDXRDMeta {
@@ -237,10 +237,11 @@ impl Discretizer for DiscretizeEnergyDispersive {
         .map(
             move |(phase_idx, vf, phase_mean_ds_nm, phase_ds_eta, mus_phase, mus_eta_phase)| {
                 let flat_idx = self.common.idx(phase_idx);
-                self.common.sim_res.all_simulated_peaks[flat_idx]
-                    .peaks
-                    .iter()
-                    .map(move |peak: &Peak| {
+                let peak_sets = &self.common.sim_res.all_simulated_peaks[flat_idx];
+                assert_eq!(phase_idx, peak_sets.struct_idx, "indexing error");
+
+                peak_sets.iter_peaks().map(move |peak: &Peak| {
+                    (
                         peak.get_edxrd_render_params(
                             *theta_rad,
                             f_lorentz,
@@ -251,22 +252,27 @@ impl Discretizer for DiscretizeEnergyDispersive {
                             *vf,
                             &self.beamline,
                             &self.mixture_mac,
-                        )
-                    })
+                        ),
+                        Some(phase_idx),
+                    )
+                })
             },
         )
         .flatten()
         .chain(self.common.impurity_peaks.iter().map(move |ip| {
-            ip.peak.get_edxrd_render_params(
-                *theta_rad,
-                f_lorentz,
-                &DomainSize::Isotropic(ip.mean_ds_nm),
-                ip.eta,
-                0.0,
-                0.0,
-                1.0,
-                &self.beamline,
-                &self.mixture_mac,
+            (
+                ip.peak.get_edxrd_render_params(
+                    *theta_rad,
+                    f_lorentz,
+                    &DomainSize::Isotropic(ip.mean_ds_nm),
+                    ip.eta,
+                    0.0,
+                    0.0,
+                    1.0,
+                    &self.beamline,
+                    &self.mixture_mac,
+                ),
+                None,
             )
         }))
     }
@@ -302,7 +308,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             }
             Strains(ref mut dst) => {
                 for i in 0..n_phases {
-                    let flat_idx = self.common.idx(i);
+                    let flat_idx = self.common.phase_idx(i);
                     let strain = &self.common.sim_res.all_strains[flat_idx];
 
                     for j in 0..6 {
@@ -378,7 +384,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
             BinghamODFParams { orientations, ks } => {
                 for (i, bingham_odf) in (0..n_phases)
                     .filter_map(|i| {
-                        let flat_idx = self.common.idx(i);
+                        let flat_idx = self.common.phase_idx(i);
                         self.common.sim_res.all_preferred_orientations[flat_idx].as_ref()
                     })
                     .enumerate()
@@ -510,12 +516,10 @@ where
         let ret = match self.sim_params.texture_measurement {
             Some(t) => {
                 let mut ret = Vec::new();
-                for offset in 0..t.stride() {
+                for tx_idx in 0..t.stride() {
                     let mut job = job.clone();
-                    for idx in job.common.indices.iter_mut() {
-                        *idx += offset;
-                    }
-                    ret.push(job.clone());
+                    job.common.texture_measurement_idx = Some(tx_idx);
+                    ret.push(job);
                 }
                 DiscretizeSample::TextureMeasurement(ret)
             }

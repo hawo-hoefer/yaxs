@@ -127,7 +127,7 @@ fn display_hkls(
     info!("Displaying HKLs");
 
     for i in 0..to_discretize.structures.len() {
-        let idx = to_discretize.sim_res.idx(i, 0);
+        let idx = to_discretize.sim_res.idx(i, 0, Some(0));
         let s = &to_discretize.sample_parameters.structures[i];
         let mean_ds_nm = s.domain_size.mean();
         let ds_eta = s.ds_eta.mean();
@@ -196,7 +196,9 @@ fn display_hkls(
                 });
                 let mac_data = mac_generator
                     .get_mixture(std::iter::once((&structures[idx].wt_composition, 1.0f64)));
-                to_discretize.sim_res.all_simulated_peaks[idx]
+                let peak_sets = &to_discretize.sim_res.all_simulated_peaks[idx];
+                assert_eq!(peak_sets.struct_idx, idx);
+                peak_sets
                     .iter_peaks()
                     .map(|p: &Peak| {
                         let rp = p.get_edxrd_render_params(
@@ -560,10 +562,8 @@ where
     G: DiscretizeJobGenerator<Item = T>,
 {
     let begin_render = Instant::now();
-    let output_names = render_write_chunked(gen, &args.io).unwrap_or_else(|err| {
-        error!("could not write data to disk: {err}");
-        std::process::exit(1)
-    });
+    let output_names = render_write_chunked(gen, &args.io)
+        .map_err(|err| format!("could not write data to disk: {err}"))?;
 
     let elapsed = begin_render.elapsed().as_secs_f64();
 

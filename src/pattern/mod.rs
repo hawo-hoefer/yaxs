@@ -65,7 +65,9 @@ pub struct RenderCommon {
     // all simulated peaks for all phases in order [structure, structure permutations, (texture_measurement_idx)]
     pub sim_res: Arc<CompactSimResults>,
     // indices to select from simulated peaks, length is number of structures
+    // contains the permutation_idx
     pub indices: Box<[usize]>,
+    pub texture_measurement_idx: Option<usize>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
     pub random_seed: u64,
     pub noise: Option<Noise>,
@@ -74,7 +76,13 @@ pub struct RenderCommon {
 impl RenderCommon {
     pub fn idx(&self, phase_id: usize) -> usize {
         let perm_id = self.indices[phase_id];
-        self.sim_res.idx(phase_id, perm_id)
+        self.sim_res
+            .idx(phase_id, perm_id, self.texture_measurement_idx)
+    }
+
+    pub fn phase_idx(&self, phase_id: usize) -> usize {
+        let perm_id = self.indices[phase_id];
+        self.sim_res.phase_idx(phase_id, perm_id)
     }
 
     pub fn n_phases(&self) -> usize {
@@ -460,7 +468,7 @@ pub struct ImpurityPeak {
 }
 
 pub trait Discretizer {
-    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams>;
+    fn peak_info_iterator(&self) -> impl Iterator<Item = (PeakRenderParams, Option<usize>)>;
     fn n_peaks_tot(&self) -> usize;
     fn bkg(&self) -> &Background;
     fn seed(&self) -> u64;
@@ -477,7 +485,7 @@ pub trait Discretizer {
         // math or extra memory allocation
         self.bkg().render(intensities, positions);
 
-        for p in self.peak_info_iterator() {
+        for (p, _) in self.peak_info_iterator() {
             p.render(positions, intensities, abstol)
         }
 

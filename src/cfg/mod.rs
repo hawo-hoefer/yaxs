@@ -442,11 +442,15 @@ pub struct CompactSimResults {
     pub random_b_isos: Option<Box<[f64]>>,
     pub all_preferred_orientations: Box<[Option<BinghamParams>]>,
     pub n_permutations: usize,
-    pub texture_measurement: Option<TextureMeasurement>,
+    pub stride: usize,
 }
 
 impl CompactSimResults {
-    pub fn idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
+    pub fn idx(&self, struct_idx: usize, perm_idx: usize, tx_idx: Option<usize>) -> usize {
+        self.phase_idx(struct_idx, perm_idx) * self.stride + tx_idx.unwrap_or(0)
+    }
+
+    pub fn phase_idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
         struct_idx * self.n_permutations + perm_idx
     }
 }
@@ -519,6 +523,7 @@ impl ToDiscretize {
                     .noise
                     .as_ref()
                     .map(|x| x.generate(rng)),
+                texture_measurement_idx: None,
             },
             emission_lines: emission_lines.clone(),
             goniometer_radius_mm: *goniometer_radius_mm,
@@ -594,6 +599,7 @@ impl ToDiscretize {
                     .as_ref()
                     .map(|x| x.generate(rng)),
                 random_seed: rng.random(),
+                texture_measurement_idx: None,
             },
             beamline: energy_dispersive.beamline.clone(),
             normalize: simulation_parameters.normalize,

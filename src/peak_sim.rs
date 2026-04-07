@@ -96,11 +96,7 @@ impl WriteCtx {
                 strain: unsafe { uninit_vec(n_simulations) },
                 pos: unsafe { uninit_vec(n_simulations) },
                 ok: unsafe { uninit_vec(n_simulations) },
-                b_iso: if random_b_iso {
-                    Some(unsafe { uninit_vec(n_simulations) })
-                } else {
-                    None
-                },
+                b_iso: random_b_iso.then(|| unsafe { uninit_vec(n_simulations) }),
                 n_permutations,
                 n_measurements,
             }),
@@ -192,7 +188,7 @@ impl WriteCtx {
                 all_strains: strain.into(),
                 all_preferred_orientations: pos.into(),
                 n_permutations,
-                texture_measurement,
+                stride: texture_measurement.map(|x| x.stride()).unwrap_or(1),
                 random_b_isos: b_iso.map(|x| x.into_boxed_slice()),
             }),
         }
@@ -590,7 +586,6 @@ mod cuda {
                 self.sampling_parameters.normalization_constant(),
                 self.sampling_parameters.kappa,
                 self.sampling_parameters.n,
-                self.texture_measurement.stride(),
                 &mut self.weights,
             );
 
@@ -715,7 +710,13 @@ mod cuda {
             let strain_cfg = &ctx.strain_cfgs[struct_id];
             let b_iso_range = &random_b_iso_ranges[struct_id];
 
-            for _ in 0..n_permutations {
+            for p_id in 0..n_permutations {
+                println!(
+                    "computing for structure {struct_id} ({}) {} / {n_permutations}",
+                    ctx.structure_files[struct_id],
+                    p_id + 1,
+                );
+
                 let seed = rng.random();
 
                 batch.update(
@@ -742,6 +743,7 @@ mod cuda {
 
             // dispatch remaining chunk
             if batch.computations_left() {
+                println!("computing rest");
                 batch.compute_chunk(
                     Arc::clone(&results),
                     &ctx.structure_files[struct_id],
@@ -751,6 +753,7 @@ mod cuda {
         }
 
         let results = Arc::into_inner(results).expect("no more references to write context");
+
         Ok(results.make_to_discretize(ctx.structs, sample_parameters, Some(texture_measurement)))
     }
 }

@@ -91,7 +91,7 @@ mod ffi {
         pub n_peaks_tot: usize,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     #[repr(C)]
     pub struct CUDAPattern {
         pub start_idx: usize,
@@ -371,20 +371,19 @@ where
             let finish_computation = &finish_computation;
             let start_ctx_write = &start_ctx_write;
 
-            debug!("spawning prep thread {}", thread_idx + 1);
             s.spawn(move || {
                 let mut compress = ahash::HashMap::with_capacity(end - start);
                 let mut n = 0;
                 for job_idx in start..end {
                     let mut peak_idx_in_pattern = 0;
-                    for p in jobs[job_idx].peak_info_iterator() {
+                    for (p, struct_id) in jobs[job_idx].peak_info_iterator() {
                         n += 1;
                         let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
                         let fwhm = NotNan::try_from(p.fwhm).expect("peak position is not nan");
                         let eta = NotNan::try_from(p.eta).expect("peak position is not nan");
 
                         use std::collections::hash_map::Entry;
-                        match compress.entry((job_idx, pos, fwhm, eta)) {
+                        match compress.entry((job_idx, pos, fwhm, eta, struct_id)) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert((p.intensity, peak_idx_in_pattern));
                                 peak_idx_in_pattern += 1;
@@ -396,8 +395,14 @@ where
                     }
                 }
 
-                for ((idx, ..), _) in compress.iter() {
-                    unsafe {(&mut *patterns.0.get())[*idx].n_peaks += 1};
+                use ahash::HashMapExt;
+                use ahash::HashMap;
+                let mut by_struct = HashMap::new();
+                for ((job_idx, .., struct_id), _) in compress.iter() {
+                    if let Some(struct_id) = struct_id {
+                        *by_struct.entry((struct_id, job_idx)).or_insert(0) += 1;
+                    }
+                    unsafe {(&mut *patterns.0.get())[*job_idx].n_peaks += 1};
                 }
 
                 debug!("PREP {}: waiting for computation to finish", thread_idx + 1);
@@ -409,8 +414,9 @@ where
 
                 let n_compressed = compress.len();
 
-                for ((job_idx, pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compress.drain() {
+                for ((job_idx, pos, fwhm, eta, struct_id), (intensity, peak_idx_in_pattern)) in compress.drain() {
                     let pat = unsafe {&(&*patterns.0.get())[job_idx]};
+                    assert!(peak_idx_in_pattern < n_compressed);
                     let peak_idx = pat.start_idx + peak_idx_in_pattern;
                     unsafe {
                         ctx.set_at(
@@ -457,6 +463,7 @@ where
     });
 
     let ctx = Arc::into_inner(ctx).expect("all threads owning ctx have stopped");
+
     let patterns = Arc::into_inner(patterns)
         .expect("only reference left")
         .0
