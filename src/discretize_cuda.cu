@@ -100,16 +100,26 @@ __device__ double xoshiro256_plus_plus_box_muller_gaussian(Xoshiro256PlusPlus *r
 }
 
 __device__ float gauss(float dx, float sigma) {
-  return expf(-0.5f * powf(dx / sigma, 2.0f)) / sqrtf(TAU * powf(sigma, 2.0f));
+  float const sqrt_two_pi = 2.506628275;
+  return expf(-0.5f * powf(dx / sigma, 2.0f)) / (sqrt_two_pi * sigma);
 }
 
-__device__ float lorentz(float dx, float gamma) { return 1.0f / fma(powf(dx / gamma, 2.0f), PI * gamma, 1.0f); }
+__device__ float lorentz(float dx, float fwhm) {
+  // (fwhm / 2) / (pi * (dx**2 + (0.5 * fwhm)^2))
+  //
+  // fwhm / (2 * pi * (dx**2 + 1 / 4 * fwhm^2)
+  // fwhm / (1 / 4 * 2 * pi * (4 * dx**2 + fwhm**2))
+  // 2 * fwhm / (pi * (4 * dx**2 + fwhm**2))
+  float fnorm = 2.0 * fwhm / PI;
+  float denom = fwhm * fwhm + 4.0 * dx * dx;
+  return fnorm / denom;
+}
 
 __device__ float pseudo_voigt(float dx, float eta, float fwhm) {
-  float two_sqrt_ln_2 = 2.0f * sqrtf(logf(2.0f) * 2.0f);
-  float sigma = (1.0f / two_sqrt_ln_2) * fwhm;
-  float gamma = fwhm / 2.0f;
-  return eta * lorentz(dx, gamma) + (1.0f - eta) * gauss(dx, sigma);
+  // float two_sqrt_ln_2 = 2.0f * sqrtf(logf(2.0f) * 2.0f);
+  float const two_sqrt_ln_2 = 2.3548200450309493;
+  float sigma = fwhm / two_sqrt_ln_2;
+  return eta * lorentz(dx, fwhm) + (1.0f - eta) * gauss(dx, sigma);
 }
 
 __global__ void render_peaks(PeakSOA soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
@@ -505,7 +515,8 @@ bool render_backgrounds(float *intensities_d, float *two_thetas_d, BkgKind backg
 bool render_peaks_and_background(PeakSOA peaks_soa, CUDAPattern *pat_info, float *intensities, float *two_thetas,
                                  size_t n_patterns, size_t pat_len, Noise noise, uint64_t *rng_state,
                                  BkgKind background_kind, float *bkg_data, size_t bkg_degree_if_poly,
-                                 float *bkg_scales_if_not_none, bool normalize, size_t _chunk_id, size_t _n_chunks, int device) {
+                                 float *bkg_scales_if_not_none, bool normalize, size_t _chunk_id, size_t _n_chunks,
+                                 int device) {
   chunk_id = _chunk_id;
   n_chunks = _n_chunks;
 

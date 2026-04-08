@@ -382,8 +382,8 @@ where
                     for (p, _) in jobs[job_idx].peak_info_iterator() {
                         n += 1;
                         let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
-                        let fwhm = NotNan::try_from(p.fwhm).expect("peak position is not nan");
-                        let eta = NotNan::try_from(p.eta).expect("peak position is not nan");
+                        let fwhm = NotNan::try_from(p.fwhm).expect("peak fwhm is not nan");
+                        let eta = NotNan::try_from(p.eta).expect("peak eta is not nan");
 
                         use std::collections::hash_map::Entry;
                         match compressed.entry((pos, fwhm, eta)) {
