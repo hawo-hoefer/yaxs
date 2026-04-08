@@ -10,6 +10,7 @@ use crate::absorption::MACData;
 use crate::background::Background;
 use crate::domain_size::DomainSize;
 use crate::io::PatternMeta;
+use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
     e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, C_M_S, H_EV_S,
@@ -622,6 +623,42 @@ fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
     (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
 }
 
+fn get_sample_sig_gam(
+    instrument_parameters: &InstrumentParameters,
+    domain_size: &DomainSize,
+    ds_eta: f64,
+    mustrain: f64,
+    mustrain_eta: f64,
+    wavelength_nm: f64,
+    theta_hkl_rad: f64,
+    hkl: &Vec3<f64>,
+) -> (f64, f64) {
+    // use names from GSAS for now
+    // size and microstrain broadening fwhms
+    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, hkl);
+    let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
+
+    // FWHM = sqrt(8 ln 2) sigma
+    // sigma^2 = FWHM^2 / (8 ln 2)
+    #[rustfmt::skip]
+        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
+                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
+    sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
+    let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
+
+    let g_fwhm_sq = instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq;
+    // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
+    let g_fwhm_sq = g_fwhm_sq.max(0.0000001);
+
+    let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
+    // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
+    // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
+    // of theta
+    let l_fwhm = l_fwhm.max(0.00001);
+
+    (g_fwhm_sq, l_fwhm)
+}
+
 impl Peak {
     pub fn get_adxrd_theta_rad(&self, wavelength_ang: f64) -> f64 {
         (wavelength_ang / (2.0 * *self.d_hkl)).asin()
@@ -667,29 +704,16 @@ impl Peak {
         };
 
         let f_lorentz = lorentz_polarization_factor(theta_hkl_rad, monochromator_angle_rad);
-
-        // use names from GSAS for now
-        // size and microstrain broadening fwhms
-        let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, &self.hkl);
-        let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
-
-        // FWHM = sqrt(8 ln 2) sigma
-        // sigma^2 = FWHM^2 / 8 ln 2
-        #[rustfmt::skip]
-        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
-                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
-        sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
-        let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
-
-        // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
-        let g_fwhm_sq = (instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq)
-            .max(0.0000001);
-
-        // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
-        // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
-        // of theta
-        let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
-        let l_fwhm = l_fwhm.max(0.00001);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            instrument_parameters,
+            domain_size,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
+            wavelength_nm,
+            theta_hkl_rad,
+            &self.hkl,
+        );
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
@@ -949,4 +973,114 @@ mod test {
         assert_eq!(vf.len(), 2);
         assert_eq!([vf[0], vf[1]], [1.0 / 3.0, 2.0 / 3.0]);
     }
+
+    #[test]
+    fn fwhms_zero_instprms_no_mustrain_eta_1() {
+        let instprm = InstrumentParameters::zero();
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            1.0,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.0913540435781769;
+        let g_fwhm_sq_ = 0.001 * 0.01 * 0.01;
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_zero_instprms_no_mustrain_eta_0_5() {
+        let instprm = InstrumentParameters::zero();
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.04567702178908845;
+        let g_fwhm_sq_ = 0.0003762531209164358;
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_with_instprms_no_mustrain_eta_0_5() {
+        let instprm =
+            InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.04567702178908845;
+        let g_fwhm_sq_ = 0.0008370226363751095;
+
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_with_instprms_both_etas_0_5() {
+        let instprm =
+            InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            5e-3,
+            0.5,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.08405791641469365;
+        let g_fwhm_sq_ = 0.0011026756451401095;
+
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+
 }
