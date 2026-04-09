@@ -631,11 +631,11 @@ fn get_sample_sig_gam(
     mustrain_eta: f64,
     wavelength_nm: f64,
     theta_hkl_rad: f64,
-    hkl: &Vec3<f64>,
+    pos: &Vec3<f64>,
 ) -> (f64, f64) {
     // use names from GSAS for now
     // size and microstrain broadening fwhms
-    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, hkl);
+    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, pos);
     let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
 
     // FWHM = sqrt(8 ln 2) sigma
@@ -712,7 +712,7 @@ impl Peak {
             mustrain_eta,
             wavelength_nm,
             theta_hkl_rad,
-            &self.hkl,
+            &self.pos,
         );
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
@@ -1081,6 +1081,4 @@ mod test {
             "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
         );
     }
-
-
 }

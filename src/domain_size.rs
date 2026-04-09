@@ -63,30 +63,9 @@ fn ellipse_radius_for_direction(
     strength: &Vec3<f64>,
 ) -> f64 {
     let norm_pos = pos.normalize();
-    // we have an ellipse described by matrix M indicating the domain size
-    // in all spatial directions in reciprocal space as
-    //
-    // pos.T @ M @ pos = 1
-    //
-    // we can use an affine transformation of the unit sphere representing
-    // the ellipsoid to get the corresponding position on the ellipsoid's surface
-    // the length of that vector is the domain size.
-    //
-    // R = M @ normpos
-    //   = V.T @ E @ V @ normpos
-    // since M is symmetric, V (and V.T) are orthogonal matrices with
-    // column vectors of length 1
-    //
-    // V @ R = V @ V.T @ E @ V @ normpos
-    //       = E @ V @ normpos
-    //
-    // and since the columns of V are orthonormal unit vectors
-    // (V is rotation or mirroring)
-    // mag(V @ R) = mag(R)
-    // therefore mag(V @ R) = mag(E @ V @ normpos)
-    let r = orientation.matmul(&norm_pos) * strength;
-    let r = r.magnitude();
-    r
+    let r = &orientation.matmul(&norm_pos).map(|x| x * x) * strength;
+    let r = r.iter_values().sum::<f64>().sqrt();
+    r.recip()
 }
 
 impl DomainSize {
@@ -98,7 +77,7 @@ impl DomainSize {
     ///
     /// * `theta_rad`:
     /// * `pos`:
-    pub fn edxrd_broadening(&self, theta_rad: f64, hkl: &Vec3<f64>) -> f64 {
+    pub fn edxrd_broadening(&self, theta_rad: f64, pos: &Vec3<f64>) -> f64 {
         match self {
             DomainSize::Isotropic(mean_ds_nm) => scherrer_broadening_edxrd(theta_rad, *mean_ds_nm),
             DomainSize::Ellipsoidal {
@@ -106,7 +85,7 @@ impl DomainSize {
                 main_sizes,
                 q_ori: _,
             } => {
-                let r = ellipse_radius_for_direction(orientation, hkl, main_sizes);
+                let r = ellipse_radius_for_direction(orientation, pos, main_sizes);
                 scherrer_broadening_edxrd(theta_rad, r)
             }
         }
@@ -125,7 +104,7 @@ impl DomainSize {
         &self,
         wavelength_nm: f64,
         theta_hkl_rad: f64,
-        hkl: &Vec3<f64>,
+        pos: &Vec3<f64>,
     ) -> f64 {
         match self {
             DomainSize::Isotropic(mean_ds_nm) => {
@@ -136,9 +115,28 @@ impl DomainSize {
                 main_sizes,
                 q_ori: _,
             } => {
-                let r = ellipse_radius_for_direction(orientation, hkl, main_sizes);
+                let r = ellipse_radius_for_direction(orientation, pos, main_sizes);
                 scherrer_broadening(wavelength_nm, theta_hkl_rad, r)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn ellipse_radius() {
+        let orientation = Mat3::identity();
+        // print(f"let ellipse_size = {ellipseSize(np.array([1., 3., 7.]), [1.0, 2.0, 3.0, 0.0, 0.0, 0.0])}")
+        let r = ellipse_radius_for_direction(
+            &orientation,
+            &Vec3::new(1., 3., 7.),
+            &Vec3::new(1., 2., 3.),
+        );
+
+        let r_ = 0.5961725310235183;
+        assert!((r - r_).abs() < 1e-3, "expected: {r_}, actual: {r}");
     }
 }
