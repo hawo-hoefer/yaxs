@@ -57,13 +57,37 @@ fn scherrer_broadening_edxrd(theta_rad: f64, mean_ds: f64) -> f64 {
     return K * C_M_S * H_EV_S * 1e6 / (mean_ds * theta_rad.sin());
 }
 
+/// calculate the extent of an ellipsoid in a given direction
+///
+/// the ellipsoid is given by it's eigenvalue decomposition as an orientation 
+/// and the ellipsoid's axis lengths.
+///
+/// we can define the ellipsoid as x in R^3, where x.T A x = 1
+///
+/// using the eigenvalue/eigenvector decomposition A = Q.T D Q with diagonal
+/// eigenvalue matrix D = diag(lambda_1, ... lambda_n) (= axis_lengths)
+///
+/// x.T Q.T D Q x = 1
+/// (Q x).T D Q x = 1
+///
+/// we can rewrite x as a product of direction r in R^3 and length s in R > 0
+/// x = s r
+///
+/// (Q s r).T D Q s r = 1
+/// s^2 (Q r).T D Q r = 1
+/// s = [(Q r).T D Q r]^-1/2
+///
+/// * `orientation`: orientation of the ellipsoid
+/// * `pos`: non-normalized direction
+/// * `axis_lengths`: inverted squared semi-axis lengths of the ellipsoid
 fn ellipse_radius_for_direction(
     orientation: &Mat3<f64>,
     pos: &Vec3<f64>,
-    strength: &Vec3<f64>,
+    axis_lengths: &Vec3<f64>,
 ) -> f64 {
     let norm_pos = pos.normalize();
-    let r = &orientation.matmul(&norm_pos).map(|x| x * x) * strength;
+
+    let r = &orientation.matmul(&norm_pos).map(|x| x * x) * axis_lengths;
     let r = r.iter_values().sum::<f64>().sqrt();
     r.recip()
 }

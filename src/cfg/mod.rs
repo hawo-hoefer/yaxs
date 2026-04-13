@@ -278,9 +278,9 @@ impl InstrumentParameterCfg {
                 // GSAS computes FWHM in centidegrees
                 // Gaussian instrument parameters therefore are FWHM^2 coefficients in
                 // centidegrees squared. therefore scale them by 10000
-                u /= 10000.0;
-                v /= 10000.0;
-                w /= 10000.0;
+                u /= 10_000.0;
+                v /= 10_000.0;
+                w /= 10_000.0;
                 // Lorentzian parameters are coefficients for FWHM in centidegrees,
                 // therefore they should be scaled by 100 for our purposes
                 x /= 100.0;
