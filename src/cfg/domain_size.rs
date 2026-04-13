@@ -58,12 +58,13 @@ impl DomainSize {
             DomainSize::Ellipsoidal(inner) => match inner {
                 EllipsoidalInner::Exact {
                     orientation,
-                    main_sizes: strength,
+                    main_sizes,
                     q_ori,
                 } => DS::Ellipsoidal {
                     orientation: orientation.clone(),
-                    main_sizes: strength.clone().map(cs_to_eval),
+                    evals: main_sizes.clone().map(cs_to_eval),
                     q_ori: q_ori.clone(),
+                    main_sizes: main_sizes.clone(),
                 },
                 EllipsoidalInner::OrientationAndSizes {
                     orientation: q_ori,
@@ -74,21 +75,23 @@ impl DomainSize {
                         strength[0].generate(rng),
                         strength[1].generate(rng),
                         strength[2].generate(rng),
-                    )
-                    .map(cs_to_eval);
+                    );
+                    let evals = main_sizes.map(cs_to_eval);
                     DS::Ellipsoidal {
                         orientation,
                         q_ori: q_ori.clone(),
+                        evals,
                         main_sizes,
                     }
                 }
                 EllipsoidalInner::SizesRandomOri([a, b, c]) => {
                     let q_ori = Quaternion::from(crate::math::stats::sample_sphere_unif::<4>(rng));
                     let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
-                    let main_sizes = Vec3::new(a.generate(rng), b.generate(rng), c.generate(rng))
-                        .map(cs_to_eval);
+                    let main_sizes = Vec3::new(a.generate(rng), b.generate(rng), c.generate(rng));
+                    let evals = main_sizes.map(cs_to_eval);
                     DS::Ellipsoidal {
                         orientation,
+                        evals,
                         main_sizes,
                         q_ori,
                     }
@@ -96,10 +99,11 @@ impl DomainSize {
                 EllipsoidalInner::SingleSizeRandomOri { ani: a } => {
                     let q_ori = Quaternion::from(crate::math::stats::sample_sphere_unif::<4>(rng));
                     let orientation = q_ori.to_rotation_matrix().map(|x| *x as f64);
-                    let main_sizes = Vec3::new(a.generate(rng), a.generate(rng), a.generate(rng))
-                        .map(cs_to_eval);
+                    let main_sizes = Vec3::new(a.generate(rng), a.generate(rng), a.generate(rng));
+                    let evals = main_sizes.map(cs_to_eval);
                     DS::Ellipsoidal {
                         orientation,
+                        evals,
                         main_sizes,
                         q_ori,
                     }

@@ -8,6 +8,7 @@ pub enum DomainSize {
     Ellipsoidal {
         q_ori: Quaternion,
         orientation: Mat3<f64>,
+        evals: Vec3<f64>,
         main_sizes: Vec3<f64>,
     },
 }
@@ -59,7 +60,7 @@ fn scherrer_broadening_edxrd(theta_rad: f64, mean_ds: f64) -> f64 {
 
 /// calculate the extent of an ellipsoid in a given direction
 ///
-/// the ellipsoid is given by it's eigenvalue decomposition as an orientation 
+/// the ellipsoid is given by it's eigenvalue decomposition as an orientation
 /// and the ellipsoid's axis lengths.
 ///
 /// we can define the ellipsoid as x in R^3, where x.T A x = 1
@@ -106,10 +107,11 @@ impl DomainSize {
             DomainSize::Isotropic(mean_ds_nm) => scherrer_broadening_edxrd(theta_rad, *mean_ds_nm),
             DomainSize::Ellipsoidal {
                 orientation,
-                main_sizes,
+                evals,
                 q_ori: _,
+                main_sizes: _,
             } => {
-                let r = ellipse_radius_for_direction(orientation, pos, main_sizes);
+                let r = ellipse_radius_for_direction(orientation, pos, evals);
                 scherrer_broadening_edxrd(theta_rad, r)
             }
         }
@@ -136,10 +138,11 @@ impl DomainSize {
             }
             DomainSize::Ellipsoidal {
                 orientation,
-                main_sizes,
+                evals,
                 q_ori: _,
+                main_sizes: _,
             } => {
-                let r = ellipse_radius_for_direction(orientation, pos, main_sizes);
+                let r = ellipse_radius_for_direction(orientation, pos, evals);
                 scherrer_broadening(wavelength_nm, theta_hkl_rad, r)
             }
         }

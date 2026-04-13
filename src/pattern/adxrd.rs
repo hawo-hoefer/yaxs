@@ -233,7 +233,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                         Isotropic(v) => {
                             dst[(pat_id, i, 0)] = *v as f32;
                         }
-                        Ellipsoidal { orientation: _, main_sizes, q_ori } => {
+                        Ellipsoidal { orientation: _, evals: _, main_sizes, q_ori } => {
                             dst[(pat_id, i, 0)] = main_sizes[0] as f32;
                             dst[(pat_id, i, 1)] = main_sizes[1] as f32;
                             dst[(pat_id, i, 2)] = main_sizes[2] as f32;
