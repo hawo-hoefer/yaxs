@@ -1,4 +1,4 @@
-use crate::math::linalg::{Mat3, Vec3};
+use crate::math::linalg::{ColVec, Mat3, Vec3};
 use crate::math::quaternion::Quaternion;
 use crate::math::{C_M_S, H_EV_S};
 
@@ -10,6 +10,9 @@ pub enum DomainSize {
         orientation: Mat3<f64>,
         evals: Vec3<f64>,
         main_sizes: Vec3<f64>,
+        /// flattened lower triangular part of spd matrix describing ellipsoid
+        /// order: [a00, a10, a11, a20, a21, a22]
+        mat: ColVec<f64, 6>,
     },
 }
 
@@ -110,6 +113,7 @@ impl DomainSize {
                 evals,
                 q_ori: _,
                 main_sizes: _,
+                mat: _,
             } => {
                 let r = ellipse_radius_for_direction(orientation, pos, evals);
                 scherrer_broadening_edxrd(theta_rad, r)
@@ -141,6 +145,7 @@ impl DomainSize {
                 evals,
                 q_ori: _,
                 main_sizes: _,
+                mat: _,
             } => {
                 let r = ellipse_radius_for_direction(orientation, pos, evals);
                 scherrer_broadening(wavelength_nm, theta_hkl_rad, r)

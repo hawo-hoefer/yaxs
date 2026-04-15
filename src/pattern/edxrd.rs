@@ -333,14 +333,10 @@ impl Discretizer for DiscretizeEnergyDispersive {
                         Isotropic(v) => {
                             dst[(pat_id, i, 0)] = *v as f32;
                         }
-                        Ellipsoidal { evals: main_sizes, q_ori, .. } => {
-                            dst[(pat_id, i, 0)] = main_sizes[0] as f32;
-                            dst[(pat_id, i, 1)] = main_sizes[1] as f32;
-                            dst[(pat_id, i, 2)] = main_sizes[2] as f32;
-                            dst[(pat_id, i, 3)] = q_ori.w as f32;
-                            dst[(pat_id, i, 4)] = q_ori.x as f32;
-                            dst[(pat_id, i, 5)] = q_ori.y as f32;
-                            dst[(pat_id, i, 6)] = q_ori.z as f32;
+                        Ellipsoidal { orientation: _, evals: _, main_sizes: _, q_ori: _, mat } => {
+                            for (j, v) in mat.iter_values().enumerate() {
+                                dst[(pat_id, i, j)] = *v as f32;
+                            }
                         }
                     };
                 }
@@ -423,7 +419,7 @@ impl Discretizer for DiscretizeEnergyDispersive {
         let mut v = vec![
             Strains(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
             VolumeFractions(Array2::<f32>::zeros((n_samples, p.n_phases))),
-            MeanDsNm(Array3::<f32>::zeros((n_samples, p.n_phases, 7))),
+            MeanDsNm(Array3::<f32>::zeros((n_samples, p.n_phases, 6))),
             DsEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
             Mustrains(Array2::<f32>::zeros((n_samples, p.n_phases))),
             MustrainEtas(Array2::<f32>::zeros((n_samples, p.n_phases))),
