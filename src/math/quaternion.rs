@@ -295,12 +295,48 @@ mod test {
     }
 
     #[test]
-    fn quat_to_rot_matrix() {
+    fn quat_to_rot_matrix_111() {
         let q = Quaternion::from_axis_angle(1.0, 1.0, 1.0, 32.0f32.to_radians());
         let mat = Mat3::from_rows([
             [0.89869873, -0.2552984, 0.35659966],
             [0.35659966, 0.89869873, -0.2552984],
             [-0.2552984, 0.35659966, 0.89869873],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_100() {
+        let q = Quaternion::from_axis_angle(1.0, 0.0, 0.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [1.0, 0.0, 0.0],
+            [0.0, 0.8480480961564261, -0.5299192642332049],
+            [0.0, 0.5299192642332049, 0.8480480961564261],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_010() {
+        let q = Quaternion::from_axis_angle(0.0, 1.0, 0.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.8480480961564261, 0.0, 0.5299192642332049],
+            [0.0, 1.0, 0.0],
+            [-0.5299192642332049, 0.0, 0.8480480961564261],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_001() {
+        let q = Quaternion::from_axis_angle(0.0, 0.0, 1.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.8480480961564261, -0.5299192642332049, 0.0],
+            [0.5299192642332049, 0.8480480961564261, 0.0],
+            [0.0, 0.0, 1.0],
         ]);
 
         assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
