@@ -44,11 +44,11 @@ impl Lattice {
     ) -> impl Iterator<Item = (Vec3<f64>, Vec3<f64>, f64)> + use<'a> {
         const RADIUS_TOL: f64 = 1e-8;
         let recip_lat = self.recip_lattice_crystallographic();
-        let recp_len = recip_lat.recip_lattice().abc();
+        let recp_len = self.abc();
+        let mat = recip_lat.mat.transpose();
 
         let r_cells = max_r + 1e-8;
-        let r_max = (recp_len.scale((r_cells + 0.15) / (2.0 * std::f64::consts::PI)))
-            .map(|x| x.ceil() as i32);
+        let r_max = recp_len.scale(r_cells + 0.15).map(|x| x.ceil() as i32);
         let global_min = -max_r - RADIUS_TOL;
         let global_max = max_r + RADIUS_TOL;
 
@@ -60,7 +60,7 @@ impl Lattice {
             .filter_map(move |((a, b), c)| -> Option<_> {
                 let hkl = Vec3::new(a as f64, b as f64, c as f64);
                 // pos is the position of the peak in reciprocal space
-                let pos = recip_lat.mat.matmul(&hkl);
+                let pos = mat.matmul(&hkl);
                 let g_hkl = pos.magnitude();
 
                 // currently, we produce XRD patterns like pymatgen
@@ -85,15 +85,15 @@ impl Lattice {
     }
 
     pub fn a(&self) -> Vec3<f64> {
-        self.mat.row(0)
+        self.mat.col(0)
     }
 
     pub fn b(&self) -> Vec3<f64> {
-        self.mat.row(1)
+        self.mat.col(1)
     }
 
     pub fn c(&self) -> Vec3<f64> {
-        self.mat.row(2)
+        self.mat.col(2)
     }
 
     pub fn from_abc_angles(a: f64, b: f64, c: f64, alpha: f64, beta: f64, gamma: f64) -> Lattice {
@@ -112,7 +112,7 @@ impl Lattice {
 
         let vc = [0.0, 0.0, c];
         Lattice {
-            mat: Mat3::from_rows([va, vb, vc]),
+            mat: Mat3::from_cols([va, vb, vc]),
         }
     }
 }
