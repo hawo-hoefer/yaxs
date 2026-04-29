@@ -1,11 +1,12 @@
 stages:
   - build
+  - py-build
   - test
   - doc
 
 build:
   stage: build
-  image: rust:1.83-bullseye
+  image: rust:1.89-bullseye
   before_script:
     - apt update -y
     - apt install cmake clang -y
@@ -15,7 +16,7 @@ build:
 rustdoc:
   stage: doc
   dependencies: [build]
-  image: rust:1.83-bullseye
+  image: rust:1.89-bullseye
   before_script:
     - apt update -y
     - apt install cmake clang -y
@@ -25,9 +26,24 @@ rustdoc:
 test:
   stage: test
   dependencies: [build]
-  image: rust:1.83-bullseye
+  image: rust:1.89-bullseye
   before_script:
     - apt update -y
     - apt install cmake clang -y
   script:
     - cargo test --no-default-features
+
+py-build:
+  stage: py-build
+  image: rust:1.89-bullseye
+  before_script:
+    - apt update -y
+    - apt install cmake clang -y
+    - apt install python3.10
+  script: 
+    - cargo build --no-default-features
+    - pip install maturin[patchelf]
+    - maturin build
+  artifacts:
+
+
