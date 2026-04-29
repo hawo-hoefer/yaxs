@@ -704,7 +704,7 @@ pub mod cuda {
 }
 
 #[cfg(not(feature = "use-gpu"))]
-mod cpu {
+pub mod cpu {
     use std::path::PathBuf;
 
     use log::info;
