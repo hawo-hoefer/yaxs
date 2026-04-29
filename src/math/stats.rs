@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use rand::Rng;
 
+use super::brent::brent;
 use super::linalg::Vec4;
 use crate::math::linalg::{ColVec, Mat};
 
@@ -60,6 +61,7 @@ pub struct BinghamDistribution<const N: usize> {
     a: Mat<f64, N, N>,
     k: ColVec<f64, N>,
     acg_envelope: ACGDistribution<N>,
+    ln_mbstar: f64,
 }
 
 /// Angular Centered Gaussian Distribution
@@ -79,19 +81,21 @@ impl<const N: usize> ACGDistribution<N> {
     /// Compute the unnormalized probability density function
     ///
     /// * `x`: point to compute pdf for. Is assumed to have length 1 (/ be on $S^{N-1}$)
+    #[allow(unused)]
     pub fn pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        x.transpose()
-            .matmul(&self.omega)
-            .matmul(x)
-            .item()
-            .powf(-(N as f64) / 2.0f64)
+        self.log_pdf_unnorm(x).exp()
     }
 
     /// compute the logarithm of the unnormalized probability density function
     ///
     /// * `x`: value n $S^{N-1}$, needs to have length 1
     pub fn log_pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        self.pdf_unnorm(x).ln()
+        // pdf = (x.T A x)^(-N / 2)
+        //
+        // log_pdf = log((x.T A x)^(-N / 2))
+        //         = -N / 2 * log(x.T A x)
+
+        (-(N as f64) / 2.0f64) * x.transpose().matmul(&self.omega).matmul(x).item()
     }
 
     /// Sample from Angular Centered Gaussian distribution
@@ -99,8 +103,9 @@ impl<const N: usize> ACGDistribution<N> {
     /// we first sample a vector of standard normally distributed values using
     /// the Box-Muller Transform. They are mapped to a multivariate gaussian using
     /// the method described on page 315 (PDF page 328) in
-    /// Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
-    /// https://doi.org/10.1007/978-0-387-98144-4
+    ///     Gentle, James E. Computational statistics. Vol. 308. New York: Springer, 2009.
+    ///     https://doi.org/10.1007/978-0-387-98144-4
+    ///     Section: Transformations Based on the Variance-Covariance Matrix
     ///
     ///
     /// * `rng`: Random number generator
@@ -109,12 +114,13 @@ impl<const N: usize> ACGDistribution<N> {
         for i in v.iter_values_mut() {
             *i = std_normal_box_muller_tf(rng);
         }
-
         // multivariate gaussian distributed
-        let x = self.l.matmul(&v);
+
+        let mut x = self.l.matmul(&v);
         // map onto sphere
 
-        x.normalize()
+        x.normalize_inplace();
+        x
     }
 }
 
@@ -131,11 +137,31 @@ impl<const N: usize> BinghamDistribution<N> {
     /// * `u`: orthonormal basis of eigenvectors of decomposition
     pub fn try_new(k: ColVec<f64, N>, u: Mat<f64, N, N>) -> Result<Self, String> {
         let u_t = u.transpose();
-        let a = u_t.matmul_diag(&k).matmul(&u);
-        let omega = Mat::<f64, N, N>::identity() + a.scale(2.0f64);
-        let acg_envelope = ACGDistribution::new(omega)?;
 
-        Ok(BinghamDistribution { a, acg_envelope, k })
+        // compute b through solving the equation defined in Kent 2013
+        // sum_i^q 1 / (b + 2 lambda_i) = 1
+        let f = |x: f64| k.iter_values().map(|b| (x + 2.0 * b).recip()).sum::<f64>() - 1.0;
+        let b = brent(f, 0.0, (2 * N) as f64, 1e-6, 200).map_err(|err| {
+            format!("Could not compute 'b'-Constant for bingham distribution sampling: {err}")
+        })?;
+
+        let a = u_t.matmul_diag(&k).matmul(&u);
+        let omega = Mat::<f64, N, N>::identity() + a.scale(2.0f64 / b);
+
+        let l = omega.cholesky_decompose().expect("is spd");
+        let lt_inv = l.transpose().tri_lo_inverse();
+        let l_inv = l.tri_lo_inverse();
+        let omega_inv = lt_inv.matmul(&l_inv);
+        let acg_envelope = ACGDistribution::new(omega_inv)?;
+
+        let dim = N as f64;
+        let ln_mbstar = (-(dim - b) / 2.0) + dim / 2.0 * (dim / b).ln();
+        Ok(BinghamDistribution {
+            a,
+            acg_envelope,
+            k,
+            ln_mbstar,
+        })
     }
 
     pub fn ks(&self) -> &ColVec<f64, N> {
@@ -146,7 +172,7 @@ impl<const N: usize> BinghamDistribution<N> {
     ///
     /// * `x`: value n $S^{N-1}$, needs to have length 1
     pub fn log_pdf_unnorm(&self, x: &ColVec<f64, N>) -> f64 {
-        x.transpose().matmul(&self.a).matmul(x).item()
+        -x.transpose().matmul(&self.a).matmul(x).item()
     }
 
     /// compute the unnormalized probability density function
@@ -160,24 +186,22 @@ impl<const N: usize> BinghamDistribution<N> {
     ///
     /// * `rng`: underlying rng
     pub fn sample(&self, rng: &mut impl Rng) -> ColVec<f64, N> {
-        const GAMMA_FN_THREE_HALFS: f64 = 0.8862269254527579;
         const MAXITER: usize = 100_000;
 
         for _ in 0..MAXITER {
-            use std::f64::consts::{E, TAU};
             let s = self.acg_envelope.sample(rng);
             let w: f64 = rng.random_range(0.0..=1.0);
-            let m = (TAU * E) * (3.0 / (2.0 * E)).powf(1.5) / GAMMA_FN_THREE_HALFS;
 
             // from rejection sampling method
             // w < f_bingham / (m * f_acg)
-            // log(w) < log(f_bingham / (m * f_acg))
-            // log(w) < log(f_bingham) - log(m) - log(f_acg)
+            // w * m < f_bingham / f_acg
+            // log(w * m) < log(f_bingham / f_acg)
+            // log(w * m) < log(f_bingham) - log(f_acg)
             // log(w) + log(m) < log(f_bingham) - log(f_acg)
 
             let log_f_acg = self.acg_envelope.log_pdf_unnorm(&s);
             let log_f_bingham = self.log_pdf_unnorm(&s);
-            if w.ln() + m.ln() < log_f_bingham - log_f_acg {
+            if w.ln() + self.ln_mbstar < log_f_bingham - log_f_acg {
                 // accept sample
                 return s;
             }
@@ -187,10 +211,10 @@ impl<const N: usize> BinghamDistribution<N> {
 }
 
 #[derive(Clone)]
-pub struct HitAndRunPolytopeSampler<const N: usize, const M: usize> {
-    a: Mat<f64, N, M>,
-    b: ColVec<f64, N>,
-    x: ColVec<f64, M>,
+pub struct HitAndRunPolytopeSampler<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize> {
+    a: Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+    b: ColVec<f64, NUM_CONSTRAINTS>,
+    x: ColVec<f64, POINT_DIM>,
     n_thinning: usize,
 }
 
@@ -216,22 +240,22 @@ fn highs_model_status_to_str(status: highs::HighsModelStatus) -> &'static str {
     }
 }
 
-fn find_interior_point<const N: usize, const M: usize>(
-    a: &Mat<f64, N, M>,
-    b: &ColVec<f64, N>,
-) -> Result<ColVec<f64, M>, String> {
+fn find_interior_point<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize>(
+    a: &Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+    b: &ColVec<f64, NUM_CONSTRAINTS>,
+) -> Result<ColVec<f64, POINT_DIM>, String> {
     use highs::{RowProblem, Sense};
 
     let create_problem = || {
         let mut pb = RowProblem::new();
-        let variables = (0..M)
+        let variables = (0..POINT_DIM)
             .map(|_| pb.add_column::<f64, _>(0.0, ..))
             .collect_vec();
         let slack = pb.add_column::<f64, _>(-1.0, ..);
-        for i in 0..N {
+        for i in 0..NUM_CONSTRAINTS {
             pb.add_row(
                 ..=b[i],
-                a.col(i)
+                a.row(i)
                     .iter_values()
                     .zip(&variables)
                     .chain([(&2.0, &slack)])
@@ -285,7 +309,7 @@ fn find_interior_point<const N: usize, const M: usize>(
         }
     };
 
-    let mut res = ColVec::<_, M>::zeros();
+    let mut res = ColVec::<_, POINT_DIM>::zeros();
     // this automatically truncates the slack value which we want to ignore anyway
     for (v, r) in sol_model
         .get_solution()
@@ -299,10 +323,12 @@ fn find_interior_point<const N: usize, const M: usize>(
     Ok(res)
 }
 
-impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
+impl<const NUM_CONSTRAINTS: usize, const POINT_DIM: usize>
+    HitAndRunPolytopeSampler<NUM_CONSTRAINTS, POINT_DIM>
+{
     pub fn try_new(
-        a: Mat<f64, N, M>,
-        b: ColVec<f64, N>,
+        a: Mat<f64, NUM_CONSTRAINTS, POINT_DIM>,
+        b: ColVec<f64, NUM_CONSTRAINTS>,
         n_warmup: usize,
         n_thinning: usize,
         rng: &mut impl Rng,
@@ -324,7 +350,7 @@ impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
         Ok(ret)
     }
 
-    pub fn sample(&mut self, rng: &mut impl Rng) -> ColVec<f64, M> {
+    pub fn sample(&mut self, rng: &mut impl Rng) -> ColVec<f64, POINT_DIM> {
         for _ in 0..self.n_thinning - 1 {
             _ = self.update_mcmc_position(rng);
         }
@@ -334,11 +360,11 @@ impl<const N: usize, const M: usize> HitAndRunPolytopeSampler<N, M> {
     /// return the next position of the markov chain
     ///
     /// * `rng`:
-    pub fn update_mcmc_position(&mut self, rng: &mut impl Rng) -> ColVec<f64, M> {
+    pub fn update_mcmc_position(&mut self, rng: &mut impl Rng) -> ColVec<f64, POINT_DIM> {
         let mut w = &self.b - &self.a.matmul(&self.x);
         assert!(w.iter_values().all(|x| *x >= 0.0), "{}", w);
 
-        let dk = sample_sphere_unif::<M>(rng);
+        let dk = sample_sphere_unif::<POINT_DIM>(rng);
         let ar = self.a.matmul(&dk);
 
         // from BoTorch code:
@@ -459,3 +485,4 @@ pub fn uniform_sample_no_replacement_knuth(
     }
     samples
 }
+// TODO: figure out a way to test the bingham distribution etc

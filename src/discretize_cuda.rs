@@ -1,8 +1,10 @@
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
+use ahash::HashMapExt;
 use log::debug;
 use log::info;
+use ordered_float::NotNan;
 
 use crate::background::cheb2poly;
 use crate::background::Background;
@@ -11,6 +13,7 @@ use crate::pattern::{DiscretizeSample, Discretizer, PeakRenderParams};
 use crate::uninit_vec;
 
 use self::ffi::BkgSOA;
+use self::ffi::CUDAPattern;
 use self::ffi::Uniform;
 
 mod ffi {
@@ -88,6 +91,7 @@ mod ffi {
         pub n_peaks_tot: usize,
     }
 
+    #[derive(Clone, Debug)]
     #[repr(C)]
     pub struct CUDAPattern {
         pub start_idx: usize,
@@ -96,7 +100,7 @@ mod ffi {
 }
 
 struct RenderCtx {
-    inner: UnsafeCell<Inner>,
+    inner: UnsafeCell<Option<Inner>>,
 }
 
 struct Inner {
@@ -106,16 +110,23 @@ struct Inner {
     intens: Vec<f32>,
 }
 
+struct CudaPatterns(UnsafeCell<Vec<CUDAPattern>>);
+unsafe impl Sync for CudaPatterns {}
+
 impl RenderCtx {
-    pub fn new(peak_cap: usize) -> Self {
-        Self {
-            inner: UnsafeCell::new(Inner {
-                intens: unsafe { uninit_vec(peak_cap) },
-                pos: unsafe { uninit_vec(peak_cap) },
-                eta: unsafe { uninit_vec(peak_cap) },
-                fwhm: unsafe { uninit_vec(peak_cap) },
-            }),
-        }
+    pub fn empty() -> Self {
+        Self { inner: None.into() }
+    }
+
+    pub fn initialize(&self, peak_cap: usize) {
+        assert!(unsafe { &*self.inner.get() }.is_none());
+
+        *unsafe { &mut *self.inner.get() } = Some(Inner {
+            intens: unsafe { uninit_vec(peak_cap) },
+            pos: unsafe { uninit_vec(peak_cap) },
+            eta: unsafe { uninit_vec(peak_cap) },
+            fwhm: unsafe { uninit_vec(peak_cap) },
+        });
     }
 
     pub unsafe fn set_at(&self, idx: usize, p: PeakRenderParams) {
@@ -124,7 +135,9 @@ impl RenderCtx {
             eta,
             pos,
             intens,
-        } = unsafe { &mut *self.inner.get() };
+        } = unsafe { &mut *self.inner.get() }
+            .as_mut()
+            .expect("must be initialized");
 
         fwhm[idx] = p.fwhm;
         eta[idx] = p.eta;
@@ -138,7 +151,7 @@ impl RenderCtx {
             eta,
             pos,
             intens,
-        } = self.inner.get_mut();
+        } = self.inner.get_mut().as_mut().expect("is initialized");
 
         ffi::PeakSOA {
             intensity: intens.as_ptr(),
@@ -167,16 +180,6 @@ where
     );
     use self::ffi::BkgSOA;
 
-    let n_peaks_tot: usize = jobs
-        .iter()
-        .map(|job| match job {
-            DiscretizeSample::Standard(job) => job.n_peaks_tot(),
-            DiscretizeSample::TextureMeasurement(items) => {
-                items.iter().map(|x| x.n_peaks_tot()).sum()
-            }
-        })
-        .sum();
-
     let num_peak_sets = jobs.iter().map(|job| job.n_patterns()).sum();
 
     let jobs = {
@@ -193,7 +196,7 @@ where
     };
 
     let mut patterns = Vec::<ffi::CUDAPattern>::with_capacity(num_peak_sets);
-    let ctx = Arc::new(RenderCtx::new(n_peaks_tot));
+    let ctx = Arc::new(RenderCtx::empty());
 
     let mut rng_state = Vec::<u64>::with_capacity(num_peak_sets * 4);
 
@@ -314,14 +317,16 @@ where
         }
     }
 
-    let mut start_idx = 0;
-    for job in jobs.iter() {
-        let n_peaks = job.n_peaks_tot();
-        patterns.push(ffi::CUDAPattern { start_idx, n_peaks });
-        start_idx += n_peaks;
-    }
+    // TODO: check if this is correct for texture measurement. do we want n_peak_sets?
+    patterns.resize(
+        jobs.len(),
+        ffi::CUDAPattern {
+            start_idx: 0,
+            n_peaks: 0,
+        },
+    );
 
-    let patterns = Arc::new(patterns);
+    let patterns = Arc::new(CudaPatterns(UnsafeCell::new(patterns)));
     let jobs = Arc::new(jobs);
     let n_jobs = jobs.len();
 
@@ -346,50 +351,134 @@ where
         chunk_idx + 1
     );
 
-    // TODO: find some way to prune small peaks.
-    let mut handles = Vec::new();
-    for i in 0..n_threads {
-        let start = chunk_size * i;
-        let end = (chunk_size * (i + 1)).min(n_jobs);
-        let patterns = Arc::clone(&patterns);
-        let ctx = Arc::clone(&ctx);
-        let jobs = Arc::clone(&jobs);
-        let handle = std::thread::spawn(move || {
-            for idx in start..end {
-                for (i, p) in jobs[idx].peak_info_iterator().enumerate() {
-                    let pat = &patterns[idx];
-                    assert!(i < pat.n_peaks, "error in peak number computation");
-                    let peak_idx = pat.start_idx + i;
+    // TODO: allocate after each thread has processed its data
+    // and only then write to correct position
+    // currently, we overallocate by about a factor of 4, and we
+    // need to move things around after compression
 
-                    unsafe { ctx.set_at(peak_idx, p) };
+    // let mut handles = Vec::new();
+    let finish_computation = std::sync::Barrier::new(n_threads + 1);
+    let start_ctx_write = std::sync::Barrier::new(n_threads + 1);
+    std::thread::scope(|s| {
+        for thread_idx in 0..n_threads {
+            let start = chunk_size * thread_idx;
+            let end = (chunk_size * (thread_idx + 1)).min(n_jobs);
+
+            let patterns = Arc::clone(&patterns.clone());
+            let ctx = Arc::clone(&ctx);
+            let jobs = Arc::clone(&jobs);
+
+            let finish_computation = &finish_computation;
+            let start_ctx_write = &start_ctx_write;
+
+            s.spawn(move || {
+                debug!("PREP {}: starting peak compression", thread_idx + 1);
+                let mut compressed_by_job = Vec::new();
+                let mut n = 0;
+                for job_idx in start..end {
+                    let mut peak_idx_in_pattern = 0;
+
+                    let mut compressed = ahash::HashMap::with_capacity(jobs[job_idx].n_peaks_tot() / 2);
+                    for (p, _) in jobs[job_idx].peak_info_iterator() {
+                        n += 1;
+                        let pos = NotNan::try_from(p.pos).expect("peak position is not nan");
+                        let fwhm = NotNan::try_from(p.fwhm).expect("peak fwhm is not nan");
+                        let eta = NotNan::try_from(p.eta).expect("peak eta is not nan");
+
+                        use std::collections::hash_map::Entry;
+                        match compressed.entry((pos, fwhm, eta)) {
+                            Entry::Vacant(vacant) => {
+                                vacant.insert((p.intensity, peak_idx_in_pattern));
+                                peak_idx_in_pattern += 1;
+                            },
+                            Entry::Occupied(mut occ) => {
+                                occ.get_mut().0 += p.intensity;
+                            },
+                        }
+                    }
+
+                    compressed_by_job.push(compressed);
                 }
-            }
-            debug!(
-                "(Chunk {} / {n_chunks}) Peak info generation thread {i} exiting",
-                chunk_idx + 1
+
+                let mut n_compressed = 0;
+                for (i, c) in compressed_by_job.iter().enumerate() {
+                    let job_idx = start + i;
+                    unsafe {(&mut *patterns.0.get())[job_idx].n_peaks = c.len()};
+                    n_compressed += c.len();
+                }
+
+                debug!("PREP {}: waiting for computation to finish", thread_idx + 1);
+                finish_computation.wait();
+
+                // main thread fixes pattern starts here
+
+                start_ctx_write.wait();
+
+                for (i, mut compressed) in compressed_by_job.drain(..).enumerate() {
+                    let job_idx = i + start;
+                    for ((pos, fwhm, eta), (intensity, peak_idx_in_pattern)) in compressed.drain() {
+                        let pat = unsafe {&(&*patterns.0.get())[job_idx]};
+                        let peak_idx = pat.start_idx + peak_idx_in_pattern;
+                        unsafe {
+                            ctx.set_at(
+                                peak_idx,
+                                PeakRenderParams {
+                                    pos: *pos,
+                                    intensity: intensity,
+                                    fwhm: *fwhm,
+                                    eta: *eta,
+                                },
+                            )
+                        };
+                    }
+                }
+
+                debug!(
+                "(Chunk {} / {n_chunks}) Peak info generation thread {thread_idx} exiting (compressed from {} to {} peaks)",
+                chunk_idx + 1,
+                n,
+                n_compressed,
             );
-        });
-        handles.push(handle);
+            });
 
-        if end >= n_jobs {
-            break;
+            if end >= n_jobs {
+                debug!("finished starting up all prep threads");
+                break;
+            }
         }
-    }
 
-    for (i, handle) in handles.drain(..).enumerate() {
-        handle.join().map_err(|err| {
-            format!("(Chunk {} / {n_chunks}) Cuda backend: could not join peak info generation thread {i}: '{err:?}'", chunk_idx + 1)
-        })?
-    }
+        {
+            // fix up pattern starts
+            debug!("main thread: waiting for processing in peak info gen threads to finish");
+            finish_computation.wait();
+            debug!("fixing pattern starts");
+            let mut peaks_total = 0;
+            for p in unsafe { &mut *patterns.0.get() }.iter_mut() {
+                p.start_idx = peaks_total;
+                peaks_total += p.n_peaks;
+            }
+
+            ctx.initialize(peaks_total);
+            start_ctx_write.wait();
+            debug!("done fixing pattern starts");
+        }
+    });
 
     let ctx = Arc::into_inner(ctx).expect("all threads owning ctx have stopped");
+
+    let patterns = Arc::into_inner(patterns)
+        .expect("only reference left")
+        .0
+        .into_inner();
+
+    info!("Prepared {} patterns", patterns.len());
 
     Ok(PreparedCudaBatch {
         ctx,
         noise_kind,
         noise_data,
+        patterns,
         rng_state,
-        patterns: Arc::into_inner(patterns).expect("all threads owning patterns have stopped"),
         two_thetas,
         bkg_soa,
         bkg_scales,

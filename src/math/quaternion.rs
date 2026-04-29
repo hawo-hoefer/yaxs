@@ -1,6 +1,9 @@
-use super::linalg::{Vec3, Vec4};
+use num_traits::{ConstOne, Float};
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, PartialEq, Debug)]
+use super::linalg::{Mat3, Vec3, Vec4};
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Quaternion {
     pub w: f32,
@@ -14,14 +17,13 @@ impl Quaternion {
         Self { w, x, y, z }
     }
 
-    pub fn from_axis_angle(x: f32, y: f32, z: f32, alpha: f32) -> Self
-where {
+    pub fn from_axis_angle(x: f32, y: f32, z: f32, alpha: f32) -> Self {
         let v = Vec3::new(x, y, z).normalize();
 
         let alpha_half_sin = (0.5 * alpha).sin();
 
         Self::new(
-            (alpha / 2.0).cos(),
+            (0.5 * alpha).cos(),
             v[0] * alpha_half_sin,
             v[1] * alpha_half_sin,
             v[2] * alpha_half_sin,
@@ -62,7 +64,7 @@ where {
     /// $$v' = q v q^{-1}$$
     ///
     /// * `v`: vector to rotate
-    pub fn quaternion_transform(&self, v: &Vec3<f32>) -> Vec3<f32> {
+    pub fn rotate(&self, v: &Vec3<f32>) -> Vec3<f32> {
         let v = Self::new(0.0, v[0], v[1], v[2]);
         let q_tf = self.quaternion_transform_quaternion(&v);
         Vec3::new(q_tf.x, q_tf.y, q_tf.z)
@@ -127,6 +129,80 @@ where {
             self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
         )
     }
+
+    /// convert self to a rotation matrix
+    ///
+    /// ```
+    /// use yaxs::math::quaternion::Quaternion;
+    /// use yaxs::math::linalg::Mat3;
+    ///
+    /// // rotation of 35 degrees around the x axis
+    /// let a = 35.0f32.to_radians();
+    /// let m = Mat3::from_rows([
+    ///     [1.0,     0.0,      0.0],
+    ///     [0.0, a.cos(), -a.sin()],
+    ///     [0.0, a.sin(),  a.cos()],
+    /// ]);
+    ///
+    /// let q = Quaternion::from_axis_angle(1.0, 0.0, 0.0, a);
+    /// let m_from_q = q.to_rotation_matrix();
+    ///
+    /// assert_eq!(m.isclose(&m_from_q, 1e-6), None);
+    /// ```
+    pub fn to_rotation_matrix(&self) -> Mat3<f32> {
+        let q = self;
+        #[rustfmt::skip]
+        let r = Mat3::from_rows([
+            [1.0 - 2.0 * (q.y * q.y + q.z * q.z),       2.0 * (q.x * q.y - q.z * q.w),       2.0 * (q.x * q.z + q.y * q.w)],
+            [      2.0 * (q.x * q.y + q.z * q.w), 1.0 - 2.0 * (q.x * q.x + q.z * q.z),       2.0 * (q.y * q.z - q.x * q.w)],
+            [      2.0 * (q.x * q.z - q.y * q.w),       2.0 * (q.y * q.z + q.x * q.w), 1.0 - 2.0 * (q.x * q.x + q.y * q.y)],
+        ]);
+        r
+    }
+
+    #[rustfmt::skip]
+    /// create a quaternion from a rotation matrix
+    ///
+    /// * `m`: matrix
+    /// ```
+    /// use yaxs::math::quaternion::Quaternion;
+    /// use yaxs::math::linalg::Mat3;
+    /// // rotation of 35 degrees around the x axis
+    /// let a = 35.0f32.to_radians();
+    /// let m = Mat3::from_rows([
+    ///     [1.0,     0.0,      0.0],
+    ///     [0.0, a.cos(), -a.sin()],
+    ///     [0.0, a.sin(),  a.cos()],
+    /// ]);
+    ///
+    /// let q = Quaternion::from_axis_angle(1.0, 0.0, 0.0, a);
+    /// let q_ = Quaternion::from_rotation_matrix(&m);
+    /// let atol = 1e-6;
+    /// assert!((q.w - q_.w).abs() < atol);
+    /// assert!((q.x - q_.x).abs() < atol);
+    /// assert!((q.y - q_.y).abs() < atol);
+    /// assert!((q.z - q_.z).abs() < atol);
+    /// ```
+    pub fn from_rotation_matrix<T>(m: &Mat3<T>) -> Self
+    where
+        T: ConstOne + Float,
+    {
+        let t = m.trace();
+        let r = (T::ONE + t).sqrt();
+        let half = (T::ONE + T::ONE).recip();
+
+        let w = r * half;
+        let x = (m[(2, 1)] - m[(1, 2)]).signum() * (half * (T::ONE + m[(0, 0)] - m[(1, 1)] - m[(2, 2)]).sqrt()).abs();
+        let y = (m[(0, 2)] - m[(2, 0)]).signum() * (half * (T::ONE - m[(0, 0)] + m[(1, 1)] - m[(2, 2)]).sqrt()).abs();
+        let z = (m[(1, 0)] - m[(0, 1)]).signum() * (half * (T::ONE - m[(0, 0)] - m[(1, 1)] + m[(2, 2)]).sqrt()).abs();
+
+        Self::new(
+            w.to_f32().expect("not nan"),
+            x.to_f32().expect("not nan"), 
+            y.to_f32().expect("not nan"),
+            z.to_f32().expect("not nan"),
+        )
+    }
 }
 
 impl From<Vec4<f32>> for Quaternion {
@@ -162,7 +238,7 @@ impl std::fmt::Display for Quaternion {
 
 #[cfg(test)]
 mod test {
-    use crate::math::linalg::Vec3;
+    use crate::math::linalg::{Mat3, Vec3};
 
     use super::Quaternion;
 
@@ -212,10 +288,58 @@ mod test {
     fn quaternion_rot() {
         let atol = 1e-6;
         let q = Quaternion::from_axis_angle(0.0, 1.0, 0.0, 32.0f32.to_radians());
-        let rot = q.quaternion_transform(&Vec3::<f32>::new(5.0, 7.0, 1.0));
+        let rot = q.rotate(&Vec3::<f32>::new(5.0, 7.0, 1.0));
 
         assert!((rot[0] - 4.77016).abs() < atol, "{}, {}", rot[0], 4.77016);
         assert!((rot[1] - 7.0).abs() < atol, "{}, {}", rot[1], 7.0);
         assert!((rot[2] - -1.801548).abs() < atol, "{}, {}", rot[2], -1.8015);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_111() {
+        let q = Quaternion::from_axis_angle(1.0, 1.0, 1.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.89869873, -0.2552984, 0.35659966],
+            [0.35659966, 0.89869873, -0.2552984],
+            [-0.2552984, 0.35659966, 0.89869873],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_100() {
+        let q = Quaternion::from_axis_angle(1.0, 0.0, 0.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [1.0, 0.0, 0.0],
+            [0.0, 0.8480480961564261, -0.5299192642332049],
+            [0.0, 0.5299192642332049, 0.8480480961564261],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_010() {
+        let q = Quaternion::from_axis_angle(0.0, 1.0, 0.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.8480480961564261, 0.0, 0.5299192642332049],
+            [0.0, 1.0, 0.0],
+            [-0.5299192642332049, 0.0, 0.8480480961564261],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
+    }
+
+    #[test]
+    fn quat_to_rot_matrix_001() {
+        let q = Quaternion::from_axis_angle(0.0, 0.0, 1.0, 32.0f32.to_radians());
+        let mat = Mat3::from_rows([
+            [0.8480480961564261, -0.5299192642332049, 0.0],
+            [0.5299192642332049, 0.8480480961564261, 0.0],
+            [0.0, 0.0, 1.0],
+        ]);
+
+        assert_eq!(q.to_rotation_matrix().isclose(&mat, 1e-3), None);
     }
 }

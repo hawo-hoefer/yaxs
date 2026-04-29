@@ -1,5 +1,6 @@
 mod background;
 mod composition;
+pub mod domain_size;
 mod impurity;
 mod noise;
 mod parameter;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 use crate::absorption::{compute_mixture_attenuation_coef, MACGenerator};
 use crate::cif::CifParser;
+use crate::domain_size::DomainSize;
 use crate::util::{
     deserialize_angle_rad_to_deg, deserialize_nonzero_float, deserialize_nonzero_usize,
     deserialize_range,
@@ -100,9 +102,9 @@ pub fn prepare_peak_simulation(
         preferred_orientation: po,
         strain,
         composition,
-        mean_ds_nm,
         ds_eta: _,
         mustrain: _,
+        domain_size,
         b_iso,
     } in cfg.sample_parameters.structures.iter()
     {
@@ -111,7 +113,12 @@ pub fn prepare_peak_simulation(
 
         let mut reader = std::fs::File::open(&struct_path)
             .map(BufReader::new)
-            .map_err(|err| format!("Could not load cif at '{struct_path}': {err}", struct_path=struct_path.display()))?;
+            .map_err(|err| {
+                format!(
+                    "Could not load cif at '{struct_path}': {err}",
+                    struct_path = struct_path.display()
+                )
+            })?;
 
         let mut cif = String::new();
         let _ = reader
@@ -127,8 +134,15 @@ pub fn prepare_peak_simulation(
                     .map_err(|err| format!("Invalid contents for CIF '{path}': {err}"))
             })?;
 
-        if mean_ds_nm.upper_bound() > 200.0 {
-            return Err(format!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound()));
+        match domain_size {
+            domain_size::DomainSize::Uniform(mean_ds_nm) => {
+                if mean_ds_nm.upper_bound() > 200.0 {
+                    return Err(format!("Specified a mean domain size with an upper bound of {hi} nm. The scherrer Formula is only valid up until 200 nm. Larger domain sizes are not supported for now. Quitting...", hi=mean_ds_nm.upper_bound()));
+                }
+            }
+            domain_size::DomainSize::Ellipsoidal(_) => {
+                // Don't check for now
+            }
         }
 
         structure_paths.push(struct_path.to_str().expect("valid path").to_owned());
@@ -375,9 +389,9 @@ impl InstrumentParameterCfg {
                 // GSAS computes FWHM in centidegrees
                 // Gaussian instrument parameters therefore are FWHM^2 coefficients in
                 // centidegrees squared. therefore scale them by 10000
-                u /= 10000.0;
-                v /= 10000.0;
-                w /= 10000.0;
+                u /= 10_000.0;
+                v /= 10_000.0;
+                w /= 10_000.0;
                 // Lorentzian parameters are coefficients for FWHM in centidegrees,
                 // therefore they should be scaled by 100 for our purposes
                 x /= 100.0;
@@ -457,7 +471,7 @@ pub struct SampleParameters {
 
 pub struct Sample {
     ds_eta: Box<[f64]>,
-    mean_ds_nm: Box<[f64]>,
+    mean_ds_nm: Box<[DomainSize]>,
     mustrain: Box<[f64]>,
     mustrain_eta: Box<[f64]>,
     impurity_peaks: Box<[ImpurityPeak]>,
@@ -469,7 +483,7 @@ impl SampleParameters {
         let mean_ds_nm = self
             .structures
             .iter()
-            .map(|s| s.mean_ds_nm.generate(rng))
+            .map(|s| s.domain_size.generate(rng))
             .collect_vec()
             .into_boxed_slice();
 
@@ -539,11 +553,15 @@ pub struct CompactSimResults {
     pub random_b_isos: Option<Box<[f64]>>,
     pub all_preferred_orientations: Box<[Option<BinghamParams>]>,
     pub n_permutations: usize,
-    pub texture_measurement: Option<TextureMeasurement>,
+    pub stride: usize,
 }
 
 impl CompactSimResults {
-    pub fn idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
+    pub fn idx(&self, struct_idx: usize, perm_idx: usize, tx_idx: Option<usize>) -> usize {
+        self.phase_idx(struct_idx, perm_idx) * self.stride + tx_idx.unwrap_or(0)
+    }
+
+    pub fn phase_idx(&self, struct_idx: usize, perm_idx: usize) -> usize {
         struct_idx * self.n_permutations + perm_idx
     }
 }
@@ -575,7 +593,7 @@ impl ToDiscretize {
         } = angle_dispersive;
 
         let Sample {
-            mean_ds_nm,
+            mean_ds_nm: domain_sizes,
             impurity_peaks,
             permutation_ids,
             ds_eta,
@@ -616,6 +634,7 @@ impl ToDiscretize {
                     .noise
                     .as_ref()
                     .map(|x| x.generate(rng)),
+                texture_measurement_idx: None,
             },
             emission_lines: emission_lines.clone(),
             goniometer_radius_mm: *goniometer_radius_mm,
@@ -625,7 +644,7 @@ impl ToDiscretize {
                 vol_fractions,
                 weight_fractions,
 
-                mean_ds_nm,
+                domain_sizes,
                 ds_eta,
                 mustrain,
                 mustrain_eta,
@@ -691,6 +710,7 @@ impl ToDiscretize {
                     .as_ref()
                     .map(|x| x.generate(rng)),
                 random_seed: rng.random(),
+                texture_measurement_idx: None,
             },
             beamline: energy_dispersive.beamline.clone(),
             normalize: simulation_parameters.normalize,
@@ -698,7 +718,7 @@ impl ToDiscretize {
             meta: EDXRDMeta {
                 vol_fractions,
                 weight_fractions,
-                mean_ds_nm,
+                domain_sizes: mean_ds_nm,
                 theta_rad: energy_dispersive.theta_deg.to_radians(),
                 ds_eta,
                 mustrain,

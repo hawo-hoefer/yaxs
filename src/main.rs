@@ -3,14 +3,18 @@ use clap::Parser;
 use colog::format::CologStyle;
 use colored::Colorize;
 use itertools::Itertools;
+use ordered_float::NotNan;
 use rand::SeedableRng;
 use sha2::Digest;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::absorption::MACGenerator;
+use yaxs::cif::CifParser;
+use yaxs::domain_size::DomainSize;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
-use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd, Peak};
+use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd};
+use yaxs::structure::{Peak, Structure};
 
 use log::{debug, error, info};
 
@@ -69,9 +73,9 @@ fn display_hkls(
     info!("Displaying HKLs");
 
     for i in 0..to_discretize.structures.len() {
-        let idx = to_discretize.sim_res.idx(i, 0);
+        let idx = to_discretize.sim_res.idx(i, 0, Some(0));
         let s = &to_discretize.sample_parameters.structures[i];
-        let mean_ds_nm = s.mean_ds_nm.mean();
+        let mean_ds_nm = s.domain_size.mean();
         let ds_eta = s.ds_eta.mean();
         let mustrain = s
             .mustrain
@@ -106,7 +110,7 @@ fn display_hkls(
                             wavelength_ams / 10.0,
                             &instrument_parameters,
                             abs.0[0][sid],
-                            mean_ds_nm,
+                            &DomainSize::Isotropic(mean_ds_nm),
                             ds_eta,
                             mustrain,
                             mustrain_eta,
@@ -118,7 +122,7 @@ fn display_hkls(
 
                         let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
                         if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
-                            return (rp.pos, p.i_hkl as f32);
+                            return (rp.pos, *p.i_hkl as f32);
                         }
                         (rp.pos, intens)
                     })
@@ -138,13 +142,15 @@ fn display_hkls(
                 });
                 let mac_data = mac_generator
                     .get_mixture(std::iter::once((&structures[idx].wt_composition, 1.0f64)));
-                to_discretize.sim_res.all_simulated_peaks[idx]
+                let peak_sets = &to_discretize.sim_res.all_simulated_peaks[idx];
+                assert_eq!(peak_sets.struct_idx, idx);
+                peak_sets
                     .iter_peaks()
                     .map(|p: &Peak| {
                         let rp = p.get_edxrd_render_params(
                             theta_rad,
                             f_lorentz,
-                            mean_ds_nm,
+                            &DomainSize::Isotropic(mean_ds_nm),
                             ds_eta,
                             0.0,
                             0.0,
@@ -156,7 +162,7 @@ fn display_hkls(
                         let intens = pseudo_voigt(0.0, rp.eta, rp.fwhm) * rp.intensity;
 
                         if matches!(mode, io::HKLDisplayMode::Structure { .. }) {
-                            return (rp.pos, p.i_hkl as f32);
+                            return (rp.pos, *p.i_hkl as f32);
                         }
                         (rp.pos, intens)
                     })
@@ -182,16 +188,14 @@ fn display_hkls(
         {
             use std::fmt::Write;
             let mut hkls = String::new();
-            for hkl in p.hkls.iter() {
-                write!(
-                    &mut hkls,
-                    "({h:2} {k:2} {l:2}) ",
-                    h = hkl[0],
-                    k = hkl[1],
-                    l = hkl[2]
-                )
-                .expect("enough memory");
-            }
+            write!(
+                &mut hkls,
+                "({h:2} {k:2} {l:2}) ",
+                h = p.hkl[0],
+                k = p.hkl[1],
+                l = p.hkl[2]
+            )
+            .expect("enough memory");
             let intensity = i / scale;
             info!(
                 "i_hkl: {intensity:.4} d_hkl: {d_hkl:.4} pos: {pos:.4} | {hkls}",
@@ -315,7 +319,8 @@ fn main() {
             .expect("no other references to sim_res should exist at this point");
         for phase_peaks in v.all_simulated_peaks.iter_mut() {
             for peak in phase_peaks.iter_peaks_mut() {
-                peak.i_hkl = rand_scale.scale_peak(peak.i_hkl, &mut rng);
+                peak.i_hkl = NotNan::try_from(rand_scale.scale_peak(*peak.i_hkl, &mut rng))
+                    .expect("scale is not Nan");
             }
         }
     }
@@ -337,6 +342,7 @@ fn main() {
 
     let params = cfg.simulation_parameters;
     let extra = io::Extra {
+        n_patterns: params.n_patterns,
         max_phases: cfg.sample_parameters.structures.len(),
         texture: params.texture_measurement,
         encoding: cfg

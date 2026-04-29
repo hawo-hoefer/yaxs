@@ -29,26 +29,26 @@ sample_parameters:
     - d_hkl_ams: 2
       intensity: [5, 100]
       eta: 0.5
-      mean_ds_nm: 25
+      mean_ds_nm: 10
       probability: 0.1
       n_peaks: 10
   structure_permutations: 100
   structures:
     - path: ./cif/CuO_16025.cif
       strain: !Maximum 0.005
-      mean_ds_nm: 15.0
+      domain_size: [10.0, 100.0, [50.0, 100.0]] # principal domain size lengths with random orientation (ranges also possible)
       ds_eta: [0.0, 1.0]
       mustrain: {amplitude: [0, 1000], eta: [0.0, 1.0]}
       b_iso: [0.05, 2.0]
       # volume_fraction: 0.4
     - path: ./cif/Na2CO3.cif
       strain: !Maximum 0.005
-      mean_ds_nm: 15.0
+      domain_size: {main_sizes: [10.0, 100.0, 50.0], orientation: [1.0, 0.0, 0.0, 0.0]} # principal domain size lengths with specified orientation 
       ds_eta: [0.0, 1.0]
       mustrain: {amplitude: 0, eta: 0}
     - path: ./cif/Si_101017.cif
       strain: !Maximum 0.005
-      mean_ds_nm: 15.0
+      domain_size: 15.0 # uniform domain size
       ds_eta: [0.0, 1.0]
       mustrain: {amplitude: 0, eta: 0}
 

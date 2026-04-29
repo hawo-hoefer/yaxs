@@ -7,6 +7,7 @@ pub mod yaxs {
     use std::sync::mpsc::Receiver;
     use std::sync::{Arc, Mutex};
 
+    use crate::cfg::domain_size::DomainSize;
     use crate::cfg::{
         prepare_peak_simulation, AngleDispersive, Config, InstrumentParameterCfg, Parameter,
         SampleParameters, SimulationKind, SimulationParameters, StrainCfg, StructureDef,
@@ -19,6 +20,7 @@ pub mod yaxs {
     use log::{debug, error};
     use ndarray::ArrayD;
     use numpy::IntoPyArray;
+    use ordered_float::NotNan;
     use pyo3::exceptions::{PyRuntimeError, PyValueError};
     use pyo3::types::{IntoPyDict, PyDict};
     use pyo3::{pyclass, pyfunction, pymethods, Bound, PyResult, Python};
@@ -141,7 +143,7 @@ pub mod yaxs {
         }
     }
 
-    #[pyclass(from_py_object, name="Parameter")]
+    #[pyclass(from_py_object, name = "Parameter")]
     #[derive(Clone, Debug)]
     pub enum PyParameter {
         Fixed(f64),
@@ -335,7 +337,10 @@ pub mod yaxs {
                 composition: None,
                 mustrain: None,
                 strain: Some(StrainCfg::Maximum(s.max_strain)),
-                mean_ds_nm: Parameter::Range(s.domain_size_nm.0, s.domain_size_nm.1),
+                domain_size: DomainSize::Uniform(Parameter::Range(
+                    s.domain_size_nm.0,
+                    s.domain_size_nm.1,
+                )),
                 ds_eta: Parameter::Range(0.0, 1.0),
                 b_iso: None,
             });
@@ -424,7 +429,8 @@ pub mod yaxs {
                 .expect("no other references to sim_res should exist at this point");
             for phase_peaks in v.all_simulated_peaks.iter_mut() {
                 for peak in phase_peaks.iter_peaks_mut() {
-                    peak.i_hkl = rand_scale.scale_peak(peak.i_hkl, &mut rng);
+                    peak.i_hkl = NotNan::try_from(rand_scale.scale_peak(*peak.i_hkl, &mut rng))
+                        .expect("peak scaling should not be nan");
                 }
             }
         }
@@ -440,6 +446,7 @@ pub mod yaxs {
                 .map(|StructureDef { path, .. }| path.to_string())
                 .collect_vec(),
             cfg: cfg.kind.clone(),
+            n_patterns,
         };
 
         if let SimulationKind::AngleDispersive(angle_dispersive) = cfg.kind {

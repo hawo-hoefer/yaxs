@@ -8,14 +8,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::absorption::MACData;
 use crate::background::Background;
+use crate::domain_size::DomainSize;
 use crate::io::PatternMeta;
 use crate::math::linalg::Vec3;
 use crate::math::stats::uniform_sample_no_replacement_knuth;
 use crate::math::{
-    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, scherrer_broadening,
-    scherrer_broadening_edxrd, C_M_S, H_EV_S, SQRT_8_LN_2,
+    e_kev_to_lambda_ams, pseudo_voigt, sample_displacement_delta_theta_rad, C_M_S, H_EV_S,
+    SQRT_8_LN_2,
 };
 use crate::noise::Noise;
+use crate::structure::Peak;
 
 use self::adxrd::InstrumentParameters;
 pub use self::adxrd::{ADXRDMeta, DiscretizeAngleDispersive};
@@ -64,7 +66,9 @@ pub struct RenderCommon {
     // all simulated peaks for all phases in order [structure, structure permutations, (texture_measurement_idx)]
     pub sim_res: Arc<CompactSimResults>,
     // indices to select from simulated peaks, length is number of structures
+    // contains the permutation_idx
     pub indices: Box<[usize]>,
+    pub texture_measurement_idx: Option<usize>,
     pub impurity_peaks: Box<[ImpurityPeak]>,
     pub random_seed: u64,
     pub noise: Option<Noise>,
@@ -73,7 +77,13 @@ pub struct RenderCommon {
 impl RenderCommon {
     pub fn idx(&self, phase_id: usize) -> usize {
         let perm_id = self.indices[phase_id];
-        self.sim_res.idx(phase_id, perm_id)
+        self.sim_res
+            .idx(phase_id, perm_id, self.texture_measurement_idx)
+    }
+
+    pub fn phase_idx(&self, phase_id: usize) -> usize {
+        let perm_id = self.indices[phase_id];
+        self.sim_res.phase_idx(phase_id, perm_id)
     }
 
     pub fn n_phases(&self) -> usize {
@@ -459,7 +469,7 @@ pub struct ImpurityPeak {
 }
 
 pub trait Discretizer {
-    fn peak_info_iterator(&self) -> impl Iterator<Item = PeakRenderParams>;
+    fn peak_info_iterator(&self) -> impl Iterator<Item = (PeakRenderParams, Option<usize>)>;
     fn n_peaks_tot(&self) -> usize;
     fn bkg(&self) -> &Background;
     fn seed(&self) -> u64;
@@ -476,7 +486,7 @@ pub trait Discretizer {
         // math or extra memory allocation
         self.bkg().render(intensities, positions);
 
-        for p in self.peak_info_iterator() {
+        for (p, _) in self.peak_info_iterator() {
             p.render(positions, intensities, abstol)
         }
 
@@ -493,19 +503,6 @@ pub trait Discretizer {
             });
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-#[repr(C)]
-/// A diffraction peak with d_hkl in amstrong and i_hkl in arbitrary units
-///
-/// * `d_hkl`: crystal lattice distance in amstrong
-/// * `i_hkl`: intensity in arbitrary units
-/// * `hkls`: miller indices corresponding to peak
-pub struct Peak {
-    pub d_hkl: f64,
-    pub i_hkl: f64,
-    pub hkls: Vec<Vec3<i16>>,
 }
 
 pub struct Peaks {
@@ -626,10 +623,47 @@ fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
     (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
 }
 
+fn get_sample_sig_gam(
+    instrument_parameters: &InstrumentParameters,
+    domain_size: &DomainSize,
+    ds_eta: f64,
+    mustrain: f64,
+    mustrain_eta: f64,
+    wavelength_nm: f64,
+    theta_hkl_rad: f64,
+    pos: &Vec3<f64>,
+) -> (f64, f64) {
+    // use names from GSAS for now
+    // size and microstrain broadening fwhms
+    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, pos);
+    let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
+
+    // FWHM = sqrt(8 ln 2) sigma
+    // sigma^2 = FWHM^2 / (8 ln 2)
+    #[rustfmt::skip]
+        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
+                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
+    sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
+    let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
+
+    let g_fwhm_sq = instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq;
+    // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
+    let g_fwhm_sq = g_fwhm_sq.max(0.0000001);
+
+    let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
+    // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
+    // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
+    // of theta
+    let l_fwhm = l_fwhm.max(0.00001);
+
+    (g_fwhm_sq, l_fwhm)
+}
+
 impl Peak {
     pub fn get_adxrd_theta_rad(&self, wavelength_ang: f64) -> f64 {
-        (wavelength_ang / (2.0 * self.d_hkl)).asin()
+        (wavelength_ang / (2.0 * *self.d_hkl)).asin()
     }
+
     /// Get ADXRD Peak location, intensity and fwhm
     ///
     /// * `wavelength_nm`: X-ray wavelength
@@ -644,7 +678,7 @@ impl Peak {
         wavelength_nm: f64,
         instrument_parameters: &InstrumentParameters,
         absorption_coefficient: f64,
-        mean_ds_nm: f64,
+        domain_size: &DomainSize,
         ds_eta: f64,
         mustrain: f64,
         mustrain_eta: f64,
@@ -670,34 +704,21 @@ impl Peak {
         };
 
         let f_lorentz = lorentz_polarization_factor(theta_hkl_rad, monochromator_angle_rad);
-
-        // use names from GSAS for now
-        // size and microstrain broadening fwhms
-        let sgam = scherrer_broadening(wavelength_nm, theta_hkl_rad, mean_ds_nm);
-        let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
-
-        // FWHM = sqrt(8 ln 2) sigma
-        // sigma^2 = FWHM^2 / 8 ln 2
-        #[rustfmt::skip]
-        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
-                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
-        sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
-        let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
-
-        // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
-        let g_fwhm_sq = (instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq)
-            .max(0.0000001);
-
-        // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
-        // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
-        // of theta
-        let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
-        let l_fwhm = l_fwhm.max(0.00001);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            instrument_parameters,
+            domain_size,
+            ds_eta,
+            mustrain,
+            mustrain_eta,
+            wavelength_nm,
+            theta_hkl_rad,
+            &self.pos,
+        );
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
         let peak_weight =
-            (absorption_coefficient * self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
+            (absorption_coefficient * *self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
                 as f32;
 
         PeakRenderParams {
@@ -718,7 +739,7 @@ impl Peak {
         &self,
         theta_rad: f64,
         f_lorentz: f64,
-        mean_ds_nm: f64,
+        domain_size: &DomainSize,
         ds_eta: f64,
         mustrain: f64,
         mustrain_eta: f64,
@@ -740,7 +761,7 @@ where {
         // eV * m * (m^-10)
         // ev * e-10
         // g_hkl in ams = m^-10
-        let e_kev = hc / (2.0 * self.d_hkl * theta_rad.sin());
+        let e_kev = hc / (2.0 * *self.d_hkl * theta_rad.sin());
 
         let absorption = mac_data
             .interpolate(e_kev)
@@ -756,12 +777,7 @@ where {
             * weight
             / (2.0 * *absorption);
 
-        let size_broad = scherrer_broadening_edxrd(theta_rad, mean_ds_nm);
-        // Gerward, Leif, S. Mo/rup, and H. Topso/e.
-        // "Particle size and strain broadening in energy‐dispersive x‐ray powder patterns."
-        // Journal of Applied Physics 47.3 (1976): 822-825.
-        //
-        // DOI: <https://doi.org/10.1063/1.322714>
+        let size_broad = domain_size.edxrd_broadening(theta_rad, &self.hkl);
         let mustrain_broad = mustrain * e_kev * 2.0;
 
         let g_fwhm = ((1.0 - ds_eta) * size_broad * size_broad
@@ -957,5 +973,113 @@ mod test {
         let vf = get_weight_fractions(&wt_fracs, &densities);
         assert_eq!(vf.len(), 2);
         assert_eq!([vf[0], vf[1]], [1.0 / 3.0, 2.0 / 3.0]);
+    }
+
+    #[test]
+    fn fwhms_zero_instprms_no_mustrain_eta_1() {
+        let instprm = InstrumentParameters::zero();
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            1.0,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.0913540435781769;
+        let g_fwhm_sq_ = 0.001 * 0.01 * 0.01;
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_zero_instprms_no_mustrain_eta_0_5() {
+        let instprm = InstrumentParameters::zero();
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.04567702178908845;
+        let g_fwhm_sq_ = 0.0003762531209164358;
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_with_instprms_no_mustrain_eta_0_5() {
+        let instprm =
+            InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            0.0,
+            0.0,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.04567702178908845;
+        let g_fwhm_sq_ = 0.0008370226363751095;
+
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
+    }
+
+    #[test]
+    fn fwhms_with_instprms_both_etas_0_5() {
+        let instprm =
+            InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
+            &instprm,
+            &DomainSize::Isotropic(100.0),
+            0.5,
+            5e-3,
+            0.5,
+            0.15401,
+            (30.0f64 / 2.0).to_radians(),
+            &Vec3::zeros(),
+        );
+
+        let l_fwhm_ = 0.08405791641469365;
+        let g_fwhm_sq_ = 0.0011026756451401095;
+
+        assert!(
+            (l_fwhm - l_fwhm_).abs() < 1e-5,
+            "exp: {l_fwhm_} actual: {l_fwhm}"
+        );
+        assert!(
+            (g_fwhm_sq - g_fwhm_sq_).abs() < 1e-5,
+            "exp: {g_fwhm_sq_} actual: {g_fwhm_sq}"
+        );
     }
 }

@@ -19,9 +19,7 @@ pub struct KDEApprox {
 
 impl KDEApprox {
     pub fn normalization_constant(&self) -> f64 {
-        self.kappa
-            / (std::f64::consts::TAU * (self.kappa.exp() - (-self.kappa).exp()))
-            / self.n as f64
+        self.kappa / (std::f64::consts::TAU * self.kappa.sinh() * self.n as f64)
     }
 }
 
@@ -251,7 +249,7 @@ impl POCfg {
                 //
                 let k_max = *k_max;
                 let s_lo = strength.lower_bound();
-                let _ = strength.upper_bound();
+                // let _ = strength.upper_bound();
                 let constraints = Constraints([
                     // k1 in [0, k_max]
                     IneqConstraint::ge([1.0, 0.0, 0.0], 0.0),

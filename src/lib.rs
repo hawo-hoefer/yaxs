@@ -27,6 +27,7 @@ pub mod site;
 pub mod strain;
 pub mod structure;
 pub mod symop;
+pub mod domain_size;
 
 pub mod threading;
 
