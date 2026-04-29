@@ -9,14 +9,14 @@ from yaxs import Parameter
 # use LOG_LEVEL to suppress info and output from YAXS
 os.environ["LOG_LEVEL"] = "Error"
 
-# define crystal structures in our simulation 
+# define crystal structures in our simulation
 s = [
     yaxs.Structure("Na2CO3.cif", 0.0, (5, 70), (0, 1)),
     yaxs.Structure("CuO.cif", 0.0, (5, 70), (0, 1)),
 ]
 
 two_theta_range = (5, 40)
-n_steps = 2048
+n_steps =  2048
 
 # set the instrument parameters
 instprms = yaxs.InstrumentParams(
@@ -30,7 +30,14 @@ instprms = yaxs.InstrumentParams(
 emission_lines = yaxs.EmissionLine.mo_ka()
 
 monochromator_angle_deg = 0
-instrument = yaxs.Instrument(instprms, monochromator_angle_deg, emission_lines, 180, two_theta_range, n_steps)
+instrument = yaxs.Instrument(
+    instprms,
+    monochromator_angle_deg,
+    emission_lines,
+    180,  # goniometer radius
+    two_theta_range,
+    n_steps,
+)
 sample = yaxs.Sample((-500, 500))
 
 result = yaxs.simulate_adxrd(
