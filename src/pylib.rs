@@ -35,16 +35,24 @@ pub mod yaxs {
         pub max_strain: f64,
         #[pyo3(get, set)]
         pub domain_size_nm: (f64, f64),
+        #[pyo3(get, set)]
+        pub domain_size_eta: (f64, f64),
     }
 
     #[pymethods]
     impl PyStructure {
         #[new]
-        fn new(path: String, max_strain: f64, domain_size_nm: (f64, f64)) -> Self {
+        fn new(
+            path: String,
+            max_strain: f64,
+            domain_size_nm: (f64, f64),
+            domain_size_eta: (f64, f64),
+        ) -> Self {
             Self {
                 path,
                 max_strain,
                 domain_size_nm,
+                domain_size_eta,
             }
         }
 
@@ -311,6 +319,7 @@ pub mod yaxs {
         sample: PySample,
         seed: usize,
         n_patterns: usize,
+        structure_permutations: usize,
         cif_root: String,
     ) -> PyResult<Bound<'py, PyDict>> {
         io::init_logging();
@@ -331,6 +340,13 @@ pub mod yaxs {
 
         let mut s_defs = Vec::new();
         for s in structures {
+            if s.domain_size_eta.0 < 0.0 || s.domain_size_eta.0 > 1.0 {
+                return Err(PyValueError::new_err(format!("domain size eta must be between 0 and 1, got {} for lower bound of structure {}.", s.domain_size_eta.0, s.path)));
+            }
+            if s.domain_size_eta.1 < 0.0 || s.domain_size_eta.1 > 1.0 {
+                return Err(PyValueError::new_err(format!("domain size eta must be between 0 and 1, got {} for upper bound of structure {}.", s.domain_size_eta.1, s.path)));
+            }
+
             s_defs.push(StructureDef {
                 path: s.path.clone(),
                 preferred_orientation: None,
@@ -341,7 +357,13 @@ pub mod yaxs {
                     s.domain_size_nm.0,
                     s.domain_size_nm.1,
                 )),
-                ds_eta: Parameter::Range(0.0, 1.0),
+                ds_eta: Parameter::range_checked(s.domain_size_eta.0, s.domain_size_eta.1)
+                    .map_err(|err| {
+                        PyValueError::new_err(format!(
+                            "Invalid range of domain size eta for structure {}: {}",
+                            s.path, err
+                        ))
+                    })?,
                 b_iso: None,
             });
         }
@@ -379,7 +401,7 @@ pub mod yaxs {
                 structures: s_defs,
                 concentration_subset: None, // TODO
                 impurities: None,
-                structure_permutations: n_patterns,
+                structure_permutations,
             },
             simulation_parameters: SimulationParameters {
                 normalize: false,
@@ -435,19 +457,19 @@ pub mod yaxs {
             }
         }
 
-        let params = cfg.simulation_parameters;
-        let extra = io::Extra {
-            max_phases: cfg.sample_parameters.structures.len(),
-            texture: params.texture_measurement,
-            encoding: cfg
-                .sample_parameters
-                .structures
-                .iter()
-                .map(|StructureDef { path, .. }| path.to_string())
-                .collect_vec(),
-            cfg: cfg.kind.clone(),
-            n_patterns,
-        };
+        // let params = cfg.simulation_parameters;
+        // let extra = io::Extra {
+        //     max_phases: cfg.sample_parameters.structures.len(),
+        //     texture: params.texture_measurement,
+        //     encoding: cfg
+        //         .sample_parameters
+        //         .structures
+        //         .iter()
+        //         .map(|StructureDef { path, .. }| path.to_string())
+        //         .collect_vec(),
+        //     cfg: cfg.kind.clone(),
+        //     n_patterns,
+        // };
 
         if let SimulationKind::AngleDispersive(angle_dispersive) = cfg.kind {
             let absorption_factors = PrecomputedLACs::try_new(
@@ -465,7 +487,7 @@ pub mod yaxs {
             let gen = adxrd::JobGen::new(
                 angle_dispersive,
                 to_discretize,
-                params,
+                cfg.simulation_parameters,
                 vf_generator,
                 absorption_factors,
                 rng,

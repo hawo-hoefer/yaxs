@@ -6,16 +6,19 @@ from matplotlib import pyplot as plt
 import yaxs
 from yaxs import Parameter
 
+# use LOG_LEVEL to suppress info and output from YAXS
 os.environ["LOG_LEVEL"] = "Error"
 
+# define crystal structures in our simulation 
 s = [
-    yaxs.Structure("Na2CO3.cif", 0.0, (5, 70)),
-    yaxs.Structure("CuO.cif", 0.0, (5, 70)),
+    yaxs.Structure("Na2CO3.cif", 0.0, (5, 70), (0, 1)),
+    yaxs.Structure("CuO.cif", 0.0, (5, 70), (0, 1)),
 ]
 
 two_theta_range = (5, 40)
 n_steps = 2048
 
+# set the instrument parameters
 instprms = yaxs.InstrumentParams(
     u=Parameter.range(5.71, 15.71),
     v=Parameter.range(-9.14, 3.14),

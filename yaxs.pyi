@@ -3,13 +3,30 @@ from typing import Any
 import numpy as np
 
 class Structure:
+    """A crystallographic structure craeted from a CIF structure definition"""
+
     path: str
     max_strain: float
     domain_size_nm: tuple[float, float]
+    domain_size_eta: tuple[float, float]
 
     def __init__(
-        self, path: str, max_strain: float, domain_size_range: tuple[float, float]
-    ) -> None: ...
+        self,
+        path: str,
+        max_strain: float,
+        domain_size_range: tuple[float, float],
+        domain_size_eta: tuple[float, float],
+    ) -> None:
+        """Create a Structure
+
+        Args:
+            path: path to CIF structure definition
+            max_strain: maximum macrostrain / deformation of the unit cell
+            domain_size_range: range of the domain size in nanometers
+            domain_size_eta: range for the domain_size pseudo-voigt mixing parameter.
+                             upper and lower bound must be in [0, 1]
+        """
+        ...
 
 class Sample:
     """Sample configuration containing ranges for sample parameters"""
@@ -48,13 +65,12 @@ class Parameter:
         """create a range parameter
 
         Args:
-            v: value 
+            v: value
 
         Returns:
             Fixed Parameter
         """
         ...
-
 
 class InstrumentParams:
     u: Parameter
@@ -65,7 +81,13 @@ class InstrumentParams:
     z: Parameter
 
     def __init__(
-        self, u: Parameter, v: Parameter, w: Parameter, x: Parameter, y: Parameter, z: Parameter
+        self,
+        u: Parameter,
+        v: Parameter,
+        w: Parameter,
+        x: Parameter,
+        y: Parameter,
+        z: Parameter,
     ) -> None: ...
 
     """Create zero-initialized instrument parameters"""
