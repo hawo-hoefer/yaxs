@@ -14,6 +14,7 @@ impl Lattice {
         }
     }
 
+    #[allow(unused)]
     fn recip_lattice(&self) -> Lattice {
         Self {
             mat: self

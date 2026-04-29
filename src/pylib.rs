@@ -514,7 +514,7 @@ pub mod yaxs {
                     if #[cfg(feature = "use-gpu")] {
                         let output_names = crate::io::cuda::render_write_chunked(gen, &io_opts, move |rx, _compress, _n_chunks| save_to_mem(rx, Arc::clone(&out)));
                     } else {
-                        let output_names = crate::io::cpu::render_write_chunked(gen, &io_opts, io::io_thread_fn);
+                        let output_names = crate::io::cpu::render_write_chunked(gen, &io_opts, move |rx, _compress, _n_chunks| save_to_mem(rx, Arc::clone(&out)));
                     }
                 }
                 let _ = output_names.map_err(|err| {
@@ -531,7 +531,7 @@ pub mod yaxs {
 
             return out.into_py_dict(py);
         } else {
-            todo!("wtf")
+            panic!("something weird has happened")
         };
     }
 }

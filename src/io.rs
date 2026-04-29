@@ -432,7 +432,6 @@ pub mod cuda {
 
     use crate::cuda_common::CUDA_DEVICE_INFO;
     use crate::discretize_cuda::PreparedCudaBatch;
-    use crate::io::io_thread_fn;
     use crate::pattern::{
         DiscretizeJobGenerator, DiscretizeSample, Discretizer, Intensities, JobParams,
     };
@@ -710,7 +709,8 @@ pub mod cpu {
     use log::info;
     use ndarray::Array2;
 
-    use crate::io::{io_thread_fn, PatternMeta, WriteJob};
+    use std::sync::mpsc::Receiver;
+    use crate::io::{PatternMeta, WriteJob};
     use crate::pattern::{
         DiscretizeJobGenerator, DiscretizeSample, Discretizer, Intensities, JobParams,
     };
@@ -720,6 +720,10 @@ pub mod cpu {
     pub fn render_write_chunked<T>(
         mut gen: impl DiscretizeJobGenerator<Item = T>,
         io_opts: &crate::io::Opts,
+        io_fn: impl Fn(Receiver<WriteJob<PathBuf>>, bool, usize) -> Option<(Vec<String>, Vec<String>)>
+            + Sync
+            + Send
+            + 'static,
     ) -> Result<OutputNames, String>
     where
         T: Discretizer + Send + Sync + 'static,
@@ -736,7 +740,7 @@ pub mod cpu {
         let compress = io_opts.compress;
 
         let (io_tx, io_rx) = std::sync::mpsc::channel::<WriteJob<PathBuf>>();
-        let io_thread_handle = std::thread::spawn(move || io_thread_fn(io_rx, compress, n_chunks));
+        let io_thread_handle = std::thread::spawn(move || io_fn(io_rx, compress, n_chunks));
 
         let job_params = gen.get_job_params();
         let xs = gen.xs().to_vec();

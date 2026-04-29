@@ -1,7 +1,5 @@
-use chrono::{Datelike, Timelike, Utc};
+use chrono::Utc;
 use clap::Parser;
-use colog::format::CologStyle;
-use colored::Colorize;
 use itertools::Itertools;
 use ordered_float::NotNan;
 use rand::SeedableRng;
@@ -9,12 +7,11 @@ use sha2::Digest;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use yaxs::absorption::MACGenerator;
-use yaxs::cif::CifParser;
 use yaxs::domain_size::DomainSize;
 use yaxs::math::pseudo_voigt;
 use yaxs::pattern::adxrd::{InstrumentParameters, PrecomputedLACs};
 use yaxs::pattern::{adxrd, edxrd, lorentz_polarization_factor_edxrd};
-use yaxs::structure::{Peak, Structure};
+use yaxs::structure::Peak;
 
 use log::{debug, error, info};
 

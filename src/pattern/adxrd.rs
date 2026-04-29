@@ -12,7 +12,7 @@ use crate::math::funcs;
 use crate::noise::Noise;
 use crate::structure::Structure;
 use itertools::Itertools;
-use pyo3::{pyclass, pymethods};
+use pyo3::pyclass;
 use rand::Rng;
 
 #[derive(Clone, Debug, PartialEq)]

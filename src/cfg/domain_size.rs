@@ -1,4 +1,4 @@
-use crate::math::linalg::{ColVec, Mat3, Vec3, Vec4};
+use crate::math::linalg::{ColVec, Mat3, Vec3};
 use crate::math::quaternion::Quaternion;
 use crate::util::{
     deserialize_positive_parameter, deserialize_positive_parameter_list_3,
@@ -81,7 +81,7 @@ impl DomainSize {
             DomainSize::Uniform(v) => DS::Isotropic(v.generate(rng)),
             DomainSize::Ellipsoidal(inner) => match inner {
                 EllipsoidalInner::Exact {
-                    orientation,
+                    orientation: _,
                     main_sizes,
                     q_ori,
                 } => ellipsoidal(q_ori.clone(), main_sizes.clone()),
