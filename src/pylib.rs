@@ -194,6 +194,7 @@ pub mod yaxs {
         goniometer_radius_mm: f64,
         two_theta_range_deg: (f64, f64),
         n_steps: usize,
+        monochromator_angle_deg: f64,
     }
 
     #[pymethods]
@@ -201,6 +202,7 @@ pub mod yaxs {
         #[new]
         fn new(
             instprms: InstrumentParams,
+            monochromator_angle_deg: f64,
             emission_lines: Vec<PyEmissionLine>,
             goniometer_radius_mm: f64,
             two_theta_range_deg: (f64, f64),
@@ -224,6 +226,7 @@ pub mod yaxs {
                 goniometer_radius_mm,
                 two_theta_range_deg,
                 n_steps,
+                monochromator_angle_deg,
             })
         }
 
@@ -336,6 +339,7 @@ pub mod yaxs {
             two_theta_range_deg,
             goniometer_radius_mm,
             n_steps,
+            monochromator_angle_deg,
         } = instrument;
 
         let mut s_defs = Vec::new();
@@ -380,7 +384,7 @@ pub mod yaxs {
                 n_steps: n_steps,
                 two_theta_range: two_theta_range_deg,
                 goniometer_radius_mm,
-                monochromator_angle: 0.0,
+                monochromator_angle: monochromator_angle_deg.to_radians(),
                 sample_displacement_mu_m: Some(Parameter::Range(
                     sample.displacement_mu_m.0,
                     sample.displacement_mu_m.1,

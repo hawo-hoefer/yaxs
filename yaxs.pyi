@@ -124,6 +124,7 @@ class Instrument:
     def __init__(
         self,
         instprms: InstrumentParams,
+        monochromator_angle_deg: float,
         emission_lines: list[EmissionLine] | tuple[EmissionLine, ...],
         goniometer_radius: float,
         two_theta_range: tuple[float, float],
@@ -133,6 +134,7 @@ class Instrument:
 
         Args:
             instprms: instrument parameters for the XRD device
+            monochromator_angle_deg: monochromator angle in degrees, usually 0.0
             emission_lines: list of emission lines the device uses
             goniometer_radius: goniometer radius in mm
             two_theta_range: two-theta range in degrees
@@ -146,6 +148,7 @@ def simulate_adxrd(
     s: Sample,
     seed: int,
     n_samples: int,
+    structure_permutations: int,
     cif_root: str,
 ) -> dict[str, list[NDArray[np.float32]]]:
     """simulate a set of adxrd patterns
@@ -156,6 +159,8 @@ def simulate_adxrd(
        s: sample description
        seed: simulation random seed
        n_samples: number of XRD patterns to simulate
+       structure_permutations: how many permutations of each structure with random strain parameters
+                               to compute
        cif_root: root directory for relative paths of cifs
 
     Returns: dict with simulated XRD patterns and metadata

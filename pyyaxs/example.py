@@ -29,7 +29,8 @@ instprms = yaxs.InstrumentParams(
 )
 emission_lines = yaxs.EmissionLine.mo_ka()
 
-instrument = yaxs.Instrument(instprms, emission_lines, 180, two_theta_range, n_steps)
+monochromator_angle_deg = 0
+instrument = yaxs.Instrument(instprms, monochromator_angle_deg, emission_lines, 180, two_theta_range, n_steps)
 sample = yaxs.Sample((-500, 500))
 
 result = yaxs.simulate_adxrd(
@@ -38,6 +39,7 @@ result = yaxs.simulate_adxrd(
     sample,
     1238,
     100,
+    1,
     os.path.join(os.path.dirname(__file__), "../examples/cif"),
 )
 
