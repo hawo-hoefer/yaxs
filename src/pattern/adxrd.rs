@@ -75,13 +75,13 @@ impl InstrumentParameters {
     /// $FWHM(\theta)^2 = u \tan(\theta)^2 + v \tan(\theta) + w$
     ///
     /// * `theta`: theta in radians
-    pub fn gauss_broadening(&self, theta: f64) -> f64 {
-        self.u * theta.tan().powi(2) + self.v * theta.tan() + self.w
+    pub fn gauss_broadening(&self, tan_theta: f64) -> f64 {
+        self.u * tan_theta * tan_theta + self.v * tan_theta + self.w
     }
 
     /// Calculate lorentzian line broadening
-    pub fn lorentz_broadening(&self, theta: f64) -> f64 {
-        self.x / theta.cos() + self.y * theta.tan() + self.z
+    pub fn lorentz_broadening(&self, cos_theta: f64, tan_theta: f64) -> f64 {
+        self.x / cos_theta + self.y * tan_theta + self.z
     }
 }
 
@@ -98,6 +98,8 @@ pub struct DiscretizeAngleDispersive {
 
 impl Discretizer for DiscretizeAngleDispersive {
     fn peak_info_iterator(&self) -> impl Iterator<Item = (PeakRenderParams, Option<usize>)> {
+        let a2cos2 = (2.0 * self.monochromator_angle_rad).cos().powi(2);
+
         let ADXRDMeta {
             vol_fractions,
             instrument_parameters,
@@ -145,6 +147,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     (
                         peak.get_adxrd_render_params(
                             wavelength_nm,
+                            emission_line.wavelength_ams,
                             instrument_parameters,
                             abs,
                             phase_domain_size,
@@ -154,7 +157,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                             vf * emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
-                            self.monochromator_angle_rad,
+                            a2cos2,
                         ),
                         Some(phase_idx),
                     )
@@ -171,6 +174,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     (
                         ip.peak.get_adxrd_render_params(
                             wavelength_nm,
+                            emission_line.wavelength_ams,
                             instrument_parameters,
                             1.0, // impurity peaks don't have absorption
                             &DomainSize::Isotropic(ip.mean_ds_nm),
@@ -180,7 +184,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                             emission_line.weight,
                             *sample_displacement_mu_m,
                             self.goniometer_radius_mm,
-                            self.monochromator_angle_rad,
+                            a2cos2,
                         ),
                         None,
                     )
