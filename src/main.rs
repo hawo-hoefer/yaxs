@@ -162,6 +162,7 @@ fn display_hkls(
                     .map(move |p: &Peak| {
                         let rp = p.get_adxrd_render_params(
                             wavelength_ams / 10.0,
+                            wavelength_ams,
                             &instrument_parameters,
                             abs.0[0][sid],
                             &DomainSize::Isotropic(mean_ds_nm),

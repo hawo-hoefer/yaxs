@@ -422,8 +422,6 @@ pub fn lorentz_polarization_factor_edxrd(theta_rad: f64) -> f64 {
     polarization_fac / inv_lorentz_fac
 }
 
-
-
 /// compute the lorentz polarization factor for a reflection
 ///
 /// see Cullity 1978, Elements of X-Ray Diffraction (ISBN 0201011743)
@@ -616,21 +614,40 @@ fn compute_pv_eta(pv_fwhm: f64, l_fwhm: f64) -> f64 {
 ///
 /// * `g_fwhm`: gaussian fwhm
 /// * `l_fwhm`: lorentzian fwhm
-#[inline]
-fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
-    let mut x = g_fwhm.powi(5);
-    let mut sum = 0.0;
-    for coef in [1.0, 2.69269, 2.42843, 4.47163, 0.07842, 1.0] {
-        sum += coef * x;
-        x = x / g_fwhm * l_fwhm;
-    }
-    sum.powf(0.2)
-}
 
 #[inline]
 fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
     let pv_fwhm = compute_pv_fwhm(g_fwhm, l_fwhm);
     (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
+}
+
+#[inline]
+fn ps(i: i32, g_fwhm: f64, l_fwhm: f64) -> f64 {
+    let x = g_fwhm.powi(5 - i as i32) * l_fwhm.powi(i as i32);
+    x
+}
+
+#[inline]
+fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
+    let mut s0 = 0.0;
+    let mut s1 = 0.0;
+    let mut s2 = 0.0;
+
+    for (i, ((c0, c1), c2)) in [1.0, 2.69269]
+        .into_iter()
+        .zip([2.42843, 4.47163])
+        .zip([0.07842, 1.0])
+        .enumerate()
+    {
+        let x0 = ps(i as i32, g_fwhm, l_fwhm);
+        let x1 = ps(i as i32 + 2, g_fwhm, l_fwhm);
+        let x2 = ps(i as i32 + 4, g_fwhm, l_fwhm);
+        s0 += c0 * x0;
+        s1 += c1 * x1;
+        s2 += c2 * x2;
+    }
+
+    (s0 + s1 + s2).powf(0.2)
 }
 
 fn get_sample_sig_gam(
@@ -640,21 +657,21 @@ fn get_sample_sig_gam(
     mustrain: f64,
     mustrain_eta: f64,
     wavelength_nm: f64,
-    theta_hkl_rad: f64,
     cos_theta: f64,
+    tan_theta: f64,
     pos: &Vec3<f64>,
 ) -> (f64, f64) {
     // use names from GSAS for now
     // size and microstrain broadening fwhms
     let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, cos_theta, pos);
-    let tan_theta = theta_hkl_rad.tan();
     let mgam = (mustrain * tan_theta).to_degrees();
 
     // FWHM = sqrt(8 ln 2) sigma
     // sigma^2 = FWHM^2 / (8 ln 2)
     #[rustfmt::skip]
-        let mut sample_g_fwhm_sq = (sgam * (1.0 - ds_eta)).powi(2)
-        + (mgam * (1.0 - mustrain_eta)).powi(2);
+    let mut sample_g_fwhm_sq = (sgam * (1.0 - ds_eta)).powi(2)
+                             + (mgam * (1.0 - mustrain_eta)).powi(2);
+
     sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
     let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
 
@@ -685,9 +702,11 @@ impl Peak {
     /// * `weight`: weight of the peak (usually something like volume fraction multiplied by the
     ///   emission line's relative intensity)
     #[allow(clippy::too_many_arguments)]
+    #[inline]
     pub fn get_adxrd_render_params(
         &self,
         wavelength_nm: f64,
+        wavelength_ang: f64,
         instrument_parameters: &InstrumentParameters,
         absorption_coefficient: f64,
         domain_size: &DomainSize,
@@ -702,9 +721,8 @@ impl Peak {
         // bragg condition
         // lambda = 2 d sin(theta)
         // theta = asin(lambda / 2d)
-        let wavelength_ams = wavelength_nm * 10.0;
         let theta_hkl_rad = {
-            let theta_hkl_rad = self.get_adxrd_theta_rad(wavelength_ams);
+            let theta_hkl_rad = self.get_adxrd_theta_rad(wavelength_ang);
 
             let sd_delta_theta_rad = sample_displacement_delta_theta_rad(
                 sample_displacement_mu_m,
@@ -716,8 +734,9 @@ impl Peak {
         };
 
         let cos_theta = theta_hkl_rad.cos();
-        let f_lorentz =
-            lorentz_polarization_factor(theta_hkl_rad, a2cos2, cos_theta);
+        let sin_theta = theta_hkl_rad.sin();
+        let tan_theta = sin_theta / cos_theta;
+        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad, a2cos2, cos_theta);
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             instrument_parameters,
             domain_size,
@@ -725,15 +744,15 @@ impl Peak {
             mustrain,
             mustrain_eta,
             wavelength_nm,
-            theta_hkl_rad,
             cos_theta,
+            tan_theta,
             &self.pos,
         );
 
         let (eta, fwhm) = compute_pv_params_from_fwhms(g_fwhm_sq.sqrt() * SQRT_8_LN_2, l_fwhm);
 
         let peak_weight =
-            (absorption_coefficient * *self.i_hkl * f_lorentz * wavelength_ams.powi(3) * weight)
+            (absorption_coefficient * *self.i_hkl * f_lorentz * wavelength_ang.powi(3) * weight)
                 as f32;
 
         PeakRenderParams {
@@ -992,6 +1011,7 @@ mod test {
     #[test]
     fn fwhms_zero_instprms_no_mustrain_eta_1() {
         let instprm = InstrumentParameters::zero();
+        let theta = (30.0f64 / 2.0).to_radians();
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             &instprm,
             &DomainSize::Isotropic(100.0),
@@ -999,8 +1019,7 @@ mod test {
             0.0,
             0.0,
             0.15401,
-            (30.0f64 / 2.0).to_radians(),
-            (30.0f64 / 2.0).to_radians().cos(),
+            theta.cos(), theta.tan(),
             &Vec3::zeros(),
         );
 
@@ -1019,6 +1038,7 @@ mod test {
     #[test]
     fn fwhms_zero_instprms_no_mustrain_eta_0_5() {
         let instprm = InstrumentParameters::zero();
+        let theta = (30.0f64 / 2.0).to_radians();
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             &instprm,
             &DomainSize::Isotropic(100.0),
@@ -1026,8 +1046,7 @@ mod test {
             0.0,
             0.0,
             0.15401,
-            (30.0f64 / 2.0).to_radians(),
-            (30.0f64 / 2.0).to_radians().cos(),
+            theta.cos(), theta.tan(),
             &Vec3::zeros(),
         );
 
@@ -1047,6 +1066,7 @@ mod test {
     fn fwhms_with_instprms_no_mustrain_eta_0_5() {
         let instprm =
             InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let theta = (30.0f64 / 2.0).to_radians();
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             &instprm,
             &DomainSize::Isotropic(100.0),
@@ -1054,8 +1074,7 @@ mod test {
             0.0,
             0.0,
             0.15401,
-            (30.0f64 / 2.0).to_radians(),
-            (30.0f64 / 2.0).to_radians().cos(),
+            theta.cos(), theta.tan(),
             &Vec3::zeros(),
         );
 
@@ -1076,6 +1095,7 @@ mod test {
     fn fwhms_with_instprms_both_etas_0_5() {
         let instprm =
             InstrumentParameters::new(2.0 / 10000.0, -2.0 / 10000.0, 5.0 / 10000.0, 0.0, 0.0, 0.0);
+        let theta = (30.0f64 / 2.0).to_radians();
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             &instprm,
             &DomainSize::Isotropic(100.0),
@@ -1083,8 +1103,8 @@ mod test {
             5e-3,
             0.5,
             0.15401,
-            (30.0f64 / 2.0).to_radians(),
-            (30.0f64 / 2.0).to_radians().cos(),
+            theta.cos(),
+            theta.tan(),
             &Vec3::zeros(),
         );
 

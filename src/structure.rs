@@ -526,7 +526,7 @@ mod test {
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, &DomainSize::Isotropic(100.0), 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, (monochromator_angle_rad * 2.0).cos().powi(2));
+                    peak.get_adxrd_render_params(0.071, 0.71, &InstrumentParameters::zero(), 1.0, &DomainSize::Isotropic(100.0), 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, (monochromator_angle_rad * 2.0).cos().powi(2));
                 (pos, intensity)
             })
             .collect_vec();
@@ -550,6 +550,7 @@ mod test {
             .map(|peak| {
                 let PeakRenderParams { pos, intensity, .. } = peak.get_adxrd_render_params(
                     0.071,
+                    0.71,
                     &InstrumentParameters::zero(),
                     1.0,
                     &DomainSize::Isotropic(100.0),

@@ -145,6 +145,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     (
                         peak.get_adxrd_render_params(
                             wavelength_nm,
+                            emission_line.wavelength_ams,
                             instrument_parameters,
                             abs,
                             phase_domain_size,
@@ -171,6 +172,7 @@ impl Discretizer for DiscretizeAngleDispersive {
                     (
                         ip.peak.get_adxrd_render_params(
                             wavelength_nm,
+                            emission_line.wavelength_ams,
                             instrument_parameters,
                             1.0, // impurity peaks don't have absorption
                             &DomainSize::Isotropic(ip.mean_ds_nm),
