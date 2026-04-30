@@ -417,24 +417,31 @@ impl CompositionGenerator {
 /// * `theta_rad`: bragg angle in radians
 pub fn lorentz_polarization_factor_edxrd(theta_rad: f64) -> f64 {
     let polarization_fac = 1.0 + (2.0 * theta_rad).cos().powi(2);
-    let lorentz_fac = 1.0 / theta_rad.sin().powi(2) * theta_rad.cos();
+    let inv_lorentz_fac = theta_rad.sin().powi(2) * theta_rad.cos();
 
-    lorentz_fac * polarization_fac
+    polarization_fac / inv_lorentz_fac
 }
+
+
 
 /// compute the lorentz polarization factor for a reflection
 ///
 /// see Cullity 1978, Elements of X-Ray Diffraction (ISBN 0201011743)
 ///
 /// * `theta_rad`: bragg angle in radians
-/// * `alpha_rad`: monochromator angle in radians
-pub fn lorentz_polarization_factor(theta_rad: f64, alpha_rad: f64) -> f64 {
+/// * `a2cos2`: 2 * cos^2 of monochromator angle in radians
+pub fn lorentz_polarization_factor(theta_rad: f64, a2cos2: f64, cos_theta: f64) -> f64 {
+    // cos^2 x = 1/2 (1 + cos (2x))
+    // 2 cos^2 x = 1 + cos 2x
+    // (2 cos^2 x - 1)^2 = = cos^2 2x
+    // let cos2th2 = (2.0 * cos_theta.powi(2) - 1.0).powi(2);
+    let cos2th2 = (2.0 * theta_rad).cos().powi(2);
+
     // Cullity 1978 P. 172
-    let a2cos2 = (2.0 * alpha_rad).cos().powi(2);
-    let polarization_fac = (1.0 + a2cos2 * (2.0 * theta_rad).cos().powi(2)) / (1.0 + a2cos2);
+    let polarization_fac = (1.0 + a2cos2 * cos2th2) / (1.0 + a2cos2);
 
     // Cullity 1978 P. 128
-    let lorentz_fac = 1.0 / (theta_rad.sin().powi(2) * theta_rad.cos());
+    let lorentz_fac = 1.0 / (theta_rad.sin().powi(2) * cos_theta);
 
     lorentz_fac * polarization_fac
 }
@@ -581,6 +588,7 @@ impl PeakRenderParams {
 ///
 /// * `pv_fwhm`: pseudo-voigt fwhm
 /// * `g_fwhm`: gaussian fwhm
+#[inline]
 fn compute_pv_eta(pv_fwhm: f64, l_fwhm: f64) -> f64 {
     let mut eta = 0.0;
 
@@ -608,6 +616,7 @@ fn compute_pv_eta(pv_fwhm: f64, l_fwhm: f64) -> f64 {
 ///
 /// * `g_fwhm`: gaussian fwhm
 /// * `l_fwhm`: lorentzian fwhm
+#[inline]
 fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
     let mut x = g_fwhm.powi(5);
     let mut sum = 0.0;
@@ -618,6 +627,7 @@ fn compute_pv_fwhm(g_fwhm: f64, l_fwhm: f64) -> f64 {
     sum.powf(0.2)
 }
 
+#[inline]
 fn compute_pv_params_from_fwhms(g_fwhm: f64, l_fwhm: f64) -> (f64, f64) {
     let pv_fwhm = compute_pv_fwhm(g_fwhm, l_fwhm);
     (compute_pv_eta(pv_fwhm, l_fwhm), pv_fwhm)
@@ -631,26 +641,28 @@ fn get_sample_sig_gam(
     mustrain_eta: f64,
     wavelength_nm: f64,
     theta_hkl_rad: f64,
+    cos_theta: f64,
     pos: &Vec3<f64>,
 ) -> (f64, f64) {
     // use names from GSAS for now
     // size and microstrain broadening fwhms
-    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, theta_hkl_rad, pos);
-    let mgam = (mustrain * theta_hkl_rad.tan()).to_degrees();
+    let sgam = domain_size.adxrd_size_gamma_broadening(wavelength_nm, cos_theta, pos);
+    let tan_theta = theta_hkl_rad.tan();
+    let mgam = (mustrain * tan_theta).to_degrees();
 
     // FWHM = sqrt(8 ln 2) sigma
     // sigma^2 = FWHM^2 / (8 ln 2)
     #[rustfmt::skip]
-        let mut sample_g_fwhm_sq = (sgam * (1.0 -       ds_eta)).powi(2)
-                                 + (mgam * (1.0 - mustrain_eta)).powi(2);
+        let mut sample_g_fwhm_sq = (sgam * (1.0 - ds_eta)).powi(2)
+        + (mgam * (1.0 - mustrain_eta)).powi(2);
     sample_g_fwhm_sq /= 8.0 * std::f64::consts::LN_2;
     let sample_l_fwhm = sgam * ds_eta + mgam * mustrain_eta;
 
-    let g_fwhm_sq = instrument_parameters.gauss_broadening(theta_hkl_rad) + sample_g_fwhm_sq;
+    let g_fwhm_sq = instrument_parameters.gauss_broadening(tan_theta) + sample_g_fwhm_sq;
     // clip sigma^2 at 0.001 centidegrees^2 = 0.0000001 degrees^2 (like GSAS)
     let g_fwhm_sq = g_fwhm_sq.max(0.0000001);
 
-    let l_fwhm = instrument_parameters.lorentz_broadening(theta_hkl_rad) + sample_l_fwhm;
+    let l_fwhm = instrument_parameters.lorentz_broadening(cos_theta, tan_theta) + sample_l_fwhm;
     // clip gamma at 0.001 centidegrees = 0.00001 degrees (like GSAS)
     // multiply by 2 to get gamma, and by 2 another time to get gamma in 2-theta instead
     // of theta
@@ -685,7 +697,7 @@ impl Peak {
         weight: f64,
         sample_displacement_mu_m: f64,
         goniometer_radius_mm: f64,
-        monochromator_angle_rad: f64,
+        a2cos2: f64,
     ) -> PeakRenderParams {
         // bragg condition
         // lambda = 2 d sin(theta)
@@ -703,7 +715,9 @@ impl Peak {
             theta_hkl_rad + sd_delta_theta_rad
         };
 
-        let f_lorentz = lorentz_polarization_factor(theta_hkl_rad, monochromator_angle_rad);
+        let cos_theta = theta_hkl_rad.cos();
+        let f_lorentz =
+            lorentz_polarization_factor(theta_hkl_rad, a2cos2, cos_theta);
         let (g_fwhm_sq, l_fwhm) = get_sample_sig_gam(
             instrument_parameters,
             domain_size,
@@ -712,6 +726,7 @@ impl Peak {
             mustrain_eta,
             wavelength_nm,
             theta_hkl_rad,
+            cos_theta,
             &self.pos,
         );
 
@@ -985,6 +1000,7 @@ mod test {
             0.0,
             0.15401,
             (30.0f64 / 2.0).to_radians(),
+            (30.0f64 / 2.0).to_radians().cos(),
             &Vec3::zeros(),
         );
 
@@ -1011,6 +1027,7 @@ mod test {
             0.0,
             0.15401,
             (30.0f64 / 2.0).to_radians(),
+            (30.0f64 / 2.0).to_radians().cos(),
             &Vec3::zeros(),
         );
 
@@ -1038,6 +1055,7 @@ mod test {
             0.0,
             0.15401,
             (30.0f64 / 2.0).to_radians(),
+            (30.0f64 / 2.0).to_radians().cos(),
             &Vec3::zeros(),
         );
 
@@ -1066,6 +1084,7 @@ mod test {
             0.5,
             0.15401,
             (30.0f64 / 2.0).to_radians(),
+            (30.0f64 / 2.0).to_radians().cos(),
             &Vec3::zeros(),
         );
 

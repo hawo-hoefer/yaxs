@@ -519,13 +519,14 @@ mod test {
         let mut sp_c = HashMap::new();
         s.gather_scattering_params(&mut sp_c);
 
+        let monochromator_angle_rad = 0.0;
         let peaks = s.get_adxrd_peaks(0.71, &(5.0, 40.0), None, &sp_c);
         let peaks = peaks
             .iter()
             .map(|peak| {
                 #[rustfmt::skip]
                 let PeakRenderParams { pos, intensity, .. } =
-                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, &DomainSize::Isotropic(100.0), 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, 0.0);
+                    peak.get_adxrd_render_params(0.071, &InstrumentParameters::zero(), 1.0, &DomainSize::Isotropic(100.0), 1.0, 0.0, 0.0, 1.0, 0.0, 180.0, (monochromator_angle_rad * 2.0).cos().powi(2));
                 (pos, intensity)
             })
             .collect_vec();
@@ -558,7 +559,7 @@ mod test {
                     1.0,
                     0.0,
                     180.0,
-                    0.0,
+                    (2.0 * 0.0).cos().powi(2),
                 );
                 (pos, intensity)
             })
@@ -639,7 +640,8 @@ mod test {
 
                 (
                     (theta_hkl_rad * 2.0).to_degrees() as f32,
-                    peak.i_hkl * lorentz_polarization_factor(theta_hkl_rad, 90.0),
+                    peak.i_hkl
+                        * lorentz_polarization_factor(theta_hkl_rad, 90.0, theta_hkl_rad.cos()),
                 )
             })
             .collect_vec();
@@ -722,7 +724,12 @@ mod test {
 
                 (
                     (theta_hkl_rad * 2.0).to_degrees() as f32,
-                    peak.i_hkl * lorentz_polarization_factor(theta_hkl_rad, 0.0f64.to_radians()),
+                    peak.i_hkl
+                        * lorentz_polarization_factor(
+                            theta_hkl_rad,
+                            0.0f64.to_radians(),
+                            theta_hkl_rad.cos(),
+                        ),
                 )
             })
             .collect_vec();
@@ -784,7 +791,12 @@ mod test {
 
                 (
                     (theta_hkl_rad * 2.0).to_degrees() as f32,
-                    peak.i_hkl * lorentz_polarization_factor(theta_hkl_rad, 0.0f64.to_radians()),
+                    peak.i_hkl
+                        * lorentz_polarization_factor(
+                            theta_hkl_rad,
+                            0.0f64.to_radians(),
+                            theta_hkl_rad.cos(),
+                        ),
                 )
             })
             .collect_vec();

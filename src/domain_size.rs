@@ -27,11 +27,11 @@ const K: f64 = 1.0;
 /// * `wavelength`: wavelength in nanometers
 /// * `theta_rad`: theta in radians
 /// * `mean_ds`: mean domain size in nanometers
-pub fn scherrer_broadening(wavelength: f64, theta: f64, mean_ds: f64) -> f64 {
+pub fn scherrer_broadening(wavelength: f64, cos_theta: f64, mean_ds: f64) -> f64 {
     // scherrer
     // tau = k * lambda / (fwhm * cos(theta))
     // fwhm = k * lambda / (tau * cos(theta))
-    (K * wavelength / (theta.cos() * mean_ds)).to_degrees()
+    (K * wavelength / (cos_theta * mean_ds)).to_degrees()
 }
 
 /// calculate scherrer broadening in energy dispersive XRD
@@ -133,12 +133,12 @@ impl DomainSize {
     pub fn adxrd_size_gamma_broadening(
         &self,
         wavelength_nm: f64,
-        theta_hkl_rad: f64,
+        cos_theta: f64,
         pos: &Vec3<f64>,
     ) -> f64 {
         match self {
             DomainSize::Isotropic(mean_ds_nm) => {
-                scherrer_broadening(wavelength_nm, theta_hkl_rad, *mean_ds_nm)
+                scherrer_broadening(wavelength_nm, cos_theta, *mean_ds_nm)
             }
             DomainSize::Ellipsoidal {
                 orientation,
@@ -148,7 +148,7 @@ impl DomainSize {
                 mat: _,
             } => {
                 let r = ellipse_radius_for_direction(orientation, pos, evals);
-                scherrer_broadening(wavelength_nm, theta_hkl_rad, r)
+                scherrer_broadening(wavelength_nm, cos_theta, r)
             }
         }
     }
