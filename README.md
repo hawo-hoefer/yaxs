@@ -7,6 +7,7 @@ The yak ASCII art was created by Joan Stark (Spunk).
 
 ## Quickstart
 To use this simulation tool, just clone this repository and build the project.
+
 ```bash
 $ git clone gitlab.kit.edu/hawo.hoefer/yaxs.git
 $ cd yaxs
@@ -23,15 +24,38 @@ $ cargo install --git https://github.com/hawo-hoefer/yaxs.git --tag=<version>
 ```
 where `<version>` is the version you want to install.
 
-If you don't have a CUDA-enabled GPU on your system, use the feature flag `no-gpu`. 
-Note that compilation and installation requires a working C and NVCC compiler.
+If you don't have a CUDA-enabled GPU on your system, disable default features.
+
+```bash
+$ cargo install -- /path/to/yaxs/directory --no-default-features # or cargo build
+```
+
+Note that compilation and installation requires a working C compiler and NVCC (for CUDA-accelerated builds).
 
 Then, use
 ```bash
 $ /path/to/yaxs <path/to/configuration.yml> [options]
 ```
 to simulate a dataset from the input `yaml`-file describing the simulation parameters.
-Further information on the input file structure can be found [here](./inputfile.md)
+Further information on the input file structure can be found [here](./inputfile.md).
+The outputs are described [here](./output.md).
+
+
+## Attribution 
+If you use this tool in your workflow, please cite the paper it is published with: 
+```biblatex
+@article{https://doi.org/10.1002/aidi.202500189,
+    author = {Höfer, Hawo H. and Orth, André and Wang, Robert and Breitung, Ben and Schweidler, Simon and Aghassi-Hagmann, Jasmin and Reischl, Markus},
+    title = {Data-Driven High-Throughput Volume Fraction Estimation From X-Ray Diffraction Patterns},
+    journal = {Advanced Intelligent Discovery},
+    pages = {e202500189},
+    keywords = {high-throughput processing, machine learning, quantitative analysis, X-ray diffraction},
+    doi = {https://doi.org/10.1002/aidi.202500189},
+    url = {https://advanced.onlinelibrary.wiley.com/doi/abs/10.1002/aidi.202500189},
+    eprint = {https://advanced.onlinelibrary.wiley.com/doi/pdf/10.1002/aidi.202500189},
+    abstract = {In high-throughput applications, crystallographic analysis via X-ray diffraction (XRD) is often limited by long exposure times and the need for manual data interpretation. This study presents a novel machine-learning-based approach for volume fraction estimation from XRD patterns addressing both challenges. The method efficiently processes noisy XRD patterns acquired with polychromatic emission spectra, and enables volume fraction estimation from thousands of patterns per second. Compared to conventional techniques, it requires much lower XRD pattern quality, allowing for shorter exposure times. This makes our method particularly suited for high-throughput scenarios such as self-driving labs. We utilize simulated XRD patterns to train two neural networks to process XRD data in a specified material system. A convolutional neural network (CNN) estimates volume fractions, while a u-net-style network restores pattern interpretability by resolving peak duplication caused by polychromatic emission spectra. We use synthetic datasets to showcase the method's noise tolerance and ability to analyze XRD patterns with multiple emission lines. Furthermore, we verify our method's applicability to real XRD patterns using a small experimental dataset.}
+}
+```
 
 ## Roadmap
 - **FEATURES**: 
