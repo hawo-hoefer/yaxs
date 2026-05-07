@@ -44,7 +44,7 @@ The outputs are described [here](./output.md).
 ## Attribution 
 If you use this tool in your workflow, please cite the paper it is published with: 
 ```biblatex
-@article{https://doi.org/10.1002/aidi.202500189,
+@article{hoefer2026data,
     author = {Höfer, Hawo H. and Orth, André and Wang, Robert and Breitung, Ben and Schweidler, Simon and Aghassi-Hagmann, Jasmin and Reischl, Markus},
     title = {Data-Driven High-Throughput Volume Fraction Estimation From X-Ray Diffraction Patterns},
     journal = {Advanced Intelligent Discovery},
